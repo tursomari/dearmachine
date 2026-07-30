@@ -27,9 +27,12 @@ export AGENTMAIL_API_KEY=am_your_key
 go run ./cmd/device-client \
   --inbox-id your-inbox-id \
   --project /path/to/mct/project \
-  --model your-model-alias \
   --db ./device-client.db
 ```
+
+The daemon runs `mct-agent sync` before polling begins and again immediately
+before each `mct-agent run`. Pass `--model your-model-alias` to override the
+project's configured default model; when omitted, no model flag is forwarded.
 
 The first poll runs immediately. Later polls start 60 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single

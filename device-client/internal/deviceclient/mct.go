@@ -46,13 +46,34 @@ func NewMCTRunner(binary, projectDir, model string) (*MCTRunner, error) {
 	if strings.TrimSpace(projectDir) == "" {
 		return nil, fmt.Errorf("mct project directory is required")
 	}
-	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("mct model is required")
+	return &MCTRunner{
+		binary:     binary,
+		projectDir: projectDir,
+		model:      strings.TrimSpace(model),
+	}, nil
+}
+
+func (r *MCTRunner) Sync(ctx context.Context) error {
+	command := exec.CommandContext(ctx, r.binary, "sync")
+	command.Dir = r.projectDir
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Run(); err != nil {
+		return fmt.Errorf(
+			"mct-agent sync failed: %w: %s",
+			err,
+			strings.TrimSpace(output.String()),
+		)
 	}
-	return &MCTRunner{binary: binary, projectDir: projectDir, model: model}, nil
+	return nil
 }
 
 func (r *MCTRunner) Run(ctx context.Context, session Session, text string) (RunResult, error) {
+	if err := r.Sync(ctx); err != nil {
+		return RunResult{}, err
+	}
+
 	outputDir, err := os.MkdirTemp("", "device-client-mct-")
 	if err != nil {
 		return RunResult{}, fmt.Errorf("create mct output directory: %w", err)
@@ -67,9 +88,11 @@ func (r *MCTRunner) Run(ctx context.Context, session Session, text string) (RunR
 	if !session.IsNew {
 		args = append(args, "--session-id", session.SessionID)
 	}
+	if r.model != "" {
+		args = append(args, "--model", r.model)
+	}
 	args = append(
 		args,
-		"--model", r.model,
 		"--no-banner",
 		"--no-cursor",
 		"--final-file", finalPath,

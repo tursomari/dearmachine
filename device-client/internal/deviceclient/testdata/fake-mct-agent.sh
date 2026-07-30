@@ -5,6 +5,18 @@ capture_dir=${FAKE_MCT_CAPTURE:?}
 status_file=${FAKE_MCT_STATUS:?}
 answer_file=${FAKE_MCT_ANSWER:?}
 
+if [ "$1" = "sync" ]; then
+	sync_count_file="$capture_dir/sync-count"
+	sync_count=0
+	if [ -f "$sync_count_file" ]; then
+		sync_count=$(cat "$sync_count_file")
+	fi
+	sync_count=$((sync_count + 1))
+	printf '%s' "$sync_count" > "$sync_count_file"
+	printf 'sync\n' >> "$capture_dir/events"
+	exit 0
+fi
+
 if [ "$1" = "session" ] && [ "$2" = "show" ]; then
 	cat "$status_file"
 	exit 0
@@ -15,6 +27,7 @@ if [ "$1" != "run" ]; then
 	exit 2
 fi
 
+printf 'run\n' >> "$capture_dir/events"
 count_file="$capture_dir/count"
 count=0
 if [ -f "$count_file" ]; then

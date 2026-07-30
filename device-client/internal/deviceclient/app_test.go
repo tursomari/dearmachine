@@ -97,6 +97,12 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	if replies[0].IdempotencyKey == "" {
 		t.Fatal("reply omitted Idempotency-Key")
 	}
+	if got := rig.capture("sync-count"); got != "1" {
+		t.Fatalf("sync count = %q, want 1", got)
+	}
+	if got := rig.capture("events"); got != "sync\nrun\n" {
+		t.Fatalf("mct-agent call order = %q, want sync then run", got)
+	}
 }
 
 func TestFollowUpResumesExistingSession(t *testing.T) {
@@ -240,9 +246,32 @@ func TestRunPollsAgainAfterConfiguredInterval(t *testing.T) {
 	if elapsed := second.Sub(first); elapsed < rig.app.pollInterval {
 		t.Fatalf("poll interval = %s, want at least %s", elapsed, rig.app.pollInterval)
 	}
+	if got := rig.capture("sync-count"); got != "1" {
+		t.Fatalf("startup sync count = %q, want 1", got)
+	}
+	if got := rig.capture("events"); got != "sync\n" {
+		t.Fatalf("startup mct-agent calls = %q, want one sync", got)
+	}
 }
 
 func newTestRig(t *testing.T) *testRig {
+	return newTestRigWithModel(t, "test-model")
+}
+
+func TestEmptyModelUsesProjectDefault(t *testing.T) {
+	rig := newTestRigWithModel(t, "  ")
+	rig.mail.add(testMessage("msg-default", "thread-default", "Use the default model."))
+	rig.setAnswer("Used the project default.")
+
+	mustProcess(t, rig)
+
+	args := rig.captureLines("args-1")
+	if slices.Contains(args, "--model") {
+		t.Fatalf("empty model unexpectedly forwarded --model: %v", args)
+	}
+}
+
+func newTestRigWithModel(t *testing.T, model string) *testRig {
 	t.Helper()
 	mail := newFakeAgentMail(t)
 
@@ -280,7 +309,7 @@ func newTestRig(t *testing.T) *testRig {
 		t.Fatalf("write answer: %v", err)
 	}
 
-	runner, err := NewMCTRunner(fixture, t.TempDir(), "test-model")
+	runner, err := NewMCTRunner(fixture, t.TempDir(), model)
 	if err != nil {
 		t.Fatalf("NewMCTRunner: %v", err)
 	}

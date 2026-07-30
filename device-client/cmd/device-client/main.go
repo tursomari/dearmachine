@@ -34,7 +34,11 @@ func run() error {
 			".",
 			"project directory used as the mct-agent working directory",
 		)
-		model     = flag.String("model", "", "mct-agent model alias")
+		model = flag.String(
+			"model",
+			"",
+			"optional mct-agent model alias; project default when omitted",
+		)
 		mctBinary = flag.String(
 			"mct-agent",
 			"mct-agent",
@@ -51,9 +55,6 @@ func run() error {
 
 	if *inboxID == "" {
 		return fmt.Errorf("--inbox-id is required")
-	}
-	if *model == "" {
-		return fmt.Errorf("--model is required")
 	}
 	if os.Getenv("AGENTMAIL_API_KEY") == "" {
 		return fmt.Errorf("AGENTMAIL_API_KEY is required")
@@ -93,6 +94,9 @@ func run() error {
 	defer stop()
 
 	if *once {
+		if err := runner.Sync(ctx); err != nil {
+			return err
+		}
 		return app.ProcessOnce(ctx)
 	}
 	return app.Run(ctx)

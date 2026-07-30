@@ -51,6 +51,10 @@ func New(
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if err := a.runner.Sync(ctx); err != nil {
+		return err
+	}
+
 	for {
 		if err := a.ProcessOnce(ctx); err != nil {
 			if ctx.Err() != nil {
