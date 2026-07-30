@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -76,6 +78,10 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) ProcessOnce(ctx context.Context) error {
+	if err := a.recoverPending(ctx); err != nil {
+		return err
+	}
+
 	messages, err := a.mailbox.Poll(ctx)
 	if err != nil {
 		return err
@@ -86,6 +92,9 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 			return err
 		}
 		if seen {
+			if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := a.processMessage(ctx, message); err != nil {
@@ -95,37 +104,129 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 	return nil
 }
 
-func (a *App) processMessage(ctx context.Context, message agentmail.Message) error {
-	session, err := a.store.ReserveSession(message.ThreadID)
+func (a *App) recoverPending(ctx context.Context) error {
+	pendingMessages, err := a.store.Pending()
 	if err != nil {
 		return err
 	}
+	for _, pending := range pendingMessages {
+		message, err := a.mailbox.Message(ctx, pending.MessageID)
+		if err != nil {
+			return err
+		}
+		if err := a.processPending(ctx, message, pending, true); err != nil {
+			return fmt.Errorf("recover message %s: %w", pending.MessageID, err)
+		}
+	}
+	return nil
+}
+
+func (a *App) processMessage(ctx context.Context, message agentmail.Message) error {
+	pending, existed, err := a.store.BeginMessage(message.MessageID, message.ThreadID)
+	if err != nil {
+		return err
+	}
+	return a.processPending(ctx, message, pending, existed)
+}
+
+func (a *App) processPending(
+	ctx context.Context,
+	message agentmail.Message,
+	pending PendingMessage,
+	recovering bool,
+) error {
+	if recovering {
+		outboundMessageID, found, err := a.mailbox.ReplyReceipt(ctx, message)
+		if err != nil {
+			return err
+		}
+		if found {
+			if err := a.store.Complete(
+				message.MessageID,
+				sessionStatus(pending.ResultKind),
+				outboundMessageID,
+			); err != nil {
+				return err
+			}
+			if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
+				return err
+			}
+			a.logger.Printf(
+				"recovered receipt message=%s thread=%s session=%s outbound=%s",
+				message.MessageID,
+				message.ThreadID,
+				pending.Session.SessionID,
+				outboundMessageID,
+			)
+			return nil
+		}
+	}
 
 	var history []agentmail.Message
-	if !session.IsNew {
+	var err error
+	if !pending.Session.IsNew {
 		history, err = a.mailbox.Thread(ctx, message.ThreadID)
 		if err != nil {
 			return err
 		}
 	}
 
-	prompt := formatPrompt(message, session, history)
-	result, err := a.runner.Run(ctx, session, prompt)
+	prompt := formatPrompt(message, pending.Session, history)
+	finalPath := recoveryResultPath(pending.Session.SessionID, message.MessageID)
+	var result RunResult
+	switch pending.State {
+	case messageReceived:
+		if err := a.store.MarkRunning(message.MessageID, prompt); err != nil {
+			return err
+		}
+		result, err = a.runner.Run(ctx, pending.Session, prompt, finalPath)
+	case messageRunning:
+		result, err = a.runner.Recover(
+			ctx,
+			pending.Session,
+			pending.Prompt,
+			finalPath,
+		)
+	case messageResultReady:
+		result = RunResult{
+			Kind: pending.ResultKind,
+			Text: pending.ResultText,
+		}
+	default:
+		return fmt.Errorf("unsupported pending message state %q", pending.State)
+	}
+	if err != nil {
+		return err
+	}
+	if pending.State != messageResultReady {
+		if err := a.store.StoreResult(message.MessageID, result); err != nil {
+			return err
+		}
+		if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove durable mct result: %w", err)
+		}
+	}
+
+	key := idempotencyKey(pending.Session.SessionID, message.MessageID)
+	outboundMessageID, err := a.mailbox.Reply(
+		ctx,
+		message.MessageID,
+		result.Text,
+		key,
+	)
 	if err != nil {
 		return err
 	}
 
-	key := idempotencyKey(session.SessionID, message.MessageID)
-	if err := a.mailbox.Reply(ctx, message.MessageID, result.Text, key); err != nil {
+	if err := a.store.Complete(
+		message.MessageID,
+		sessionStatus(result.Kind),
+		outboundMessageID,
+	); err != nil {
 		return err
 	}
-
-	status := "completed"
-	if result.Kind == ResultQuestion {
-		status = "suspended_user_input"
-	}
-	if err := a.store.Complete(message.MessageID, message.ThreadID, status); err != nil {
-		return err
+	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove durable mct result: %w", err)
 	}
 	if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
 		return err
@@ -135,10 +236,25 @@ func (a *App) processMessage(ctx context.Context, message agentmail.Message) err
 		"processed message=%s thread=%s session=%s result=%s",
 		message.MessageID,
 		message.ThreadID,
-		session.SessionID,
+		pending.Session.SessionID,
 		result.Kind,
 	)
 	return nil
+}
+
+func sessionStatus(kind ResultKind) string {
+	if kind == ResultQuestion {
+		return "suspended_user_input"
+	}
+	return "completed"
+}
+
+func recoveryResultPath(sessionID, messageID string) string {
+	return filepath.Join(
+		os.TempDir(),
+		"device-client-mct-results",
+		idempotencyKey(sessionID, messageID)+".md",
+	)
 }
 
 func formatPrompt(

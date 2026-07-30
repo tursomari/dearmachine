@@ -31,6 +31,7 @@ type MCTRunner struct {
 
 type sessionState struct {
 	Status             string              `json:"status"`
+	Goal               string              `json:"goal"`
 	SuspendedUserInput *suspendedUserInput `json:"suspended_user_input"`
 }
 
@@ -69,18 +70,24 @@ func (r *MCTRunner) Sync(ctx context.Context) error {
 	return nil
 }
 
-func (r *MCTRunner) Run(ctx context.Context, session Session, text string) (RunResult, error) {
+func (r *MCTRunner) Run(
+	ctx context.Context,
+	session Session,
+	text,
+	finalPath string,
+) (RunResult, error) {
 	if err := r.Sync(ctx); err != nil {
 		return RunResult{}, err
 	}
-
-	outputDir, err := os.MkdirTemp("", "device-client-mct-")
-	if err != nil {
+	if strings.TrimSpace(finalPath) == "" {
+		return RunResult{}, fmt.Errorf("mct final answer path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
 		return RunResult{}, fmt.Errorf("create mct output directory: %w", err)
 	}
-	defer os.RemoveAll(outputDir)
-
-	finalPath := filepath.Join(outputDir, "agent-final-answer.md")
+	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
+		return RunResult{}, fmt.Errorf("clear prior mct final answer: %w", err)
+	}
 	args := []string{
 		"run",
 		"--text", text,
@@ -115,22 +122,66 @@ func (r *MCTRunner) Run(ctx context.Context, session Session, text string) (RunR
 	if err != nil {
 		return RunResult{}, err
 	}
+	result, ready, err := resultFromState(state, finalPath)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if !ready {
+		return RunResult{}, fmt.Errorf("mct-agent returned unsupported status %q", state.Status)
+	}
+	return result, nil
+}
 
+func (r *MCTRunner) Recover(
+	ctx context.Context,
+	session Session,
+	originalPrompt,
+	finalPath string,
+) (RunResult, error) {
+	state, err := r.showSession(ctx, session.SessionID)
+	if err != nil || state.Goal != originalPrompt {
+		return r.Run(ctx, session, originalPrompt, finalPath)
+	}
+	result, ready, err := resultFromState(state, finalPath)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if ready {
+		return result, nil
+	}
+
+	resumed := session
+	resumed.IsNew = false
+	const recoveryPrompt = "[DearMachine recovery: continue the interrupted email request " +
+		"already present in this session. Do not repeat completed work or add the " +
+		"original email prompt again. Return the pending answer.]"
+	return r.Run(ctx, resumed, recoveryPrompt, finalPath)
+}
+
+func resultFromState(
+	state sessionState,
+	finalPath string,
+) (RunResult, bool, error) {
 	switch state.Status {
 	case "success":
 		answer, err := os.ReadFile(finalPath)
+		if os.IsNotExist(err) {
+			return RunResult{}, false, nil
+		}
 		if err != nil {
-			return RunResult{}, fmt.Errorf("read mct final answer: %w", err)
+			return RunResult{}, false, fmt.Errorf("read mct final answer: %w", err)
 		}
 		text := strings.TrimSpace(string(answer))
 		if text == "" {
-			return RunResult{}, fmt.Errorf("mct-agent reported success with an empty final answer")
+			return RunResult{}, false, fmt.Errorf(
+				"mct-agent reported success with an empty final answer",
+			)
 		}
-		return RunResult{Kind: ResultAnswer, Text: text}, nil
+		return RunResult{Kind: ResultAnswer, Text: text}, true, nil
 	case "suspended_user_input":
 		if state.SuspendedUserInput == nil ||
 			strings.TrimSpace(state.SuspendedUserInput.Question) == "" {
-			return RunResult{}, fmt.Errorf("mct-agent suspended without a question")
+			return RunResult{}, false, fmt.Errorf("mct-agent suspended without a question")
 		}
 		return RunResult{
 			Kind: ResultQuestion,
@@ -138,9 +189,9 @@ func (r *MCTRunner) Run(ctx context.Context, session Session, text string) (RunR
 				state.SuspendedUserInput.Question,
 				state.SuspendedUserInput.Context,
 			),
-		}, nil
+		}, true, nil
 	default:
-		return RunResult{}, fmt.Errorf("mct-agent returned unsupported status %q", state.Status)
+		return RunResult{}, false, nil
 	}
 }
 

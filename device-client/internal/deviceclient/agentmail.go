@@ -81,8 +81,29 @@ func (m *Mailbox) Thread(ctx context.Context, threadID string) ([]agentmail.Mess
 	return thread.Messages, nil
 }
 
-func (m *Mailbox) Reply(ctx context.Context, messageID, text, idempotencyKey string) error {
-	_, err := m.client.Inboxes.Messages.Reply(
+func (m *Mailbox) Message(ctx context.Context, messageID string) (agentmail.Message, error) {
+	message, err := m.client.Inboxes.Messages.Get(
+		ctx,
+		messageID,
+		agentmail.InboxMessageGetParams{InboxID: m.inboxID},
+	)
+	if err != nil {
+		return agentmail.Message{}, fmt.Errorf(
+			"get AgentMail message %s: %w",
+			messageID,
+			err,
+		)
+	}
+	return *message, nil
+}
+
+func (m *Mailbox) Reply(
+	ctx context.Context,
+	messageID,
+	text,
+	idempotencyKey string,
+) (string, error) {
+	receipt, err := m.client.Inboxes.Messages.Reply(
 		ctx,
 		messageID,
 		agentmail.InboxMessageReplyParams{
@@ -92,9 +113,33 @@ func (m *Mailbox) Reply(ctx context.Context, messageID, text, idempotencyKey str
 		option.WithHeader("Idempotency-Key", idempotencyKey),
 	)
 	if err != nil {
-		return fmt.Errorf("reply to AgentMail message %s: %w", messageID, err)
+		return "", fmt.Errorf("reply to AgentMail message %s: %w", messageID, err)
 	}
-	return nil
+	if receipt.MessageID == "" {
+		return "", fmt.Errorf("reply to AgentMail message %s returned no receipt", messageID)
+	}
+	return receipt.MessageID, nil
+}
+
+func (m *Mailbox) ReplyReceipt(
+	ctx context.Context,
+	message agentmail.Message,
+) (string, bool, error) {
+	messages, err := m.Thread(ctx, message.ThreadID)
+	if err != nil {
+		return "", false, err
+	}
+	for _, candidate := range messages {
+		if candidate.MessageID == message.MessageID {
+			continue
+		}
+		isOutbound := containsFold(candidate.Labels, "sent") ||
+			containsFold(candidate.To, message.From)
+		if candidate.InReplyTo == message.MessageID && isOutbound {
+			return candidate.MessageID, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func (m *Mailbox) MarkProcessed(ctx context.Context, messageID string) error {
@@ -134,4 +179,13 @@ func messageBody(message agentmail.Message) string {
 		return message.ExtractedText
 	}
 	return message.Preview
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
 }

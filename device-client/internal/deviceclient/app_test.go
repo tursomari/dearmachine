@@ -32,6 +32,7 @@ type fakeAgentMail struct {
 	messages map[string]agentmail.Message
 	unread   map[string]bool
 	replies  []sentReply
+	replyIDs map[string]string
 	polls    chan time.Time
 }
 
@@ -42,6 +43,7 @@ type testRig struct {
 	captureDir string
 	statusFile string
 	answerFile string
+	dbPath     string
 }
 
 func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
@@ -216,6 +218,183 @@ func TestQuoteBackMarkersArePreservedWithThreadContext(t *testing.T) {
 	}
 }
 
+func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage(
+		"msg-before-interruption",
+		"thread-interrupted",
+		"Prepare the initial report.",
+	))
+	rig.setAnswer("Initial report.")
+	mustProcess(t, rig)
+
+	message := testMessage(
+		"msg-interrupted",
+		"thread-interrupted",
+		"Prepare the interrupted report.",
+	)
+	rig.mail.add(message)
+	rig.setAnswer("Recovered report.")
+
+	pending, existed, err := rig.store.BeginMessage(
+		message.MessageID,
+		message.ThreadID,
+	)
+	if err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	if existed {
+		t.Fatal("new inbound message reported as existing")
+	}
+	if pending.Session.Sequence != 2 {
+		t.Fatalf("pending sequence = %d, want 2", pending.Session.Sequence)
+	}
+	if session := rig.session(message.ThreadID); session.Sequence != 1 {
+		t.Fatalf("committed sequence before reply = %d, want 1", session.Sequence)
+	}
+	history, err := rig.app.mailbox.Thread(context.Background(), message.ThreadID)
+	if err != nil {
+		t.Fatalf("Thread: %v", err)
+	}
+	prompt := formatPrompt(message, pending.Session, history)
+	if err := rig.store.MarkRunning(message.MessageID, prompt); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+
+	rig.restartStore(t)
+	mustProcess(t, rig)
+
+	session := rig.session(message.ThreadID)
+	if session.Sequence != 2 || session.Status != "completed" {
+		t.Fatalf("unexpected recovered session: %+v", session)
+	}
+	if got := rig.capture("count"); got != "2" {
+		t.Fatalf("mct-agent run count = %q, want 2", got)
+	}
+	replayedPrompt := rig.capture("text-2")
+	if count := strings.Count(replayedPrompt, "Prepare the interrupted report."); count != 1 {
+		t.Fatalf("inbound prompt count = %d, want 1:\n%s", count, replayedPrompt)
+	}
+	if replayedPrompt != prompt {
+		t.Fatalf("replayed prompt changed:\ngot:\n%s\nwant:\n%s", replayedPrompt, prompt)
+	}
+	if replies := rig.mail.sentReplies(); len(replies) != 2 {
+		t.Fatalf("reply count = %d, want 2: %+v", len(replies), replies)
+	}
+	pendingMessages, err := rig.store.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(pendingMessages) != 0 {
+		t.Fatalf("pending messages after recovery: %+v", pendingMessages)
+	}
+}
+
+func TestRestartRecoversAcceptedMCTResultWithoutDuplicatePrompt(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage(
+		"msg-before-accepted",
+		"thread-accepted",
+		"Prepare the initial report.",
+	))
+	rig.setAnswer("Initial report.")
+	mustProcess(t, rig)
+
+	message := testMessage(
+		"msg-accepted",
+		"thread-accepted",
+		"Add the accepted follow-up.",
+	)
+	rig.mail.add(message)
+	pending, _, err := rig.store.BeginMessage(message.MessageID, message.ThreadID)
+	if err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	history, err := rig.app.mailbox.Thread(context.Background(), message.ThreadID)
+	if err != nil {
+		t.Fatalf("Thread: %v", err)
+	}
+	prompt := formatPrompt(message, pending.Session, history)
+	if err := rig.store.MarkRunning(message.MessageID, prompt); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+
+	finalPath := recoveryResultPath(pending.Session.SessionID, message.MessageID)
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
+		t.Fatalf("create recovery result directory: %v", err)
+	}
+	if err := os.WriteFile(finalPath, []byte("Recovered accepted result."), 0o600); err != nil {
+		t.Fatalf("write recovery result: %v", err)
+	}
+	state, err := json.Marshal(sessionState{
+		Status: "success",
+		Goal:   prompt,
+	})
+	if err != nil {
+		t.Fatalf("marshal session state: %v", err)
+	}
+	rig.setStatus(string(state))
+
+	rig.restartStore(t)
+	mustProcess(t, rig)
+
+	session := rig.session(message.ThreadID)
+	if session.Sequence != 2 || session.Status != "completed" {
+		t.Fatalf("unexpected recovered session: %+v", session)
+	}
+	if got := rig.capture("count"); got != "1" {
+		t.Fatalf("mct-agent run count = %q, want initial run only", got)
+	}
+	replies := rig.mail.sentReplies()
+	if len(replies) != 2 || replies[1].Text != "Recovered accepted result." {
+		t.Fatalf("unexpected replies: %+v", replies)
+	}
+}
+
+func TestRestartRecordsExistingOutboundReceiptWithoutRerun(t *testing.T) {
+	rig := newTestRig(t)
+	message := testMessage(
+		"msg-receipted",
+		"thread-receipted",
+		"Prepare the receipted report.",
+	)
+	rig.mail.add(message)
+
+	pending, _, err := rig.store.BeginMessage(message.MessageID, message.ThreadID)
+	if err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	if err := rig.store.MarkRunning(message.MessageID, "persisted prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	result := RunResult{Kind: ResultAnswer, Text: "Already sent report."}
+	if err := rig.store.StoreResult(message.MessageID, result); err != nil {
+		t.Fatalf("StoreResult: %v", err)
+	}
+	if _, err := rig.app.mailbox.Reply(
+		context.Background(),
+		message.MessageID,
+		result.Text,
+		idempotencyKey(pending.Session.SessionID, message.MessageID),
+	); err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+
+	rig.restartStore(t)
+	mustProcess(t, rig)
+
+	session := rig.session(message.ThreadID)
+	if session.Sequence != 1 || session.Status != "completed" {
+		t.Fatalf("unexpected recovered session: %+v", session)
+	}
+	if _, err := os.Stat(filepath.Join(rig.captureDir, "count")); !os.IsNotExist(err) {
+		t.Fatalf("mct-agent unexpectedly ran; stat error = %v", err)
+	}
+	if replies := rig.mail.sentReplies(); len(replies) != 1 {
+		t.Fatalf("reply count = %d, want 1: %+v", len(replies), replies)
+	}
+}
+
 func TestRunPollsAgainAfterConfiguredInterval(t *testing.T) {
 	rig := newTestRig(t)
 	rig.app.pollInterval = 15 * time.Millisecond
@@ -283,7 +462,8 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 	if err != nil {
 		t.Fatalf("NewMailbox: %v", err)
 	}
-	store, err := OpenStore(filepath.Join(t.TempDir(), "device-client.db"))
+	dbPath := filepath.Join(t.TempDir(), "device-client.db")
+	store, err := OpenStore(dbPath)
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
@@ -330,6 +510,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		captureDir: captureDir,
 		statusFile: statusFile,
 		answerFile: answerFile,
+		dbPath:     dbPath,
 	}
 }
 
@@ -339,6 +520,7 @@ func newFakeAgentMail(t *testing.T) *fakeAgentMail {
 		t:        t,
 		messages: make(map[string]agentmail.Message),
 		unread:   make(map[string]bool),
+		replyIDs: make(map[string]string),
 		polls:    make(chan time.Time, 16),
 	}
 	fake.server = httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
@@ -371,14 +553,40 @@ func (f *fakeAgentMail) serveHTTP(writer http.ResponseWriter, request *http.Requ
 			writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		idempotencyKey := request.Header.Get("Idempotency-Key")
+		if receiptID, ok := f.replyIDs[idempotencyKey]; ok {
+			f.writeJSON(writer, map[string]string{
+				"message_id": receiptID,
+				"thread_id":  f.messages[messageID].ThreadID,
+			})
+			return
+		}
+		receiptID := "reply-" + messageID
 		f.replies = append(f.replies, sentReply{
 			MessageID:      messageID,
 			Text:           body.Text,
-			IdempotencyKey: request.Header.Get("Idempotency-Key"),
+			IdempotencyKey: idempotencyKey,
 		})
+		f.replyIDs[idempotencyKey] = receiptID
+		inbound := f.messages[messageID]
+		f.messages[receiptID] = agentmail.Message{
+			CreatedAt:  inbound.Timestamp.Add(time.Second),
+			From:       "test-inbox",
+			InReplyTo:  messageID,
+			InboxID:    "test-inbox",
+			Labels:     []string{"sent"},
+			MessageID:  receiptID,
+			References: append(slices.Clone(inbound.References), messageID),
+			Subject:    "Re: " + inbound.Subject,
+			Text:       body.Text,
+			ThreadID:   inbound.ThreadID,
+			Timestamp:  inbound.Timestamp.Add(time.Second),
+			To:         []string{inbound.From},
+			UpdatedAt:  inbound.Timestamp.Add(time.Second),
+		}
 		f.writeJSON(writer, map[string]string{
-			"message_id": "reply-" + messageID,
-			"thread_id":  f.messages[messageID].ThreadID,
+			"message_id": receiptID,
+			"thread_id":  inbound.ThreadID,
 		})
 	case request.Method == http.MethodPatch && strings.HasPrefix(path, prefix+"messages/"):
 		messageID := strings.TrimPrefix(path, prefix+"messages/")
@@ -469,6 +677,22 @@ func mustProcess(t *testing.T, rig *testRig) {
 
 func (r *testRig) setStatus(status string) {
 	r.write(r.statusFile, status)
+}
+
+func (r *testRig) restartStore(t *testing.T) {
+	t.Helper()
+	if err := r.store.Close(); err != nil {
+		t.Fatalf("close store before restart: %v", err)
+	}
+	store, err := OpenStore(r.dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() {
+		store.Close()
+	})
+	r.store = store
+	r.app.store = store
 }
 
 func (r *testRig) setAnswer(answer string) {

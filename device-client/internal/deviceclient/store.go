@@ -22,6 +22,22 @@ type Session struct {
 	IsNew     bool
 }
 
+type PendingMessage struct {
+	MessageID  string
+	ThreadID   string
+	Session    Session
+	State      string
+	Prompt     string
+	ResultKind ResultKind
+	ResultText string
+}
+
+const (
+	messageReceived    = "received"
+	messageRunning     = "running"
+	messageResultReady = "result_ready"
+)
+
 func OpenStore(path string) (*Store, error) {
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
@@ -55,10 +71,72 @@ CREATE TABLE IF NOT EXISTS thread_sessions (
 CREATE TABLE IF NOT EXISTS processed_messages (
     message_id TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL,
+    outbound_message_id TEXT NOT NULL DEFAULT '',
     processed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pending_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    prompt TEXT NOT NULL DEFAULT '',
+    result_kind TEXT NOT NULL DEFAULT '',
+    result_text TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(thread_id, sequence)
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
+	}
+	if err := s.addColumnIfMissing(
+		"processed_messages",
+		"outbound_message_id",
+		`TEXT NOT NULL DEFAULT ''`,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) addColumnIfMissing(table, column, declaration string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return fmt.Errorf("inspect SQLite table %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			index      int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal any
+			primaryKey int
+		)
+		if err := rows.Scan(
+			&index,
+			&name,
+			&columnType,
+			&notNull,
+			&defaultVal,
+			&primaryKey,
+		); err != nil {
+			return fmt.Errorf("scan SQLite table %s: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("inspect SQLite table %s: %w", table, err)
+	}
+	if _, err := s.db.Exec(
+		`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + declaration,
+	); err != nil {
+		return fmt.Errorf("add SQLite column %s.%s: %w", table, column, err)
 	}
 	return nil
 }
@@ -78,12 +156,23 @@ func (s *Store) Seen(messageID string) (bool, error) {
 	return true, nil
 }
 
-func (s *Store) ReserveSession(threadID string) (Session, error) {
+func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return Session{}, fmt.Errorf("begin session reservation: %w", err)
+		return PendingMessage{}, false, fmt.Errorf("begin inbound message: %w", err)
 	}
 	defer tx.Rollback()
+
+	pending, err := scanPending(tx.QueryRow(
+		pendingMessageQuery+` WHERE p.message_id = ?`,
+		messageID,
+	))
+	if err == nil {
+		return pending, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return PendingMessage{}, false, fmt.Errorf("query pending message: %w", err)
+	}
 
 	var session Session
 	err = tx.QueryRow(
@@ -99,7 +188,7 @@ func (s *Store) ReserveSession(threadID string) (Session, error) {
 		session = Session{
 			ThreadID:  threadID,
 			SessionID: newUUID(),
-			Sequence:  1,
+			Sequence:  0,
 			Status:    "active",
 			IsNew:     true,
 		}
@@ -114,57 +203,216 @@ func (s *Store) ReserveSession(threadID string) (Session, error) {
 			now,
 			now,
 		)
-	case err == nil:
-		session.Sequence++
-		session.Status = "active"
-		_, err = tx.Exec(
-			`UPDATE thread_sessions
-			    SET sequence = ?, status = ?, updated_at = ?
-			  WHERE thread_id = ?`,
-			session.Sequence,
-			session.Status,
-			now,
-			threadID,
-		)
 	}
 	if err != nil {
-		return Session{}, fmt.Errorf("reserve thread session: %w", err)
+		return PendingMessage{}, false, fmt.Errorf("prepare thread session: %w", err)
+	}
+
+	pending = PendingMessage{
+		MessageID: messageID,
+		ThreadID:  threadID,
+		Session: Session{
+			ThreadID:  threadID,
+			SessionID: session.SessionID,
+			Sequence:  session.Sequence + 1,
+			Status:    session.Status,
+			IsNew:     session.Sequence == 0,
+		},
+		State: messageReceived,
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO pending_messages
+		     (message_id, thread_id, sequence, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		pending.MessageID,
+		pending.ThreadID,
+		pending.Session.Sequence,
+		pending.State,
+		now,
+		now,
+	); err != nil {
+		return PendingMessage{}, false, fmt.Errorf("persist inbound message: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return Session{}, fmt.Errorf("commit session reservation: %w", err)
+		return PendingMessage{}, false, fmt.Errorf("commit inbound message: %w", err)
 	}
-	return session, nil
+	return pending, false, nil
 }
 
-func (s *Store) Complete(messageID, threadID, status string) error {
+func (s *Store) MarkRunning(messageID, prompt string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.Exec(
+		`UPDATE pending_messages
+		    SET state = ?, prompt = ?, updated_at = ?
+		  WHERE message_id = ? AND state = ?`,
+		messageRunning,
+		prompt,
+		now,
+		messageID,
+		messageReceived,
+	)
+	if err != nil {
+		return fmt.Errorf("mark inbound message running: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check inbound message state change: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("mark inbound message running: message is not received")
+	}
+	return nil
+}
+
+func (s *Store) StoreResult(messageID string, result RunResult) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	update, err := s.db.Exec(
+		`UPDATE pending_messages
+		    SET state = ?, result_kind = ?, result_text = ?, updated_at = ?
+		  WHERE message_id = ? AND state = ?`,
+		messageResultReady,
+		result.Kind,
+		result.Text,
+		now,
+		messageID,
+		messageRunning,
+	)
+	if err != nil {
+		return fmt.Errorf("store mct result: %w", err)
+	}
+	changed, err := update.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check mct result state change: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("store mct result: message is not running")
+	}
+	return nil
+}
+
+func (s *Store) Pending() ([]PendingMessage, error) {
+	rows, err := s.db.Query(pendingMessageQuery + ` ORDER BY p.created_at, p.message_id`)
+	if err != nil {
+		return nil, fmt.Errorf("query pending messages: %w", err)
+	}
+	defer rows.Close()
+
+	var pending []PendingMessage
+	for rows.Next() {
+		message, err := scanPending(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan pending message: %w", err)
+		}
+		pending = append(pending, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query pending messages: %w", err)
+	}
+	return pending, nil
+}
+
+func (s *Store) Complete(messageID, status, outboundMessageID string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin message completion: %w", err)
 	}
 	defer tx.Rollback()
 
+	var threadID string
+	var sequence int
+	if err := tx.QueryRow(
+		`SELECT thread_id, sequence
+		   FROM pending_messages
+		  WHERE message_id = ?`,
+		messageID,
+	).Scan(&threadID, &sequence); err != nil {
+		return fmt.Errorf("get pending message completion: %w", err)
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.Exec(
-		`INSERT INTO processed_messages (message_id, thread_id, processed_at)
-		 VALUES (?, ?, ?)`,
+		`INSERT INTO processed_messages
+		     (message_id, thread_id, outbound_message_id, processed_at)
+		 VALUES (?, ?, ?, ?)`,
 		messageID,
 		threadID,
+		outboundMessageID,
 		now,
 	); err != nil {
 		return fmt.Errorf("record processed message: %w", err)
 	}
-	if _, err := tx.Exec(
-		`UPDATE thread_sessions SET status = ?, updated_at = ? WHERE thread_id = ?`,
+	update, err := tx.Exec(
+		`UPDATE thread_sessions
+		    SET sequence = ?, status = ?, updated_at = ?
+		  WHERE thread_id = ? AND sequence = ?`,
+		sequence,
 		status,
 		now,
 		threadID,
-	); err != nil {
+		sequence-1,
+	)
+	if err != nil {
 		return fmt.Errorf("update thread status: %w", err)
+	}
+	changed, err := update.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check thread sequence advancement: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf(
+			"advance thread sequence to %d: prior sequence is not %d",
+			sequence,
+			sequence-1,
+		)
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM pending_messages WHERE message_id = ?`,
+		messageID,
+	); err != nil {
+		return fmt.Errorf("remove pending message: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit message completion: %w", err)
 	}
 	return nil
+}
+
+const pendingMessageQuery = `
+SELECT p.message_id,
+       p.thread_id,
+       t.session_id,
+       p.sequence,
+       t.status,
+       p.state,
+       p.prompt,
+       p.result_kind,
+       p.result_text,
+       t.sequence
+  FROM pending_messages p
+  JOIN thread_sessions t ON t.thread_id = p.thread_id`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanPending(row rowScanner) (PendingMessage, error) {
+	var pending PendingMessage
+	var committedSequence int
+	err := row.Scan(
+		&pending.MessageID,
+		&pending.ThreadID,
+		&pending.Session.SessionID,
+		&pending.Session.Sequence,
+		&pending.Session.Status,
+		&pending.State,
+		&pending.Prompt,
+		&pending.ResultKind,
+		&pending.ResultText,
+		&committedSequence,
+	)
+	pending.Session.ThreadID = pending.ThreadID
+	pending.Session.IsNew = committedSequence == 0
+	return pending, err
 }
 
 func (s *Store) Session(threadID string) (Session, error) {
