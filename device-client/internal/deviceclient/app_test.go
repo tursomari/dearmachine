@@ -433,6 +433,77 @@ func TestRunPollsAgainAfterConfiguredInterval(t *testing.T) {
 	}
 }
 
+func TestRunLogsStartupAndGracefulShutdownCounts(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage(
+		"msg-lifecycle",
+		"thread-lifecycle",
+		"Exercise lifecycle logging.",
+	))
+	rig.setAnswer("Lifecycle logging exercised.")
+	rig.app.pollInterval = time.Hour
+
+	var logs strings.Builder
+	rig.app.logger = log.New(&logs, "", 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- rig.app.Run(ctx)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for rig.mail.isUnread("msg-lifecycle") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if rig.mail.isUnread("msg-lifecycle") {
+		cancel()
+		t.Fatal("message was not processed before shutdown")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not stop after cancellation")
+	}
+
+	output := logs.String()
+	started := "Device Client started. Polling test-inbox every 1h0m0s. Project: " +
+		rig.app.runner.projectDir + "."
+	for _, want := range []string{
+		started,
+		"Device Client shutting down. Processed 1 messages across 1 threads.",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("lifecycle log missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestVerboseLogsPollCyclesWhileDefaultIsSilent(t *testing.T) {
+	rig := newTestRig(t)
+	var logs strings.Builder
+	rig.app.logger = log.New(&logs, "", 0)
+
+	if err := rig.app.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("default ProcessOnce: %v", err)
+	}
+	if got := logs.String(); got != "" {
+		t.Fatalf("default idle poll logged %q", got)
+	}
+
+	rig.app.verbose = true
+	if err := rig.app.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("verbose ProcessOnce: %v", err)
+	}
+	if got := logs.String(); !strings.Contains(got, "poll: 0 unread messages") {
+		t.Fatalf("verbose poll log = %q", got)
+	}
+}
+
 func newTestRig(t *testing.T) *testRig {
 	return newTestRigWithModel(t, "test-model")
 }
@@ -499,6 +570,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		runner,
 		time.Minute,
 		log.New(io.Discard, "", 0),
+		false,
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -648,6 +720,12 @@ func (f *fakeAgentMail) sentReplies() []sentReply {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.replies)
+}
+
+func (f *fakeAgentMail) isUnread(messageID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.unread[messageID]
 }
 
 func testMessage(messageID, threadID, body string) agentmail.Message {

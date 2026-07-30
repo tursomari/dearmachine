@@ -38,6 +38,10 @@ The first poll runs immediately. Later polls start 60 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single
 poll.
 
+Long-running mode logs successful startup and graceful-shutdown counts to
+stderr. Pass `--verbose` to also log the unread-message count for every poll;
+idle polls remain silent by default.
+
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
 

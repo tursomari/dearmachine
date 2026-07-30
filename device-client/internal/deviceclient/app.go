@@ -19,6 +19,9 @@ type App struct {
 	runner       *MCTRunner
 	pollInterval time.Duration
 	logger       *log.Logger
+	verbose      bool
+	processed    int
+	threads      map[string]struct{}
 }
 
 func New(
@@ -27,6 +30,7 @@ func New(
 	runner *MCTRunner,
 	pollInterval time.Duration,
 	logger *log.Logger,
+	verbose bool,
 ) (*App, error) {
 	if mailbox == nil {
 		return nil, fmt.Errorf("mailbox is required")
@@ -49,6 +53,8 @@ func New(
 		runner:       runner,
 		pollInterval: pollInterval,
 		logger:       logger,
+		verbose:      verbose,
+		threads:      make(map[string]struct{}),
 	}, nil
 }
 
@@ -56,10 +62,17 @@ func (a *App) Run(ctx context.Context) error {
 	if err := a.runner.Sync(ctx); err != nil {
 		return err
 	}
+	a.logger.Printf(
+		"Device Client started. Polling %s every %s. Project: %s.",
+		a.mailbox.inboxID,
+		a.pollInterval,
+		a.runner.projectDir,
+	)
 
 	for {
 		if err := a.ProcessOnce(ctx); err != nil {
 			if ctx.Err() != nil {
+				a.logShutdown()
 				return nil
 			}
 			return err
@@ -71,6 +84,7 @@ func (a *App) Run(ctx context.Context) error {
 			if !timer.Stop() {
 				<-timer.C
 			}
+			a.logShutdown()
 			return nil
 		case <-timer.C:
 		}
@@ -85,6 +99,9 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 	messages, err := a.mailbox.Poll(ctx)
 	if err != nil {
 		return err
+	}
+	if a.verbose {
+		a.logger.Printf("poll: %d unread messages", len(messages))
 	}
 	for _, message := range messages {
 		seen, err := a.store.Seen(message.MessageID)
@@ -148,6 +165,7 @@ func (a *App) processPending(
 			); err != nil {
 				return err
 			}
+			a.recordProcessed(message.ThreadID)
 			if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
 				return err
 			}
@@ -225,6 +243,7 @@ func (a *App) processPending(
 	); err != nil {
 		return err
 	}
+	a.recordProcessed(message.ThreadID)
 	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove durable mct result: %w", err)
 	}
@@ -240,6 +259,19 @@ func (a *App) processPending(
 		result.Kind,
 	)
 	return nil
+}
+
+func (a *App) recordProcessed(threadID string) {
+	a.processed++
+	a.threads[threadID] = struct{}{}
+}
+
+func (a *App) logShutdown() {
+	a.logger.Printf(
+		"Device Client shutting down. Processed %d messages across %d threads.",
+		a.processed,
+		len(a.threads),
+	)
 }
 
 func sessionStatus(kind ResultKind) string {

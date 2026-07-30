@@ -49,7 +49,8 @@ func run() error {
 			60*time.Second,
 			"delay after each completed AgentMail poll",
 		)
-		once = flag.Bool("once", false, "poll once, process available messages, and exit")
+		once    = flag.Bool("once", false, "poll once, process available messages, and exit")
+		verbose = flag.Bool("verbose", false, "log every AgentMail poll cycle")
 	)
 	flag.Parse()
 
@@ -81,6 +82,7 @@ func run() error {
 		runner,
 		*pollInterval,
 		logger,
+		*verbose,
 	)
 	if err != nil {
 		return err
