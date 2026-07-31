@@ -49,6 +49,7 @@ func run() error {
 			60*time.Second,
 			"delay after each completed AgentMail poll",
 		)
+		pidfile = flag.String("pidfile", "", "path to write the Device Client process ID")
 		once    = flag.Bool("once", false, "poll once, process available messages, and exit")
 		verbose = flag.Bool("verbose", false, "log every AgentMail poll cycle")
 	)
@@ -83,6 +84,7 @@ func run() error {
 		*pollInterval,
 		logger,
 		*verbose,
+		*pidfile,
 	)
 	if err != nil {
 		return err
@@ -96,10 +98,7 @@ func run() error {
 	defer stop()
 
 	if *once {
-		if err := runner.Sync(ctx); err != nil {
-			return err
-		}
-		return app.ProcessOnce(ctx)
+		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
 }

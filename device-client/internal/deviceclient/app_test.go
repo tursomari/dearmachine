@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -483,6 +484,81 @@ func TestRunLogsStartupAndGracefulShutdownCounts(t *testing.T) {
 	}
 }
 
+func TestRunCreatesAndRemovesPIDFile(t *testing.T) {
+	rig := newTestRig(t)
+	rig.app.pollInterval = time.Hour
+	pidfile := filepath.Join(t.TempDir(), "run", "device-client.pid")
+	rig.app.pidfile = pidfile
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- rig.app.Run(ctx)
+	}()
+
+	select {
+	case <-rig.mail.polls:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("initial poll did not run")
+	}
+	content, err := os.ReadFile(pidfile)
+	if err != nil {
+		cancel()
+		t.Fatalf("read pidfile: %v", err)
+	}
+	if got, want := string(content), strconv.Itoa(os.Getpid())+"\n"; got != want {
+		cancel()
+		t.Fatalf("pidfile content = %q, want %q", got, want)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not stop after cancellation")
+	}
+	if _, err := os.Stat(pidfile); !os.IsNotExist(err) {
+		t.Fatalf("pidfile remains after shutdown; stat error = %v", err)
+	}
+}
+
+func TestRunDoesNotWritePIDFileWhenInitialSyncFails(t *testing.T) {
+	rig := newTestRig(t)
+	pidfile := filepath.Join(t.TempDir(), "run", "device-client.pid")
+	rig.app.pidfile = pidfile
+	rig.app.runner.binary = filepath.Join(t.TempDir(), "missing-mct-agent")
+
+	if err := rig.app.Run(context.Background()); err == nil {
+		t.Fatal("Run succeeded with a missing mct-agent binary")
+	}
+	if _, err := os.Stat(pidfile); !os.IsNotExist(err) {
+		t.Fatalf("pidfile created before successful sync; stat error = %v", err)
+	}
+}
+
+func TestRunOnceSyncsAndCleansUpPIDFile(t *testing.T) {
+	rig := newTestRig(t)
+	pidfile := filepath.Join(t.TempDir(), "run-once", "device-client.pid")
+	rig.app.pidfile = pidfile
+
+	if err := rig.app.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got := rig.capture("sync-count"); got != "1" {
+		t.Fatalf("sync count = %q, want 1", got)
+	}
+	if _, err := os.Stat(filepath.Dir(pidfile)); err != nil {
+		t.Fatalf("pidfile parent was not created: %v", err)
+	}
+	if _, err := os.Stat(pidfile); !os.IsNotExist(err) {
+		t.Fatalf("pidfile remains after one-shot exit; stat error = %v", err)
+	}
+}
+
 func TestVerboseLogsPollCyclesWhileDefaultIsSilent(t *testing.T) {
 	rig := newTestRig(t)
 	var logs strings.Builder
@@ -571,6 +647,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		time.Minute,
 		log.New(io.Discard, "", 0),
 		false,
+		"",
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

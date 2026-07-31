@@ -3,6 +3,7 @@ package deviceclient
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -20,6 +21,7 @@ type App struct {
 	pollInterval time.Duration
 	logger       *log.Logger
 	verbose      bool
+	pidfile      string
 	processed    int
 	threads      map[string]struct{}
 }
@@ -31,6 +33,7 @@ func New(
 	pollInterval time.Duration,
 	logger *log.Logger,
 	verbose bool,
+	pidfile string,
 ) (*App, error) {
 	if mailbox == nil {
 		return nil, fmt.Errorf("mailbox is required")
@@ -54,14 +57,19 @@ func New(
 		pollInterval: pollInterval,
 		logger:       logger,
 		verbose:      verbose,
+		pidfile:      pidfile,
 		threads:      make(map[string]struct{}),
 	}, nil
 }
 
-func (a *App) Run(ctx context.Context) error {
-	if err := a.runner.Sync(ctx); err != nil {
+func (a *App) Run(ctx context.Context) (runErr error) {
+	cleanup, err := a.start(ctx)
+	if err != nil {
 		return err
 	}
+	defer func() {
+		runErr = errors.Join(runErr, cleanup())
+	}()
 	a.logger.Printf(
 		"Device Client started. Polling %s every %s. Project: %s.",
 		a.mailbox.inboxID,
@@ -89,6 +97,28 @@ func (a *App) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+func (a *App) RunOnce(ctx context.Context) (runErr error) {
+	cleanup, err := a.start(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		runErr = errors.Join(runErr, cleanup())
+	}()
+	return a.ProcessOnce(ctx)
+}
+
+func (a *App) start(ctx context.Context) (func() error, error) {
+	if err := a.runner.Sync(ctx); err != nil {
+		return nil, err
+	}
+	cleanup, err := createPIDFile(a.pidfile)
+	if err != nil {
+		return nil, err
+	}
+	return cleanup, nil
 }
 
 func (a *App) ProcessOnce(ctx context.Context) error {

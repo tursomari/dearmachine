@@ -27,7 +27,8 @@ export AGENTMAIL_API_KEY=am_your_key
 go run ./cmd/device-client \
   --inbox-id your-inbox-id \
   --project /path/to/mct/project \
-  --db ./device-client.db
+  --db ./device-client.db \
+  --pidfile ./run/device-client.pid
 ```
 
 The daemon runs `mct-agent sync` before polling begins and again immediately
@@ -41,6 +42,13 @@ poll.
 Long-running mode logs successful startup and graceful-shutdown counts to
 stderr. Pass `--verbose` to also log the unread-message count for every poll;
 idle polls remain silent by default.
+
+Pass `--pidfile /path/to/device-client.pid` when a process supervisor needs a
+PID file. Device Client creates missing parent directories after the initial
+`mct-agent sync`, writes its current PID before polling, and removes the file
+on controlled exit. Omit the flag for the previous foreground-without-pidfile
+behavior. This flag does not self-daemonize the process; supervisors that
+require a returning start command must provide a background wrapper.
 
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
