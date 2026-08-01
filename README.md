@@ -411,6 +411,14 @@ You already know how to use `Dear Machine,`.
 
 ---
 
+## Development
+
+- [Device Client](device-client/README.md) describes the current Go alpha architecture and runtime.
+- [Testing](device-client/TESTING.md) explains how to run and extend the automated suite.
+- [Roadmap](ROADMAP.md) outlines the next engineering tracks and alpha milestones.
+
+---
+
 ## Open Source
 
 `Dear Machine,` is open source so users can trust the software that operates on their computers.
