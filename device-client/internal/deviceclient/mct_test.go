@@ -121,7 +121,7 @@ func TestMCTRunnerTimeoutContracts(t *testing.T) {
 			name:     "session show",
 			delayEnv: "FAKE_MCT_SHOW_DELAY",
 			operation: func(ctx context.Context, fixture *mctTestFixture) error {
-				_, err := fixture.runner.Run(ctx, fixture.session, "prompt", fixture.finalPath)
+				_, err := fixture.runner.showSession(ctx, fixture.session.SessionID)
 				return err
 			},
 			want: "mct-agent session show failed",
@@ -130,8 +130,8 @@ func TestMCTRunnerTimeoutContracts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newMCTTestFixture(t)
-			t.Setenv(test.delayEnv, "0.05")
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+			t.Setenv(test.delayEnv, "0.5")
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 			err := test.operation(ctx, fixture)
 			if err == nil || !errors.Is(err, context.DeadlineExceeded) ||

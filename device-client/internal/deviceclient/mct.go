@@ -110,7 +110,7 @@ func (r *MCTRunner) Run(
 
 	command := exec.CommandContext(ctx, r.binary, args...)
 	command.Dir = r.projectDir
-	command.Env = os.Environ()
+	command.Env = unsetEnv(os.Environ(), "MACHTIANI_SESSION_ID")
 	if session.IsNew {
 		command.Env = setEnv(command.Env, "MACHTIANI_SESSION_ID", session.SessionID)
 	}
@@ -246,12 +246,16 @@ func clarificationText(question, context string) string {
 }
 
 func setEnv(environment []string, key, value string) []string {
+	return append(unsetEnv(environment, key), key+"="+value)
+}
+
+func unsetEnv(environment []string, key string) []string {
 	prefix := key + "="
-	result := make([]string, 0, len(environment)+1)
+	result := make([]string, 0, len(environment))
 	for _, entry := range environment {
 		if !strings.HasPrefix(entry, prefix) {
 			result = append(result, entry)
 		}
 	}
-	return append(result, prefix+value)
+	return result
 }

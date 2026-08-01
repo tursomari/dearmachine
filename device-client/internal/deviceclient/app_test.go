@@ -116,6 +116,7 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 }
 
 func TestFollowUpResumesExistingSession(t *testing.T) {
+	t.Setenv("MACHTIANI_SESSION_ID", "outer-session")
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-001", "thread-001", "Build the Q3 report."))
 	rig.setAnswer("Initial report.")
