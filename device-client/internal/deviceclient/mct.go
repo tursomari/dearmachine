@@ -61,6 +61,9 @@ func (r *MCTRunner) Sync(ctx context.Context) error {
 	command.Stdout = &output
 	command.Stderr = &output
 	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return fmt.Errorf(
 			"mct-agent sync failed: %w: %s",
 			err,
@@ -115,6 +118,9 @@ func (r *MCTRunner) Run(
 	command.Stdout = &runOutput
 	command.Stderr = &runOutput
 	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return RunResult{}, fmt.Errorf("mct-agent run failed: %w: %s", err, strings.TrimSpace(runOutput.String()))
 	}
 
@@ -127,6 +133,9 @@ func (r *MCTRunner) Run(
 		return RunResult{}, err
 	}
 	if !ready {
+		if state.Status == "success" {
+			return RunResult{}, fmt.Errorf("mct-agent reported success without a final answer file")
+		}
 		return RunResult{}, fmt.Errorf("mct-agent returned unsupported status %q", state.Status)
 	}
 	return result, nil
@@ -207,6 +216,9 @@ func (r *MCTRunner) showSession(ctx context.Context, sessionID string) (sessionS
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return sessionState{}, fmt.Errorf(
 			"mct-agent session show failed: %w: %s",
 			err,

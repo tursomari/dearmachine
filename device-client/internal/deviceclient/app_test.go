@@ -26,6 +26,12 @@ type sentReply struct {
 	IdempotencyKey string
 }
 
+type fakeHTTPResponse struct {
+	status int
+	body   string
+	delay  time.Duration
+}
+
 type fakeAgentMail struct {
 	t        *testing.T
 	server   *httptest.Server
@@ -35,6 +41,7 @@ type fakeAgentMail struct {
 	replies  []sentReply
 	replyIDs map[string]string
 	polls    chan time.Time
+	failures map[string]fakeHTTPResponse
 }
 
 type testRig struct {
@@ -671,6 +678,7 @@ func newFakeAgentMail(t *testing.T) *fakeAgentMail {
 		unread:   make(map[string]bool),
 		replyIDs: make(map[string]string),
 		polls:    make(chan time.Time, 16),
+		failures: make(map[string]fakeHTTPResponse),
 	}
 	fake.server = httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
 	return fake
@@ -682,6 +690,18 @@ func (f *fakeAgentMail) serveHTTP(writer http.ResponseWriter, request *http.Requ
 
 	writer.Header().Set("Content-Type", "application/json")
 	path := request.URL.Path
+	if response, ok := f.failures[request.Method+" "+path]; ok {
+		if response.delay > 0 {
+			time.Sleep(response.delay)
+		}
+		if response.status != 0 {
+			writer.WriteHeader(response.status)
+		}
+		if response.body != "" {
+			_, _ = writer.Write([]byte(response.body))
+		}
+		return
+	}
 	const prefix = "/v0/inboxes/test-inbox/"
 
 	switch {
@@ -791,6 +811,12 @@ func (f *fakeAgentMail) add(message agentmail.Message) {
 	defer f.mu.Unlock()
 	f.messages[message.MessageID] = message
 	f.unread[message.MessageID] = true
+}
+
+func (f *fakeAgentMail) fail(method, path string, response fakeHTTPResponse) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failures[method+" "+path] = response
 }
 
 func (f *fakeAgentMail) sentReplies() []sentReply {

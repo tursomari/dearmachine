@@ -6,6 +6,15 @@ status_file=${FAKE_MCT_STATUS:?}
 answer_file=${FAKE_MCT_ANSWER:?}
 
 if [ "$1" = "sync" ]; then
+	if [ -n "${FAKE_MCT_SYNC_DELAY-}" ]; then
+		sleep "$FAKE_MCT_SYNC_DELAY"
+	fi
+	if [ -n "${FAKE_MCT_SYNC_ERROR-}" ]; then
+		printf '%s\n' "$FAKE_MCT_SYNC_ERROR" >&2
+	fi
+	if [ "${FAKE_MCT_SYNC_EXIT-0}" -ne 0 ]; then
+		exit "$FAKE_MCT_SYNC_EXIT"
+	fi
 	sync_count_file="$capture_dir/sync-count"
 	sync_count=0
 	if [ -f "$sync_count_file" ]; then
@@ -18,6 +27,15 @@ if [ "$1" = "sync" ]; then
 fi
 
 if [ "$1" = "session" ] && [ "$2" = "show" ]; then
+	if [ -n "${FAKE_MCT_SHOW_DELAY-}" ]; then
+		sleep "$FAKE_MCT_SHOW_DELAY"
+	fi
+	if [ -n "${FAKE_MCT_SHOW_ERROR-}" ]; then
+		printf '%s\n' "$FAKE_MCT_SHOW_ERROR" >&2
+	fi
+	if [ "${FAKE_MCT_SHOW_EXIT-0}" -ne 0 ]; then
+		exit "$FAKE_MCT_SHOW_EXIT"
+	fi
 	cat "$status_file"
 	exit 0
 fi
@@ -28,6 +46,15 @@ if [ "$1" != "run" ]; then
 fi
 
 printf 'run\n' >> "$capture_dir/events"
+if [ -n "${FAKE_MCT_RUN_DELAY-}" ]; then
+	sleep "$FAKE_MCT_RUN_DELAY"
+fi
+if [ -n "${FAKE_MCT_RUN_ERROR-}" ]; then
+	printf '%s\n' "$FAKE_MCT_RUN_ERROR" >&2
+fi
+if [ "${FAKE_MCT_RUN_EXIT-0}" -ne 0 ]; then
+	exit "$FAKE_MCT_RUN_EXIT"
+fi
 count_file="$capture_dir/count"
 count=0
 if [ -f "$count_file" ]; then
@@ -62,4 +89,6 @@ if [ -z "$final_file" ]; then
 	echo "missing --final-file" >&2
 	exit 2
 fi
-cp "$answer_file" "$final_file"
+if [ "${FAKE_MCT_SKIP_FINAL-0}" -eq 0 ]; then
+	cp "$answer_file" "$final_file"
+fi

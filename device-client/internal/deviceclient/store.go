@@ -320,13 +320,17 @@ func (s *Store) Complete(messageID, status, outboundMessageID string) error {
 
 	var threadID string
 	var sequence int
+	var state string
 	if err := tx.QueryRow(
-		`SELECT thread_id, sequence
+		`SELECT thread_id, sequence, state
 		   FROM pending_messages
 		  WHERE message_id = ?`,
 		messageID,
-	).Scan(&threadID, &sequence); err != nil {
+	).Scan(&threadID, &sequence, &state); err != nil {
 		return fmt.Errorf("get pending message completion: %w", err)
+	}
+	if state != messageResultReady {
+		return fmt.Errorf("complete inbound message: message is not result ready")
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)

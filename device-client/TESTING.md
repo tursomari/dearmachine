@@ -66,12 +66,21 @@ The suite favors behavior-level component tests over isolated mocks:
 - `t.TempDir()` and test-only environment variables keep runs isolated and
   credential-free.
 
-The current automated suite lives in
-`internal/deviceclient/app_test.go`. Test functions follow Go's
-`TestBehaviorDescription` naming convention; shared setup is provided by the
-`testRig` helpers in that file. Current source coverage is strongest for the
-primary email/session/recovery workflows. CLI wiring and many injected failure
-paths remain roadmap work.
+The automated suite is split by responsibility:
+
+- `cmd/device-client/main_test.go` covers CLI parsing, construction, signals,
+  and command dispatch.
+- `internal/deviceclient/app_test.go` covers primary email/session workflows
+  and supplies the shared AgentMail fake.
+- `internal/deviceclient/agentmail_test.go` covers AgentMail error contracts.
+- `internal/deviceclient/mct_test.go` covers subprocess and status failures.
+- `internal/deviceclient/store_test.go` covers SQLite migrations and durable
+  state invariants.
+
+Test functions follow Go's `TestBehaviorDescription` naming convention. The
+shared application rig remains in `app_test.go`; direct tests use smaller
+purpose-built helpers. The HTTP fake and shell fixture support injected API
+errors, malformed responses, command failures, missing output, and delays.
 
 The broader
 [`device_client_test_suite.md`](../docs_staging/device_client_test_suite.md) is

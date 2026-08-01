@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -15,89 +17,176 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		log.Printf("device client: %v", err)
-		os.Exit(1)
+	err := run(os.Args[1:], os.Getenv, defaultDependencies())
+	if err == nil || errors.Is(err, flag.ErrHelp) {
+		return
+	}
+	log.Printf("device client: %v", err)
+	os.Exit(1)
+}
+
+type config struct {
+	inboxID      string
+	dbPath       string
+	projectDir   string
+	model        string
+	mctBinary    string
+	pollInterval time.Duration
+	pidfile      string
+	once         bool
+	verbose      bool
+}
+
+type application interface {
+	Run(context.Context) error
+	RunOnce(context.Context) error
+}
+
+type dependencies struct {
+	openStore  func(string) (*deviceclient.Store, error)
+	newMailbox func(agentmail.Client, string) (*deviceclient.Mailbox, error)
+	newRunner  func(string, string, string) (*deviceclient.MCTRunner, error)
+	newApp     func(
+		*deviceclient.Mailbox,
+		*deviceclient.Store,
+		*deviceclient.MCTRunner,
+		time.Duration,
+		*log.Logger,
+		bool,
+		string,
+	) (application, error)
+	newClient     func() agentmail.Client
+	newLogger     func() *log.Logger
+	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
+	flagOutput    io.Writer
+}
+
+func defaultDependencies() dependencies {
+	return dependencies{
+		openStore:  deviceclient.OpenStore,
+		newMailbox: deviceclient.NewMailbox,
+		newRunner:  deviceclient.NewMCTRunner,
+		newApp: func(
+			mailbox *deviceclient.Mailbox,
+			store *deviceclient.Store,
+			runner *deviceclient.MCTRunner,
+			pollInterval time.Duration,
+			logger *log.Logger,
+			verbose bool,
+			pidfile string,
+		) (application, error) {
+			return deviceclient.New(
+				mailbox,
+				store,
+				runner,
+				pollInterval,
+				logger,
+				verbose,
+				pidfile,
+			)
+		},
+		newClient: func() agentmail.Client { return agentmail.NewClient() },
+		newLogger: func() *log.Logger {
+			return log.New(os.Stderr, "device-client: ", log.LstdFlags)
+		},
+		notifyContext: signal.NotifyContext,
+		flagOutput:    os.Stderr,
 	}
 }
 
-func run() error {
-	var (
-		inboxID = flag.String("inbox-id", "", "AgentMail inbox ID")
-		dbPath  = flag.String(
-			"db",
-			"device-client.db",
-			"SQLite state database path",
-		)
-		projectDir = flag.String(
-			"project",
-			".",
-			"project directory used as the mct-agent working directory",
-		)
-		model = flag.String(
-			"model",
-			"",
-			"optional mct-agent model alias; project default when omitted",
-		)
-		mctBinary = flag.String(
-			"mct-agent",
-			"mct-agent",
-			"path to the mct-agent executable",
-		)
-		pollInterval = flag.Duration(
-			"poll-interval",
-			60*time.Second,
-			"delay after each completed AgentMail poll",
-		)
-		pidfile = flag.String("pidfile", "", "path to write the Device Client process ID")
-		once    = flag.Bool("once", false, "poll once, process available messages, and exit")
-		verbose = flag.Bool("verbose", false, "log every AgentMail poll cycle")
+func parseConfig(args []string, output io.Writer) (config, error) {
+	flags := flag.NewFlagSet("device-client", flag.ContinueOnError)
+	flags.SetOutput(output)
+	var cfg config
+	flags.StringVar(&cfg.inboxID, "inbox-id", "", "AgentMail inbox ID")
+	flags.StringVar(&cfg.dbPath, "db", "device-client.db", "SQLite state database path")
+	flags.StringVar(
+		&cfg.projectDir,
+		"project",
+		".",
+		"project directory used as the mct-agent working directory",
 	)
-	flag.Parse()
+	flags.StringVar(
+		&cfg.model,
+		"model",
+		"",
+		"optional mct-agent model alias; project default when omitted",
+	)
+	flags.StringVar(
+		&cfg.mctBinary,
+		"mct-agent",
+		"mct-agent",
+		"path to the mct-agent executable",
+	)
+	flags.DurationVar(
+		&cfg.pollInterval,
+		"poll-interval",
+		60*time.Second,
+		"delay after each completed AgentMail poll",
+	)
+	flags.StringVar(&cfg.pidfile, "pidfile", "", "path to write the Device Client process ID")
+	flags.BoolVar(&cfg.once, "once", false, "poll once, process available messages, and exit")
+	flags.BoolVar(&cfg.verbose, "verbose", false, "log every AgentMail poll cycle")
+	if err := flags.Parse(args); err != nil {
+		return config{}, err
+	}
+	if flags.NArg() != 0 {
+		return config{}, fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	return cfg, nil
+}
 
-	if *inboxID == "" {
+func run(args []string, getenv func(string) string, deps dependencies) error {
+	flagOutput := deps.flagOutput
+	if flagOutput == nil {
+		flagOutput = io.Discard
+	}
+	cfg, err := parseConfig(args, flagOutput)
+	if err != nil {
+		return err
+	}
+	if cfg.inboxID == "" {
 		return fmt.Errorf("--inbox-id is required")
 	}
-	if os.Getenv("AGENTMAIL_API_KEY") == "" {
+	if getenv("AGENTMAIL_API_KEY") == "" {
 		return fmt.Errorf("AGENTMAIL_API_KEY is required")
 	}
 
-	store, err := deviceclient.OpenStore(*dbPath)
+	store, err := deps.openStore(cfg.dbPath)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 
-	mailbox, err := deviceclient.NewMailbox(agentmail.NewClient(), *inboxID)
+	mailbox, err := deps.newMailbox(deps.newClient(), cfg.inboxID)
 	if err != nil {
 		return err
 	}
-	runner, err := deviceclient.NewMCTRunner(*mctBinary, *projectDir, *model)
+	runner, err := deps.newRunner(cfg.mctBinary, cfg.projectDir, cfg.model)
 	if err != nil {
 		return err
 	}
-	logger := log.New(os.Stderr, "device-client: ", log.LstdFlags)
-	app, err := deviceclient.New(
+	app, err := deps.newApp(
 		mailbox,
 		store,
 		runner,
-		*pollInterval,
-		logger,
-		*verbose,
-		*pidfile,
+		cfg.pollInterval,
+		deps.newLogger(),
+		cfg.verbose,
+		cfg.pidfile,
 	)
 	if err != nil {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(
+	ctx, stop := deps.notifyContext(
 		context.Background(),
 		os.Interrupt,
 		syscall.SIGTERM,
 	)
 	defer stop()
 
-	if *once {
+	if cfg.once {
 		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
