@@ -1,3 +1,5 @@
+github.com/agentmail-to/agentmail-go v0.16.0 h1:L3FBYX4yXaxReA5GS2wgwrmZpDGFIKHGLmrs30nGjY4=
+github.com/agentmail-to/agentmail-go v0.16.0/go.mod h1:3NrKbeXLQKRgb9gj2bmCoN9WXDTy9y9yacV070xpvDU=
 github.com/mattn/go-sqlite3 v1.14.32 h1:JD12Ag3oLy1zQA+BNn74xRgaBbdhbNIDYvQUEuuErjs=
 github.com/mattn/go-sqlite3 v1.14.32/go.mod h1:Uh1q+B4BYcTPb+yiD3kU8Ct7aC0hY9fxUwlHK0RXw+Y=
 github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=

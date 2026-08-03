@@ -16,10 +16,10 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		ids = append(ids, backend.ID)
 		executables = append(executables, backend.Executable)
 	}
-	if !reflect.DeepEqual(ids, []string{"forgecode", "codex", "claude", "pi"}) {
+	if !reflect.DeepEqual(ids, []string{"codex", "forgecode", "claude", "pi"}) {
 		t.Fatalf("backend IDs = %v", ids)
 	}
-	if !reflect.DeepEqual(executables, []string{"mct-forge", "codex", "claude", "pi"}) {
+	if !reflect.DeepEqual(executables, []string{"codex", "mct-forge", "claude", "pi"}) {
 		t.Fatalf("backend executables = %v", executables)
 	}
 
@@ -29,8 +29,8 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		}
 		return "", os.ErrNotExist
 	})
-	if len(detections) != 4 || detections[0].Found || !detections[1].Found ||
-		detections[1].Path != "/test/bin/codex" || detections[2].Found || !detections[3].Found {
+	if len(detections) != 4 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
+		detections[1].Found || detections[2].Found || !detections[3].Found {
 		t.Fatalf("detections = %+v", detections)
 	}
 }
@@ -145,14 +145,14 @@ func TestSetupAgentsConfirmsDetectedDefaultOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetupAgents: %v", err)
 	}
-	want := []string{"forgecode", "codex", "pi"}
+	want := []string{"codex", "forgecode", "pi"}
 	if !reflect.DeepEqual(config.Backends, want) {
 		t.Fatalf("configured backends = %v, want %v", config.Backends, want)
 	}
 	for _, text := range []string{
 		"found   forgecode",
 		"missing claude",
-		"Default priority order: forgecode, codex, pi",
+		"Default priority order: codex, forgecode, pi",
 		"Saved approved backend order",
 	} {
 		if !strings.Contains(output.String(), text) {

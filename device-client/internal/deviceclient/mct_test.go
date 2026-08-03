@@ -266,6 +266,9 @@ func newMCTTestFixture(t *testing.T) *mctTestFixture {
 	if err != nil {
 		t.Fatalf("NewMCTRunner: %v", err)
 	}
+	if err := runner.ConfigureAgentManaged("codex", "/test/agent-manager"); err != nil {
+		t.Fatalf("ConfigureAgentManaged: %v", err)
+	}
 	return &mctTestFixture{
 		runner:     runner,
 		statusFile: statusFile,

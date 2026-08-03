@@ -84,6 +84,8 @@ done
 
 printf '%s' "$text" > "$capture_dir/text-$count"
 printf '%s' "${MACHTIANI_SESSION_ID-}" > "$capture_dir/session-env-$count"
+printf '%s' "${DEARMACHINE_BACKEND-}" > "$capture_dir/backend-env-$count"
+printf '%s' "${AGENT_MANAGER_PATH-}" > "$capture_dir/manager-env-$count"
 
 if [ -z "$final_file" ]; then
 	echo "missing --final-file" >&2

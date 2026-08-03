@@ -34,16 +34,16 @@ type DeviceConfig struct {
 
 var backendRegistry = []Backend{
 	{
-		ID:          "forgecode",
-		DisplayName: "Forgecode",
-		Executable:  "mct-forge",
-		InstallHelp: "Install Forgecode and the mct-forge wrapper, then ensure mct-forge is on PATH.",
-	},
-	{
 		ID:          "codex",
 		DisplayName: "Codex CLI",
 		Executable:  "codex",
 		InstallHelp: "Install Codex CLI, then ensure codex is on PATH.",
+	},
+	{
+		ID:          "forgecode",
+		DisplayName: "Forgecode",
+		Executable:  "mct-forge",
+		InstallHelp: "Install Forgecode and the mct-forge wrapper, then ensure mct-forge is on PATH.",
 	},
 	{
 		ID:          "claude",
@@ -135,6 +135,17 @@ func DefaultDeviceConfigPath(userHomeDir func() (string, error)) (string, error)
 		return "", fmt.Errorf("user home directory is empty")
 	}
 	return filepath.Join(root, ".dearmachine", "config", "device-client.toml"), nil
+}
+
+func DefaultAgentManagerPath(userHomeDir func() (string, error)) (string, error) {
+	root, err := userHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+	if strings.TrimSpace(root) == "" {
+		return "", fmt.Errorf("user home directory is empty")
+	}
+	return filepath.Join(root, ".dearmachine", "agent-manager", "agent-manager"), nil
 }
 
 func LoadDeviceConfig(path string) (DeviceConfig, error) {

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	agentmail "github.com/agentmail-to/agentmail-go"
-	"github.com/dearmachine/device-client-spike/internal/deviceclient"
+	"github.com/dearmachine/dearmachine/internal/deviceclient"
 )
 
 type fakeApplication struct {
@@ -198,6 +198,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				},
 				flagOutput: io.Discard,
 			}
+			configureAgentTestDeps(t, &deps)
 			args := []string{
 				"--inbox-id", "inbox-123",
 				"--db", "configured.db",
@@ -336,7 +337,7 @@ func TestSetupAgentsUsesDearMachineConfigPath(t *testing.T) {
 
 func testDependencies(t *testing.T, app application) dependencies {
 	t.Helper()
-	return dependencies{
+	deps := dependencies{
 		openStore: func(string) (*deviceclient.Store, error) {
 			return deviceclient.OpenStore(filepath.Join(t.TempDir(), "state.db"))
 		},
@@ -361,5 +362,26 @@ func testDependencies(t *testing.T, app application) dependencies {
 			return context.WithCancel(parent)
 		},
 		flagOutput: io.Discard,
+	}
+	configureAgentTestDeps(t, &deps)
+	return deps
+}
+
+func configureAgentTestDeps(t *testing.T, deps *dependencies) {
+	t.Helper()
+	home := t.TempDir()
+	path := filepath.Join(home, ".dearmachine", "config", "device-client.toml")
+	if err := deviceclient.SaveDeviceConfig(path, deviceclient.DeviceConfig{
+		Version:  deviceclient.DeviceConfigVersion,
+		Backends: []string{"codex"},
+	}); err != nil {
+		t.Fatalf("save device config: %v", err)
+	}
+	deps.userHomeDir = func() (string, error) { return home, nil }
+	deps.lookPath = func(executable string) (string, error) {
+		if executable == "codex" {
+			return "/test/bin/codex", nil
+		}
+		return "", os.ErrNotExist
 	}
 }

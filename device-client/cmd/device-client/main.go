@@ -16,7 +16,7 @@ import (
 	"time"
 
 	agentmail "github.com/agentmail-to/agentmail-go"
-	"github.com/dearmachine/device-client-spike/internal/deviceclient"
+	"github.com/dearmachine/dearmachine/internal/deviceclient"
 )
 
 func main() {
@@ -35,6 +35,7 @@ type config struct {
 	model        string
 	mctBinary    string
 	deviceConfig string
+	managerPath  string
 	pollInterval time.Duration
 	pidfile      string
 	once         bool
@@ -136,6 +137,12 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		"",
 		"device configuration path (default: ~/.dearmachine/config/device-client.toml)",
 	)
+	flags.StringVar(
+		&cfg.managerPath,
+		"agent-manager",
+		"",
+		"agent-manager executable (default: ~/.dearmachine/agent-manager/agent-manager)",
+	)
 	flags.DurationVar(
 		&cfg.pollInterval,
 		"poll-interval",
@@ -172,6 +179,10 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if getenv("AGENTMAIL_API_KEY") == "" {
 		return fmt.Errorf("AGENTMAIL_API_KEY is required")
 	}
+	backend, managerPath, err := loadAgentManagedConfig(cfg, deps)
+	if err != nil {
+		return err
+	}
 
 	store, err := deps.openStore(cfg.dbPath)
 	if err != nil {
@@ -185,6 +196,9 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	}
 	runner, err := deps.newRunner(cfg.mctBinary, cfg.projectDir, cfg.model)
 	if err != nil {
+		return err
+	}
+	if err := runner.ConfigureAgentManaged(backend, managerPath); err != nil {
 		return err
 	}
 	app, err := deps.newApp(
@@ -211,6 +225,40 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
+}
+
+func loadAgentManagedConfig(cfg config, deps dependencies) (string, string, error) {
+	configPath := cfg.deviceConfig
+	var err error
+	if configPath == "" {
+		configPath, err = deviceclient.DefaultDeviceConfigPath(deps.userHomeDir)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	deviceConfig, err := deviceclient.LoadDeviceConfig(configPath)
+	if err != nil {
+		return "", "", err
+	}
+	available, err := deviceclient.ResolveDelegationBackends(deviceConfig.Backends, nil, deps.lookPath)
+	if err != nil {
+		return "", "", err
+	}
+	if len(available) == 0 {
+		return "", "", fmt.Errorf("no configured agent backend is currently on PATH")
+	}
+	managerPath := cfg.managerPath
+	if managerPath == "" {
+		managerPath, err = deviceclient.DefaultAgentManagerPath(deps.userHomeDir)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	managerPath, err = filepath.Abs(managerPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve agent-manager path: %w", err)
+	}
+	return available[0].Backend.ID, managerPath, nil
 }
 
 type repeatedStrings []string

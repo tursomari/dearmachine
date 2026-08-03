@@ -80,7 +80,14 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 		t.Fatalf("new session unexpectedly passed --session-id: %v", args)
 	}
 	assertArg(t, args, "--model", "test-model")
+	assertArg(t, args, "--mode", "agent-managed")
 	assertArg(t, args, "--final-file", "")
+	if got := rig.capture("backend-env-1"); got != "codex" {
+		t.Fatalf("DEARMACHINE_BACKEND = %q", got)
+	}
+	if got := rig.capture("manager-env-1"); got != "/test/agent-manager" {
+		t.Fatalf("AGENT_MANAGER_PATH = %q", got)
+	}
 	for _, flag := range []string{"--no-banner", "--no-cursor"} {
 		if !slices.Contains(args, flag) {
 			t.Errorf("missing %s in %v", flag, args)
@@ -647,6 +654,9 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 	runner, err := NewMCTRunner(fixture, t.TempDir(), model)
 	if err != nil {
 		t.Fatalf("NewMCTRunner: %v", err)
+	}
+	if err := runner.ConfigureAgentManaged("codex", "/test/agent-manager"); err != nil {
+		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
 	app, err := New(
 		mailbox,

@@ -1,4 +1,4 @@
-# Device Client Go Spike
+# DearMachine Device Client and Agent Manager
 
 This module proves the Device Client alpha happy path:
 
@@ -10,15 +10,30 @@ This module proves the Device Client alpha happy path:
 5. Send either the final answer or an AskUser clarification as an AgentMail
    reply.
 
-The spike is intentionally single-threaded. It does not implement retries,
+The Device Client is intentionally single-threaded. It does not implement retries,
 preemption, attachments, sandbox policy, or the production transport
 abstraction.
 
 ## Run
 
-The module uses the local SDK checkout at `../.state/agentmail-go` through a Go
-module replacement. SQLite uses `go-sqlite3`, so source builds require CGO and
+SQLite uses `go-sqlite3`, so source builds require CGO and
 a C compiler; the resulting binary has no separate SQLite runtime dependency.
+
+Configure the coding worker first. Configuration is stored at
+`~/.dearmachine/config/device-client.toml`:
+
+```bash
+cd device-client
+go run ./cmd/device-client setup-agents --backend codex
+```
+
+Build the standalone manager at its private path:
+
+```bash
+cd device-client
+mkdir -p ~/.dearmachine/agent-manager
+go build -o ~/.dearmachine/agent-manager/agent-manager ./cmd/agent-manager
+```
 
 ```bash
 cd device-client
@@ -32,7 +47,8 @@ go run ./cmd/device-client \
 ```
 
 The daemon runs `mct-agent sync` before polling begins and again immediately
-before each `mct-agent run`. Pass `--model your-model-alias` to override the
+before each `mct-agent run`. Runs use `--mode agent-managed` and receive
+`DEARMACHINE_BACKEND` and the absolute `AGENT_MANAGER_PATH`. Pass `--model your-model-alias` to override the
 project's configured default model; when omitted, no model flag is forwarded.
 
 The first poll runs immediately. Later polls start 60 seconds after the prior
@@ -58,4 +74,5 @@ needed.
 ```bash
 go test ./...
 go build -o /tmp/device-client-spike ./cmd/device-client
+go build -o /tmp/agent-manager ./cmd/agent-manager
 ```

@@ -27,6 +27,20 @@ type MCTRunner struct {
 	binary     string
 	projectDir string
 	model      string
+	backend    string
+	manager    string
+}
+
+func (r *MCTRunner) ConfigureAgentManaged(backend, managerPath string) error {
+	if strings.TrimSpace(backend) == "" {
+		return fmt.Errorf("agent backend is required")
+	}
+	if strings.TrimSpace(managerPath) == "" || !filepath.IsAbs(managerPath) {
+		return fmt.Errorf("absolute agent-manager path is required")
+	}
+	r.backend = strings.TrimSpace(backend)
+	r.manager = filepath.Clean(managerPath)
+	return nil
 }
 
 type sessionState struct {
@@ -101,8 +115,12 @@ func (r *MCTRunner) Run(
 	if r.model != "" {
 		args = append(args, "--model", r.model)
 	}
+	if r.backend == "" || r.manager == "" {
+		return RunResult{}, fmt.Errorf("agent-managed mode is not configured")
+	}
 	args = append(
 		args,
+		"--mode", "agent-managed",
 		"--no-banner",
 		"--no-cursor",
 		"--final-file", finalPath,
@@ -111,6 +129,10 @@ func (r *MCTRunner) Run(
 	command := exec.CommandContext(ctx, r.binary, args...)
 	command.Dir = r.projectDir
 	command.Env = unsetEnv(os.Environ(), "MACHTIANI_SESSION_ID")
+	command.Env = unsetEnv(command.Env, "DEARMACHINE_BACKEND")
+	command.Env = unsetEnv(command.Env, "AGENT_MANAGER_PATH")
+	command.Env = setEnv(command.Env, "DEARMACHINE_BACKEND", r.backend)
+	command.Env = setEnv(command.Env, "AGENT_MANAGER_PATH", r.manager)
 	if session.IsNew {
 		command.Env = setEnv(command.Env, "MACHTIANI_SESSION_ID", session.SessionID)
 	}

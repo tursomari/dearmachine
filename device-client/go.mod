@@ -1,4 +1,4 @@
-module github.com/dearmachine/device-client-spike
+module github.com/dearmachine/dearmachine
 
 go 1.23.0
 
@@ -13,5 +13,3 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 )
-
-replace github.com/agentmail-to/agentmail-go => ../.state/agentmail-go
