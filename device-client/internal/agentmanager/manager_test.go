@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,10 +17,21 @@ type shellAdapter struct {
 
 func (shellAdapter) Name() string       { return "codex" }
 func (shellAdapter) Executable() string { return "sh" }
-func (a shellAdapter) Command(ctx context.Context, cwd string) *exec.Cmd {
+func (a shellAdapter) Command(ctx context.Context, cwd, _ string) *exec.Cmd {
 	command := exec.CommandContext(ctx, "sh", "-c", a.script)
 	command.Dir = cwd
 	return command
+}
+
+func TestCodexAdapterAddsTicketDirectory(t *testing.T) {
+	command := (CodexAdapter{}).Command(context.Background(), "/project", "/tickets/ticket-1")
+	if command.Dir != "/project" {
+		t.Fatalf("command directory = %q", command.Dir)
+	}
+	want := []string{"codex", "exec", "--json", "--add-dir", "/tickets/ticket-1", "-"}
+	if !slices.Equal(command.Args, want) {
+		t.Fatalf("command args = %v, want %v", command.Args, want)
+	}
 }
 
 func TestTicketLifecycle(t *testing.T) {

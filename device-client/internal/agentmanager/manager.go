@@ -40,15 +40,15 @@ type Meta struct {
 type Adapter interface {
 	Name() string
 	Executable() string
-	Command(context.Context, string) *exec.Cmd
+	Command(context.Context, string, string) *exec.Cmd
 }
 
 type CodexAdapter struct{}
 
 func (CodexAdapter) Name() string       { return "codex" }
 func (CodexAdapter) Executable() string { return "codex" }
-func (CodexAdapter) Command(ctx context.Context, cwd string) *exec.Cmd {
-	command := exec.CommandContext(ctx, "codex", "exec", "--json", "-")
+func (CodexAdapter) Command(ctx context.Context, cwd, writableDir string) *exec.Cmd {
+	command := exec.CommandContext(ctx, "codex", "exec", "--json", "--add-dir", writableDir, "-")
 	command.Dir = cwd
 	return command
 }
@@ -168,7 +168,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		_ = m.finish(meta, StatusCrashed)
 		return err
 	}
-	command := adapter.Command(ctx, meta.CWD)
+	command := adapter.Command(ctx, meta.CWD, m.TicketDir(id))
 	command.Stdin = strings.NewReader(string(request))
 	stdout, err := command.StdoutPipe()
 	if err != nil {
