@@ -8,7 +8,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +34,7 @@ type config struct {
 	projectDir   string
 	model        string
 	mctBinary    string
+	deviceConfig string
 	pollInterval time.Duration
 	pidfile      string
 	once         bool
@@ -59,6 +63,10 @@ type dependencies struct {
 	newLogger     func() *log.Logger
 	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
 	flagOutput    io.Writer
+	stdin         io.Reader
+	stdout        io.Writer
+	lookPath      func(string) (string, error)
+	userHomeDir   func() (string, error)
 }
 
 func defaultDependencies() dependencies {
@@ -91,6 +99,10 @@ func defaultDependencies() dependencies {
 		},
 		notifyContext: signal.NotifyContext,
 		flagOutput:    os.Stderr,
+		stdin:         os.Stdin,
+		stdout:        os.Stdout,
+		lookPath:      exec.LookPath,
+		userHomeDir:   os.UserHomeDir,
 	}
 }
 
@@ -118,6 +130,12 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		"mct-agent",
 		"path to the mct-agent executable",
 	)
+	flags.StringVar(
+		&cfg.deviceConfig,
+		"config",
+		"",
+		"device configuration path (default: ~/.dearmachine/config/device-client.toml)",
+	)
 	flags.DurationVar(
 		&cfg.pollInterval,
 		"poll-interval",
@@ -137,6 +155,9 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 }
 
 func run(args []string, getenv func(string) string, deps dependencies) error {
+	if len(args) > 0 && args[0] == "setup-agents" {
+		return runSetupAgents(args[1:], deps)
+	}
 	flagOutput := deps.flagOutput
 	if flagOutput == nil {
 		flagOutput = io.Discard
@@ -190,4 +211,48 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
+}
+
+type repeatedStrings []string
+
+func (values *repeatedStrings) String() string {
+	return strings.Join(*values, ",")
+}
+
+func (values *repeatedStrings) Set(value string) error {
+	*values = append(*values, value)
+	return nil
+}
+
+func runSetupAgents(args []string, deps dependencies) error {
+	output := deps.flagOutput
+	if output == nil {
+		output = io.Discard
+	}
+	flags := flag.NewFlagSet("setup-agents", flag.ContinueOnError)
+	flags.SetOutput(output)
+	configPath := flags.String("config", "", "device configuration path")
+	var preferred repeatedStrings
+	flags.Var(&preferred, "backend", "approved backend ID in priority order (repeatable)")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected setup-agents arguments: %v", flags.Args())
+	}
+	if *configPath == "" {
+		path, err := deviceclient.DefaultDeviceConfigPath(deps.userHomeDir)
+		if err != nil {
+			return err
+		}
+		*configPath = path
+	}
+	_, err := deviceclient.SetupAgents(
+		deps.stdin,
+		deps.stdout,
+		filepath.Clean(*configPath),
+		preferred,
+		deps.lookPath,
+	)
+	return err
 }

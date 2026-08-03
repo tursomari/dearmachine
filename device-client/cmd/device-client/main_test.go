@@ -306,6 +306,34 @@ func TestRunReturnsSelectedCommandError(t *testing.T) {
 	}
 }
 
+func TestSetupAgentsUsesDearMachineConfigPath(t *testing.T) {
+	home := t.TempDir()
+	var output strings.Builder
+	deps := dependencies{
+		stdin:  strings.NewReader("\n"),
+		stdout: &output,
+		lookPath: func(executable string) (string, error) {
+			if executable == "codex" {
+				return "/test/bin/codex", nil
+			}
+			return "", os.ErrNotExist
+		},
+		userHomeDir: func() (string, error) { return home, nil },
+		flagOutput:  io.Discard,
+	}
+	if err := run([]string{"setup-agents"}, func(string) string { return "" }, deps); err != nil {
+		t.Fatalf("setup-agents: %v", err)
+	}
+	path := filepath.Join(home, ".dearmachine", "config", "device-client.toml")
+	config, err := deviceclient.LoadDeviceConfig(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !slices.Equal(config.Backends, []string{"codex"}) {
+		t.Fatalf("backends = %v", config.Backends)
+	}
+}
+
 func testDependencies(t *testing.T, app application) dependencies {
 	t.Helper()
 	return dependencies{
