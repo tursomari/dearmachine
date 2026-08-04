@@ -19,13 +19,36 @@ abstraction.
 SQLite uses `go-sqlite3`, so source builds require CGO and
 a C compiler; the resulting binary has no separate SQLite runtime dependency.
 
-Configure the coding worker first. Configuration is stored at
-`~/.dearmachine/config/device-client.toml`:
+Configure the agent backends first. Configuration is stored at
+`~/.dearmachine/config/device-client.toml`. Repeat `--backend` to approve more
+than one backend and set their priority order:
 
 ```bash
 cd device-client
-go run ./cmd/device-client setup-agents --backend codex
+go run ./cmd/device-client setup-agents \
+  --backend codex \
+  --backend forgecode
 ```
+
+The setup command verifies that each requested backend is currently on `PATH`,
+asks for confirmation, and writes:
+
+```toml
+version = 1
+backends = ["codex","forgecode"]
+```
+
+`backends` is an approved list in priority order. When Device Client starts, it
+checks the corresponding executables on `PATH`, skips unavailable entries, and
+selects the first available backend. With the example above, it uses Codex when
+`codex` is available and otherwise uses Forgecode when `forge` is available. It
+fails to start if none of the configured backends are available.
+
+Backend selection happens once at startup and remains fixed for the life of the
+Device Client process. The list is startup fallback, not per-ticket failover or
+load balancing: a failed ticket is not retried with the next backend. Restart
+Device Client after changing the configuration. Agent Manager currently has
+execution adapters for `codex` and `forgecode`.
 
 Build the standalone manager at its private path:
 
