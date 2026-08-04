@@ -10,16 +10,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
 
 const DeviceConfigVersion = 1
 
-type Backend struct {
-	ID          string
-	DisplayName string
-	Executable  string
-	InstallHelp string
-}
+type Backend = backendcatalog.Backend
 
 type BackendDetection struct {
 	Backend Backend
@@ -32,40 +29,14 @@ type DeviceConfig struct {
 	Backends []string
 }
 
-var backendRegistry = []Backend{
-	{
-		ID:          "codex",
-		DisplayName: "Codex CLI",
-		Executable:  "codex",
-		InstallHelp: "Install Codex CLI, then ensure codex is on PATH.",
-	},
-	{
-		ID:          "forgecode",
-		DisplayName: "Forgecode",
-		Executable:  "forge",
-		InstallHelp: "Install Forgecode, then ensure forge is on PATH.",
-	},
-	{
-		ID:          "claude",
-		DisplayName: "Claude Code",
-		Executable:  "claude",
-		InstallHelp: "Install Claude Code, then ensure claude is on PATH.",
-	},
-	{
-		ID:          "pi",
-		DisplayName: "Pi",
-		Executable:  "pi",
-		InstallHelp: "Install Pi, then ensure pi is on PATH.",
-	},
-}
-
 func Backends() []Backend {
-	return append([]Backend(nil), backendRegistry...)
+	return backendcatalog.All()
 }
 
 func DetectBackends(lookPath func(string) (string, error)) []BackendDetection {
-	detections := make([]BackendDetection, 0, len(backendRegistry))
-	for _, backend := range backendRegistry {
+	registered := Backends()
+	detections := make([]BackendDetection, 0, len(registered))
+	for _, backend := range registered {
 		path, err := lookPath(backend.Executable)
 		detections = append(detections, BackendDetection{
 			Backend: backend,
@@ -74,56 +45,6 @@ func DetectBackends(lookPath func(string) (string, error)) []BackendDetection {
 		})
 	}
 	return detections
-}
-
-// ResolveDelegationBackends validates the optional override against the user's
-// approved list and performs a fresh PATH lookup for every selected backend.
-func ResolveDelegationBackends(
-	approved,
-	override []string,
-	lookPath func(string) (string, error),
-) ([]BackendDetection, error) {
-	selected, err := selectedBackendIDs(approved, override)
-	if err != nil {
-		return nil, err
-	}
-
-	registry := backendByID()
-	available := make([]BackendDetection, 0, len(selected))
-	for _, id := range selected {
-		backend := registry[id]
-		path, err := lookPath(backend.Executable)
-		if err == nil {
-			available = append(available, BackendDetection{
-				Backend: backend,
-				Path:    path,
-				Found:   true,
-			})
-		}
-	}
-	return available, nil
-}
-
-func selectedBackendIDs(approved, override []string) ([]string, error) {
-	if err := validateBackendIDs(approved, false); err != nil {
-		return nil, fmt.Errorf("validate approved backends: %w", err)
-	}
-	if len(override) == 0 {
-		return append([]string(nil), approved...), nil
-	}
-	if err := validateBackendIDs(override, false); err != nil {
-		return nil, fmt.Errorf("validate backend override: %w", err)
-	}
-	approvedSet := make(map[string]struct{}, len(approved))
-	for _, id := range approved {
-		approvedSet[id] = struct{}{}
-	}
-	for _, id := range override {
-		if _, ok := approvedSet[id]; !ok {
-			return nil, fmt.Errorf("backend override %q was not approved by the user", id)
-		}
-	}
-	return append([]string(nil), override...), nil
 }
 
 func DefaultDeviceConfigPath(userHomeDir func() (string, error)) (string, error) {
@@ -192,7 +113,10 @@ func LoadDeviceConfig(path string) (DeviceConfig, error) {
 		return DeviceConfig{}, fmt.Errorf("device config backends are required")
 	}
 	if err := validateBackendIDs(config.Backends, false); err != nil {
-		return DeviceConfig{}, fmt.Errorf("validate device config: %w", err)
+		return DeviceConfig{}, fmt.Errorf(
+			"validate device config: %w; rerun device-client setup-agents",
+			err,
+		)
 	}
 	return config, nil
 }
@@ -252,7 +176,7 @@ func SetupAgents(
 	}
 	if len(found) == 0 {
 		fmt.Fprintln(output, "\nNo supported coding agents were found. Install help:")
-		for _, backend := range backendRegistry {
+		for _, backend := range Backends() {
 			fmt.Fprintf(output, "  %s: %s\n", backend.DisplayName, backend.InstallHelp)
 		}
 		return DeviceConfig{}, fmt.Errorf("no supported coding agents found on PATH")
@@ -311,29 +235,7 @@ func SetupAgents(
 }
 
 func validateBackendIDs(ids []string, allowEmpty bool) error {
-	if len(ids) == 0 && !allowEmpty {
-		return fmt.Errorf("at least one backend is required")
-	}
-	registry := backendByID()
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		if _, ok := registry[id]; !ok {
-			return fmt.Errorf("unknown backend %q", id)
-		}
-		if _, ok := seen[id]; ok {
-			return fmt.Errorf("duplicate backend %q", id)
-		}
-		seen[id] = struct{}{}
-	}
-	return nil
-}
-
-func backendByID() map[string]Backend {
-	registry := make(map[string]Backend, len(backendRegistry))
-	for _, backend := range backendRegistry {
-		registry[backend.ID] = backend
-	}
-	return registry
+	return backendcatalog.ValidateIDs(ids, allowEmpty)
 }
 
 func splitBackendList(value string) []string {

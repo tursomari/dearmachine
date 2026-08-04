@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
 
 const (
@@ -41,12 +43,16 @@ type Adapter interface {
 	Name() string
 	Executable() string
 	Prepare(context.Context, string, string) (Launch, error)
-	ConsumeStdout(io.Reader, func(string)) error
+	ConsumeStdout(io.Reader, func(string)) (Observation, error)
 }
 
 type Launch struct {
 	Command       *exec.Cmd
 	NativeSession string
+}
+
+type Observation struct {
+	Reply string
 }
 
 type CodexAdapter struct{}
@@ -59,19 +65,34 @@ func (CodexAdapter) Prepare(ctx context.Context, cwd, writableDir string) (Launc
 	return Launch{Command: command}, nil
 }
 
-func (CodexAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) error {
+func (CodexAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) (Observation, error) {
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	observation := Observation{}
 	for scanner.Scan() {
 		var event struct {
 			Type     string `json:"type"`
 			ThreadID string `json:"thread_id"`
+			Item     struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"item"`
 		}
-		if json.Unmarshal(scanner.Bytes(), &event) == nil && event.Type == "thread.started" && event.ThreadID != "" {
+		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+			continue
+		}
+		if event.Type == "thread.started" && event.ThreadID != "" {
 			foundSession(event.ThreadID)
 		}
+		if event.Type == "item.completed" && event.Item.Type == "agent_message" {
+			observation.Reply = event.Item.Text
+		}
 	}
-	return scanner.Err()
+	if scanErr := scanner.Err(); scanErr != nil {
+		_, drainErr := io.Copy(io.Discard, stdout)
+		return observation, errors.Join(scanErr, drainErr)
+	}
+	return observation, nil
 }
 
 type ForgecodeAdapter struct {
@@ -94,9 +115,33 @@ func (a ForgecodeAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, e
 	return Launch{Command: command, NativeSession: sessionID}, nil
 }
 
-func (ForgecodeAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) error {
-	_, err := io.Copy(io.Discard, stdout)
-	return err
+func (ForgecodeAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) (Observation, error) {
+	captured := &tailWriter{limit: 64 * 1024}
+	_, err := io.Copy(captured, stdout)
+	return Observation{Reply: string(captured.content)}, err
+}
+
+type tailWriter struct {
+	limit   int
+	content []byte
+}
+
+func (w *tailWriter) Write(content []byte) (int, error) {
+	written := len(content)
+	if w.limit <= 0 {
+		return written, nil
+	}
+	if len(content) >= w.limit {
+		w.content = append(w.content[:0], content[len(content)-w.limit:]...)
+		return written, nil
+	}
+	overflow := len(w.content) + len(content) - w.limit
+	if overflow > 0 {
+		copy(w.content, w.content[overflow:])
+		w.content = w.content[:len(w.content)-overflow]
+	}
+	w.content = append(w.content, content...)
+	return written, nil
 }
 
 func newUUIDv4() (string, error) {
@@ -113,9 +158,18 @@ func newUUIDv4() (string, error) {
 type Manager struct {
 	Root             string
 	Adapters         map[string]Adapter
+	ApprovedBackends []string
 	ExecutablePath   func() (string, error)
 	LaunchSupervisor func(string) error
 	Now              func() time.Time
+}
+
+type HealthResult struct {
+	Backend string
+	Probe   string
+	Reply   string
+	OK      bool
+	Reason  string
 }
 
 func New(root string) *Manager {
@@ -145,10 +199,45 @@ func DefaultRoot() (string, error) {
 
 func (m *Manager) TicketDir(id string) string { return filepath.Join(m.Root, "tickets", id) }
 
-func (m *Manager) Send(worker, requestPath, cwd string) (string, error) {
-	adapter, ok := m.Adapters[worker]
+func (m *Manager) SetApprovedBackends(ids []string) error {
+	if err := backendcatalog.ValidateIDs(ids, false); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, ok := m.Adapters[id]; !ok {
+			return fmt.Errorf("backend %q has no adapter", id)
+		}
+	}
+	m.ApprovedBackends = append([]string(nil), ids...)
+	return nil
+}
+
+func (m *Manager) BackendList() []string {
+	return append([]string(nil), m.ApprovedBackends...)
+}
+
+func (m *Manager) approvedAdapter(backend string) (Adapter, error) {
+	approved := false
+	for _, id := range m.ApprovedBackends {
+		if id == backend {
+			approved = true
+			break
+		}
+	}
+	if !approved {
+		return nil, fmt.Errorf("backend %q is not approved", backend)
+	}
+	adapter, ok := m.Adapters[backend]
 	if !ok {
-		return "", fmt.Errorf("unknown worker %q", worker)
+		return nil, fmt.Errorf("backend %q has no adapter", backend)
+	}
+	return adapter, nil
+}
+
+func (m *Manager) Send(worker, requestPath, cwd string) (string, error) {
+	adapter, err := m.approvedAdapter(worker)
+	if err != nil {
+		return "", err
 	}
 	if _, err := exec.LookPath(adapter.Executable()); err != nil {
 		return "", fmt.Errorf("worker %q is unavailable: %w", worker, err)
@@ -261,7 +350,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		_, _ = io.Copy(io.Discard, stderr)
 		close(stderrDone)
 	}()
-	stdoutErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
+	_, stdoutErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
 		latest, err := m.readMeta(id)
 		if err == nil {
 			latest.NativeSession = nativeSession
@@ -341,16 +430,100 @@ func (m *Manager) CancelAll() error {
 	return result
 }
 
-func (m *Manager) WorkerHealth(worker string) (string, error) {
-	adapter, ok := m.Adapters[worker]
-	if !ok {
-		return "", fmt.Errorf("unknown worker %q", worker)
-	}
-	path, err := exec.LookPath(adapter.Executable())
+func (m *Manager) BackendHealth(ctx context.Context, backend, cwd string) (HealthResult, error) {
+	result := HealthResult{Backend: backend}
+	adapter, err := m.approvedAdapter(backend)
 	if err != nil {
-		return "", fmt.Errorf("%s unavailable: %w", worker, err)
+		result.Reason = "not-approved"
+		return result, err
 	}
-	return path, nil
+	if _, err := exec.LookPath(adapter.Executable()); err != nil {
+		result.Reason = "unavailable"
+		return result, fmt.Errorf("backend %q is unavailable: %w", backend, err)
+	}
+	cwd, err = filepath.Abs(cwd)
+	if err != nil {
+		result.Reason = "invalid-cwd"
+		return result, fmt.Errorf("resolve health-check working directory: %w", err)
+	}
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		result.Reason = "invalid-cwd"
+		return result, fmt.Errorf("health-check working directory is not accessible: %s", cwd)
+	}
+	probeFile, err := os.CreateTemp(cwd, ".healthcheck-probe-*.txt")
+	if err != nil {
+		result.Reason = "probe-path"
+		return result, fmt.Errorf("reserve health-check probe path: %w", err)
+	}
+	probePath := probeFile.Name()
+	if err := probeFile.Close(); err != nil {
+		_ = os.Remove(probePath)
+		result.Reason = "probe-path"
+		return result, fmt.Errorf("close health-check probe path: %w", err)
+	}
+	if err := os.Remove(probePath); err != nil {
+		result.Reason = "probe-path"
+		return result, fmt.Errorf("prepare health-check probe path: %w", err)
+	}
+	defer os.Remove(probePath)
+	result.Probe = fmt.Sprintf(
+		"Write a file at exactly %s containing exactly this line: DearMachine backend health probe. Do not modify any other file. Then reply briefly that the probe is complete.",
+		probePath,
+	)
+	launch, err := adapter.Prepare(ctx, cwd, cwd)
+	if err != nil {
+		result.Reason = "prepare-failed"
+		return result, err
+	}
+	command := launch.Command
+	command.Stdin = strings.NewReader(result.Probe)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		result.Reason = "stdout-pipe"
+		return result, err
+	}
+	stderr, err := command.StderrPipe()
+	if err != nil {
+		result.Reason = "stderr-pipe"
+		return result, err
+	}
+	if err := command.Start(); err != nil {
+		result.Reason = "launch-failed"
+		return result, err
+	}
+	stderrCapture := &tailWriter{limit: 64 * 1024}
+	stderrDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(stderrCapture, stderr)
+		close(stderrDone)
+	}()
+	observation, stdoutErr := adapter.ConsumeStdout(stdout, func(string) {})
+	waitErr := command.Wait()
+	<-stderrDone
+	result.Reply = strings.TrimSpace(observation.Reply)
+	if ctx.Err() != nil {
+		result.Reason = "cancelled"
+		return result, ctx.Err()
+	}
+	if stdoutErr != nil {
+		result.Reason = "output-failed"
+		return result, stdoutErr
+	}
+	if waitErr != nil {
+		result.Reason = "worker-exit"
+		return result, fmt.Errorf("health-check worker failed: %w: %s", waitErr, strings.TrimSpace(string(stderrCapture.content)))
+	}
+	info, err := os.Stat(probePath)
+	if err != nil || !info.Mode().IsRegular() {
+		result.Reason = "file-not-written"
+		return result, fmt.Errorf("health-check probe file was not written")
+	}
+	if err := os.Remove(probePath); err != nil {
+		result.Reason = "cleanup-failed"
+		return result, fmt.Errorf("remove health-check probe file: %w", err)
+	}
+	result.OK = true
+	return result, nil
 }
 
 func (m *Manager) List(worker string) ([]Meta, error) {

@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
 
 type ResultKind string
@@ -27,18 +29,18 @@ type MCTRunner struct {
 	binary     string
 	projectDir string
 	model      string
-	backend    string
+	backends   []string
 	manager    string
 }
 
-func (r *MCTRunner) ConfigureAgentManaged(backend, managerPath string) error {
-	if strings.TrimSpace(backend) == "" {
-		return fmt.Errorf("agent backend is required")
+func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string) error {
+	if err := backendcatalog.ValidateIDs(backends, false); err != nil {
+		return fmt.Errorf("validate agent backends: %w", err)
 	}
 	if strings.TrimSpace(managerPath) == "" || !filepath.IsAbs(managerPath) {
 		return fmt.Errorf("absolute agent-manager path is required")
 	}
-	r.backend = strings.TrimSpace(backend)
+	r.backends = append([]string(nil), backends...)
 	r.manager = filepath.Clean(managerPath)
 	return nil
 }
@@ -115,8 +117,12 @@ func (r *MCTRunner) Run(
 	if r.model != "" {
 		args = append(args, "--model", r.model)
 	}
-	if r.backend == "" || r.manager == "" {
+	if len(r.backends) == 0 || r.manager == "" {
 		return RunResult{}, fmt.Errorf("agent-managed mode is not configured")
+	}
+	encodedBackends, err := backendcatalog.Encode(r.backends)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("encode configured agent backends: %w", err)
 	}
 	args = append(
 		args,
@@ -130,8 +136,9 @@ func (r *MCTRunner) Run(
 	command.Dir = r.projectDir
 	command.Env = unsetEnv(os.Environ(), "MACHTIANI_SESSION_ID")
 	command.Env = unsetEnv(command.Env, "DEARMACHINE_BACKEND")
+	command.Env = unsetEnv(command.Env, backendcatalog.EnvironmentVariable)
 	command.Env = unsetEnv(command.Env, "AGENT_MANAGER_PATH")
-	command.Env = setEnv(command.Env, "DEARMACHINE_BACKEND", r.backend)
+	command.Env = setEnv(command.Env, backendcatalog.EnvironmentVariable, encodedBackends)
 	command.Env = setEnv(command.Env, "AGENT_MANAGER_PATH", r.manager)
 	if session.IsNew {
 		command.Env = setEnv(command.Env, "MACHTIANI_SESSION_ID", session.SessionID)

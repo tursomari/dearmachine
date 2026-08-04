@@ -38,6 +38,56 @@ func TestNewMCTRunnerValidation(t *testing.T) {
 	}
 }
 
+func TestMCTRunnerPassesApprovedBackendSnapshot(t *testing.T) {
+	fixture := newMCTTestFixture(t)
+	if err := fixture.runner.ConfigureAgentManaged(
+		[]string{"forgecode", "codex"},
+		"/test/agent-manager",
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEARMACHINE_BACKEND", "stale-parent-value")
+	if _, err := fixture.runner.Run(
+		context.Background(),
+		fixture.session,
+		"prompt",
+		fixture.finalPath,
+	); err != nil {
+		t.Fatal(err)
+	}
+	captureDir := os.Getenv("FAKE_MCT_CAPTURE")
+	backends, err := os.ReadFile(filepath.Join(captureDir, "backends-env-1"))
+	if err != nil || string(backends) != `["forgecode","codex"]` {
+		t.Fatalf("DEARMACHINE_BACKENDS = %q, %v", backends, err)
+	}
+	singular, err := os.ReadFile(filepath.Join(captureDir, "backend-env-1"))
+	if err != nil || len(singular) != 0 {
+		t.Fatalf("DEARMACHINE_BACKEND = %q, %v", singular, err)
+	}
+}
+
+func TestConfigureAgentManaged_BackendSliceImmutability(t *testing.T) {
+	fixture := newMCTTestFixture(t)
+	backends := []string{"codex", "forgecode"}
+	if err := fixture.runner.ConfigureAgentManaged(backends, "/test/agent-manager"); err != nil {
+		t.Fatalf("ConfigureAgentManaged: %v", err)
+	}
+	backends[0] = "evil-backend"
+	if _, err := fixture.runner.Run(
+		context.Background(),
+		fixture.session,
+		"prompt",
+		fixture.finalPath,
+	); err != nil {
+		t.Fatal(err)
+	}
+	captureDir := os.Getenv("FAKE_MCT_CAPTURE")
+	backendsEnv, err := os.ReadFile(filepath.Join(captureDir, "backends-env-1"))
+	if err != nil || string(backendsEnv) != `["codex","forgecode"]` {
+		t.Fatalf("DEARMACHINE_BACKENDS = %q, %v", backendsEnv, err)
+	}
+}
+
 func TestMCTRunnerNonzeroExitContracts(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -266,7 +316,7 @@ func newMCTTestFixture(t *testing.T) *mctTestFixture {
 	if err != nil {
 		t.Fatalf("NewMCTRunner: %v", err)
 	}
-	if err := runner.ConfigureAgentManaged("codex", "/test/agent-manager"); err != nil {
+	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager"); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
 	return &mctTestFixture{

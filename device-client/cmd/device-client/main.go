@@ -179,7 +179,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if getenv("AGENTMAIL_API_KEY") == "" {
 		return fmt.Errorf("AGENTMAIL_API_KEY is required")
 	}
-	backend, managerPath, err := loadAgentManagedConfig(cfg, deps)
+	backends, managerPath, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {
 		return err
 	}
@@ -198,7 +198,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
-	if err := runner.ConfigureAgentManaged(backend, managerPath); err != nil {
+	if err := runner.ConfigureAgentManaged(backends, managerPath); err != nil {
 		return err
 	}
 	app, err := deps.newApp(
@@ -227,38 +227,31 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	return app.Run(ctx)
 }
 
-func loadAgentManagedConfig(cfg config, deps dependencies) (string, string, error) {
+func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, error) {
 	configPath := cfg.deviceConfig
 	var err error
 	if configPath == "" {
 		configPath, err = deviceclient.DefaultDeviceConfigPath(deps.userHomeDir)
 		if err != nil {
-			return "", "", err
+			return nil, "", err
 		}
 	}
 	deviceConfig, err := deviceclient.LoadDeviceConfig(configPath)
 	if err != nil {
-		return "", "", err
-	}
-	available, err := deviceclient.ResolveDelegationBackends(deviceConfig.Backends, nil, deps.lookPath)
-	if err != nil {
-		return "", "", err
-	}
-	if len(available) == 0 {
-		return "", "", fmt.Errorf("no configured agent backend is currently on PATH")
+		return nil, "", err
 	}
 	managerPath := cfg.managerPath
 	if managerPath == "" {
 		managerPath, err = deviceclient.DefaultAgentManagerPath(deps.userHomeDir)
 		if err != nil {
-			return "", "", err
+			return nil, "", err
 		}
 	}
 	managerPath, err = filepath.Abs(managerPath)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve agent-manager path: %w", err)
+		return nil, "", fmt.Errorf("resolve agent-manager path: %w", err)
 	}
-	return available[0].Backend.ID, managerPath, nil
+	return append([]string(nil), deviceConfig.Backends...), managerPath, nil
 }
 
 type repeatedStrings []string

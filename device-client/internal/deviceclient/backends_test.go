@@ -16,59 +16,22 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		ids = append(ids, backend.ID)
 		executables = append(executables, backend.Executable)
 	}
-	if !reflect.DeepEqual(ids, []string{"codex", "forgecode", "claude", "pi"}) {
+	if !reflect.DeepEqual(ids, []string{"codex", "forgecode"}) {
 		t.Fatalf("backend IDs = %v", ids)
 	}
-	if !reflect.DeepEqual(executables, []string{"codex", "forge", "claude", "pi"}) {
+	if !reflect.DeepEqual(executables, []string{"codex", "forge"}) {
 		t.Fatalf("backend executables = %v", executables)
 	}
 
 	detections := DetectBackends(func(executable string) (string, error) {
-		if executable == "codex" || executable == "pi" {
+		if executable == "codex" {
 			return "/test/bin/" + executable, nil
 		}
 		return "", os.ErrNotExist
 	})
-	if len(detections) != 4 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
-		detections[1].Found || detections[2].Found || !detections[3].Found {
+	if len(detections) != 2 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
+		detections[1].Found {
 		t.Fatalf("detections = %+v", detections)
-	}
-}
-
-func TestResolveDelegationBackendsRechecksPATHAndEnforcesApproval(t *testing.T) {
-	approved := []string{"forgecode", "codex", "pi"}
-	available := map[string]bool{"forge": true, "codex": true, "pi": false}
-	lookups := 0
-	lookup := func(executable string) (string, error) {
-		lookups++
-		if available[executable] {
-			return "/current/bin/" + executable, nil
-		}
-		return "", os.ErrNotExist
-	}
-
-	resolved, err := ResolveDelegationBackends(approved, nil, lookup)
-	if err != nil {
-		t.Fatalf("ResolveDelegationBackends: %v", err)
-	}
-	if got := detectionIDs(resolved); !reflect.DeepEqual(got, []string{"forgecode", "codex"}) {
-		t.Fatalf("resolved IDs = %v", got)
-	}
-	if lookups != 3 {
-		t.Fatalf("PATH lookups = %d, want 3", lookups)
-	}
-
-	available["forge"] = false
-	available["pi"] = true
-	resolved, err = ResolveDelegationBackends(approved, []string{"pi", "forgecode"}, lookup)
-	if err != nil || !reflect.DeepEqual(detectionIDs(resolved), []string{"pi"}) {
-		t.Fatalf("fresh override resolution = %+v, %v", resolved, err)
-	}
-	if _, err := ResolveDelegationBackends(approved, []string{"claude"}, lookup); err == nil || !strings.Contains(err.Error(), "was not approved") {
-		t.Fatalf("unapproved override error = %v", err)
-	}
-	if _, err := ResolveDelegationBackends(approved, []string{"unknown"}, lookup); err == nil || !strings.Contains(err.Error(), "unknown backend") {
-		t.Fatalf("unknown override error = %v", err)
 	}
 }
 
@@ -114,6 +77,7 @@ func TestDeviceConfigRejectsInvalidBackends(t *testing.T) {
 	}{
 		{name: "missing version", content: `backends = ["codex"]`, want: "version must be 1"},
 		{name: "unknown", content: "version = 1\nbackends = [\"other\"]", want: "unknown backend"},
+		{name: "removed alpha backend", content: "version = 1\nbackends = [\"claude\"]", want: "rerun device-client setup-agents"},
 		{name: "duplicate", content: "version = 1\nbackends = [\"codex\",\"codex\"]", want: "duplicate backend"},
 		{name: "path instead of ID", content: "version = 1\nbackends = [\"/bin/codex\"]", want: "unknown backend"},
 		{name: "unknown key", content: "version = 1\nbackends = [\"codex\"]\npath = \"/bin/codex\"", want: "unknown key"},
@@ -145,14 +109,13 @@ func TestSetupAgentsConfirmsDetectedDefaultOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetupAgents: %v", err)
 	}
-	want := []string{"codex", "forgecode", "pi"}
+	want := []string{"codex", "forgecode"}
 	if !reflect.DeepEqual(config.Backends, want) {
 		t.Fatalf("configured backends = %v, want %v", config.Backends, want)
 	}
 	for _, text := range []string{
 		"found   forgecode",
-		"missing claude",
-		"Default priority order: codex, forgecode, pi",
+		"Default priority order: codex, forgecode",
 		"Saved approved backend order",
 	} {
 		if !strings.Contains(output.String(), text) {
@@ -169,16 +132,16 @@ func TestSetupAgentsConfirmsCustomDetectedOrder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "device-client.toml")
 	var output strings.Builder
 	config, err := SetupAgents(
-		strings.NewReader("n\npi, codex\ny\n"),
+		strings.NewReader("n\nforgecode, codex\ny\n"),
 		&output,
 		path,
 		nil,
-		fakeBackendLookup("codex", "claude", "pi"),
+		fakeBackendLookup("codex", "forge"),
 	)
-	if err != nil || !reflect.DeepEqual(config.Backends, []string{"pi", "codex"}) {
+	if err != nil || !reflect.DeepEqual(config.Backends, []string{"forgecode", "codex"}) {
 		t.Fatalf("custom SetupAgents = %+v, %v", config, err)
 	}
-	if !strings.Contains(output.String(), "Use pi, codex? [y/N]") {
+	if !strings.Contains(output.String(), "Use forgecode, codex? [y/N]") {
 		t.Fatalf("custom confirmation missing:\n%s", output.String())
 	}
 }
@@ -199,7 +162,7 @@ func TestSetupAgentsPreferredOverrideStillRequiresConfirmation(t *testing.T) {
 		strings.NewReader("yes\n"),
 		ioDiscard{},
 		filepath.Join(t.TempDir(), "config.toml"),
-		[]string{"claude"},
+		[]string{"forgecode"},
 		fakeBackendLookup("codex"),
 	); err == nil || !strings.Contains(err.Error(), "was not detected") {
 		t.Fatalf("missing preferred backend error = %v", err)
@@ -219,7 +182,7 @@ func TestSetupAgentsOffersInstallHelpWhenNoneDetected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no supported coding agents") {
 		t.Fatalf("SetupAgents no agents error = %v", err)
 	}
-	for _, want := range []string{"Install help:", "Forgecode:", "Codex CLI:", "Claude Code:", "Pi:"} {
+	for _, want := range []string{"Install help:", "Forgecode:", "Codex CLI:"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("install help missing %q:\n%s", want, output.String())
 		}
@@ -232,11 +195,11 @@ func TestSetupAgentsOffersInstallHelpWhenNoneDetected(t *testing.T) {
 func TestSetupAgentsDoesNotSaveUnconfirmedSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "device-client.toml")
 	_, err := SetupAgents(
-		strings.NewReader("n\npi\nn\n"),
+		strings.NewReader("n\nforgecode\nn\n"),
 		ioDiscard{},
 		path,
 		nil,
-		fakeBackendLookup("pi"),
+		fakeBackendLookup("forge"),
 	)
 	if err == nil || !strings.Contains(err.Error(), "was not confirmed") {
 		t.Fatalf("unconfirmed setup error = %v", err)
@@ -244,14 +207,6 @@ func TestSetupAgentsDoesNotSaveUnconfirmedSelection(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("unconfirmed config was written; stat error = %v", err)
 	}
-}
-
-func detectionIDs(detections []BackendDetection) []string {
-	ids := make([]string, 0, len(detections))
-	for _, detection := range detections {
-		ids = append(ids, detection.Backend.ID)
-	}
-	return ids
 }
 
 func fakeBackendLookup(found ...string) func(string) (string, error) {

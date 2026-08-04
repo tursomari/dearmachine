@@ -82,8 +82,11 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	assertArg(t, args, "--model", "test-model")
 	assertArg(t, args, "--mode", "agent-managed")
 	assertArg(t, args, "--final-file", "")
-	if got := rig.capture("backend-env-1"); got != "codex" {
-		t.Fatalf("DEARMACHINE_BACKEND = %q", got)
+	if got := rig.capture("backends-env-1"); got != `["codex"]` {
+		t.Fatalf("DEARMACHINE_BACKENDS = %q", got)
+	}
+	if got := rig.capture("backend-env-1"); got != "" {
+		t.Fatalf("stale DEARMACHINE_BACKEND leaked into mct-agent: %q", got)
 	}
 	if got := rig.capture("manager-env-1"); got != "/test/agent-manager" {
 		t.Fatalf("AGENT_MANAGER_PATH = %q", got)
@@ -655,7 +658,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 	if err != nil {
 		t.Fatalf("NewMCTRunner: %v", err)
 	}
-	if err := runner.ConfigureAgentManaged("codex", "/test/agent-manager"); err != nil {
+	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager"); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
 	app, err := New(

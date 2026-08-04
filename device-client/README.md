@@ -38,17 +38,20 @@ version = 1
 backends = ["codex","forgecode"]
 ```
 
-`backends` is an approved list in priority order. When Device Client starts, it
-checks the corresponding executables on `PATH`, skips unavailable entries, and
-selects the first available backend. With the example above, it uses Codex when
-`codex` is available and otherwise uses Forgecode when `forge` is available. It
-fails to start if none of the configured backends are available.
+`backends` is an approved list in priority order. Device Client validates and
+loads the complete list at startup, then passes that immutable snapshot to each
+managed mct-agent run. Restart Device Client after changing the configuration.
+Agent Manager currently supports `codex` and `forgecode`; an older config that
+names another backend is rejected with instructions to rerun `setup-agents`.
 
-Backend selection happens once at startup and remains fixed for the life of the
-Device Client process. The list is startup fallback, not per-ticket failover or
-load balancing: a failed ticket is not retried with the next backend. Restart
-Device Client after changing the configuration. Agent Manager currently has
-execution adapters for `codex` and `forgecode`.
+The agent-managed coordinator discovers the approved order with
+`agent-manager backend list`, functionally probes candidates in order with
+`agent-manager backend health <name>`, and explicitly targets the first healthy
+one with `agent-manager ticket send --backend <name> ...`. Health probing asks
+the backend to write and then removes a temporary file in the project, so it
+tests actual tool execution rather than only checking `PATH`. If every approved
+backend fails its probe, the coordinator reports the failure and asks for
+direction; it never falls back to modifying project files directly.
 
 Build the standalone manager at its private path:
 
@@ -70,9 +73,10 @@ go run ./cmd/device-client \
 ```
 
 The daemon runs `mct-agent sync` before polling begins and again immediately
-before each `mct-agent run`. Runs use `--mode agent-managed` and receive
-`DEARMACHINE_BACKEND` and the absolute `AGENT_MANAGER_PATH`. Pass `--model your-model-alias` to override the
-project's configured default model; when omitted, no model flag is forwarded.
+before each `mct-agent run`. Runs use `--mode agent-managed` and receive the
+approved order in `DEARMACHINE_BACKENDS` plus the absolute `AGENT_MANAGER_PATH`.
+Pass `--model your-model-alias` to override the project's configured default
+model; when omitted, no model flag is forwarded.
 
 The first poll runs immediately. Later polls start 60 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single

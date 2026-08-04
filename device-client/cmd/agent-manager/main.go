@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/dearmachine/dearmachine/internal/agentmanager"
+	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
 
 func main() {
@@ -29,9 +30,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return manager.Supervise(context.Background(), args[1])
 	}
 	if len(args) < 2 {
-		return errors.New("usage: agent-manager ticket <send|status|view|cancel> ... | worker <name> <health|status>")
+		return errors.New("usage: agent-manager backend <list|health> ... | ticket <send|status|view|cancel> ... | worker <name> status")
 	}
 	switch args[0] {
+	case "backend":
+		return runBackend(manager, args[1:], stdout)
 	case "ticket":
 		return runTicket(manager, args[1:], stdout, stderr)
 	case "worker":
@@ -47,20 +50,22 @@ func runTicket(manager *agentmanager.Manager, args []string, output, errorsOutpu
 	}
 	switch args[0] {
 	case "send":
-		if len(args) < 2 {
-			return errors.New("worker is required")
-		}
 		flags := flag.NewFlagSet("ticket send", flag.ContinueOnError)
 		flags.SetOutput(errorsOutput)
+		backend := flags.String("backend", "", "approved backend ID")
 		request := flags.String("file", "", "work request file")
 		cwd := flags.String("cwd", "", "worker working directory")
-		if err := flags.Parse(args[2:]); err != nil {
+		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		if flags.NArg() != 0 || strings.TrimSpace(*request) == "" || strings.TrimSpace(*cwd) == "" {
-			return errors.New("ticket send requires --file <path> and --cwd <project-dir>")
+		if flags.NArg() != 0 || strings.TrimSpace(*backend) == "" ||
+			strings.TrimSpace(*request) == "" || strings.TrimSpace(*cwd) == "" {
+			return errors.New("ticket send requires --backend <name>, --file <path>, and --cwd <project-dir>")
 		}
-		id, err := manager.Send(args[1], *request, *cwd)
+		if err := configureApprovedBackends(manager); err != nil {
+			return err
+		}
+		id, err := manager.Send(*backend, *request, *cwd)
 		if err != nil {
 			return err
 		}
@@ -94,30 +99,66 @@ func runTicket(manager *agentmanager.Manager, args []string, output, errorsOutpu
 	}
 }
 
-func runWorker(manager *agentmanager.Manager, args []string, output io.Writer) error {
-	if len(args) != 2 {
-		return errors.New("worker command requires <worker> <health|status>")
+func runBackend(manager *agentmanager.Manager, args []string, output io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("backend command is required")
 	}
-	switch args[1] {
-	case "health":
-		path, err := manager.WorkerHealth(args[0])
-		if err != nil {
-			return err
+	if err := configureApprovedBackends(manager); err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return errors.New("backend list takes no arguments")
 		}
-		fmt.Fprintf(output, "healthy worker=%s path=%s\n", args[0], path)
+		for _, backend := range manager.BackendList() {
+			fmt.Fprintln(output, backend)
+		}
 		return nil
-	case "status":
-		metas, err := manager.List(args[0])
+	case "health":
+		if len(args) != 2 {
+			return errors.New("backend health requires a backend name")
+		}
+		cwd, err := os.Getwd()
 		if err != nil {
-			return err
+			return fmt.Errorf("resolve health-check working directory: %w", err)
 		}
-		for _, meta := range metas {
-			printMeta(output, meta)
+		result, healthErr := manager.BackendHealth(context.Background(), args[1], cwd)
+		fmt.Fprintf(output, "backend=%s\nprobe=%q\nreply=%q\n", result.Backend, result.Probe, result.Reply)
+		if healthErr != nil {
+			fmt.Fprintf(output, "result=fail reason=%s\n", result.Reason)
+			return healthErr
 		}
+		fmt.Fprintln(output, "result=ok")
 		return nil
 	default:
-		return fmt.Errorf("unknown worker command %q", args[1])
+		return fmt.Errorf("unknown backend command %q", args[0])
 	}
+}
+
+func configureApprovedBackends(manager *agentmanager.Manager) error {
+	approved, err := backendcatalog.Decode(os.Getenv(backendcatalog.EnvironmentVariable))
+	if err != nil {
+		return err
+	}
+	if err := manager.SetApprovedBackends(approved); err != nil {
+		return fmt.Errorf("configure approved backends: %w", err)
+	}
+	return nil
+}
+
+func runWorker(manager *agentmanager.Manager, args []string, output io.Writer) error {
+	if len(args) != 2 || args[1] != "status" {
+		return errors.New("worker command requires <worker> status")
+	}
+	metas, err := manager.List(args[0])
+	if err != nil {
+		return err
+	}
+	for _, meta := range metas {
+		printMeta(output, meta)
+	}
+	return nil
 }
 
 func printMeta(output io.Writer, meta agentmanager.Meta) {

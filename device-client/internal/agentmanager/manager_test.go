@@ -3,6 +3,7 @@ package agentmanager
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -11,13 +12,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
 
 type shellAdapter struct {
 	name          string
+	executable    string
 	script        string
 	nativeSession string
-	consumeStdout func(io.Reader, func(string)) error
+	consumeStdout func(io.Reader, func(string)) (Observation, error)
 }
 
 func (a shellAdapter) Name() string {
@@ -26,13 +30,18 @@ func (a shellAdapter) Name() string {
 	}
 	return "codex"
 }
-func (shellAdapter) Executable() string { return "sh" }
+func (a shellAdapter) Executable() string {
+	if a.executable != "" {
+		return a.executable
+	}
+	return "sh"
+}
 func (a shellAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
 	command := exec.CommandContext(ctx, "sh", "-c", a.script)
 	command.Dir = cwd
 	return Launch{Command: command, NativeSession: a.nativeSession}, nil
 }
-func (a shellAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) error {
+func (a shellAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) (Observation, error) {
 	if a.consumeStdout != nil {
 		return a.consumeStdout(stdout, foundSession)
 	}
@@ -79,6 +88,41 @@ func TestNewRegistersForgecodeAdapter(t *testing.T) {
 	adapter, ok := manager.Adapters["forgecode"]
 	if !ok || adapter.Name() != "forgecode" || adapter.Executable() != "forge" {
 		t.Fatalf("forgecode adapter = %#v, found = %v", adapter, ok)
+	}
+}
+
+func TestAdapterRegistryMatchesSharedCatalog(t *testing.T) {
+	manager := New(t.TempDir())
+	registered := backendcatalog.All()
+	if len(manager.Adapters) != len(registered) {
+		t.Fatalf("adapter count = %d, catalog count = %d", len(manager.Adapters), len(registered))
+	}
+	for _, backend := range registered {
+		adapter, ok := manager.Adapters[backend.ID]
+		if !ok {
+			t.Errorf("catalog backend %q has no adapter", backend.ID)
+			continue
+		}
+		if adapter.Name() != backend.ID || adapter.Executable() != backend.Executable {
+			t.Errorf("backend %q adapter = %q/%q, want %q/%q", backend.ID, adapter.Name(), adapter.Executable(), backend.ID, backend.Executable)
+		}
+	}
+	for id := range manager.Adapters {
+		if _, ok := backendcatalog.Lookup(id); !ok {
+			t.Errorf("adapter %q has no catalog entry", id)
+		}
+	}
+}
+
+func TestCodexAdapterObservesSessionAndReply(t *testing.T) {
+	input := strings.NewReader(strings.Join([]string{
+		`{"type":"thread.started","thread_id":"native-123"}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"probe complete"}}`,
+	}, "\n"))
+	var session string
+	observation, err := (CodexAdapter{}).ConsumeStdout(input, func(found string) { session = found })
+	if err != nil || session != "native-123" || observation.Reply != "probe complete" {
+		t.Fatalf("ConsumeStdout = %+v, session=%q, err=%v", observation, session, err)
 	}
 }
 
@@ -223,14 +267,87 @@ func TestForgecodeTicketCancel(t *testing.T) {
 	}
 }
 
-func TestWorkerHealth(t *testing.T) {
-	manager := testManager(t, "exit 0")
-	path, err := manager.WorkerHealth("codex")
-	if err != nil || filepath.Base(path) != "sh" {
-		t.Fatalf("WorkerHealth = %q, %v", path, err)
+func TestBackendHealthFileProbe(t *testing.T) {
+	for _, backend := range []string{"codex", "forgecode"} {
+		t.Run(backend, func(t *testing.T) {
+			bin := t.TempDir()
+			executableName := map[string]string{"codex": "codex", "forgecode": "forge"}[backend]
+			executable := filepath.Join(bin, executableName)
+			script := `#!/bin/sh
+set -eu
+prompt=$(cat)
+path=${prompt#*exactly }
+path=${path%% containing exactly*}
+printf '%s\n' 'DearMachine backend health probe.' > "$path"
+`
+			if backend == "codex" {
+				script += `printf '%s\n' '{"type":"thread.started","thread_id":"health-session"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"probe complete"}}'
+`
+			} else {
+				script += `printf '%s\n' 'forge probe complete'
+`
+			}
+			if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			manager := New(filepath.Join(t.TempDir(), "agent-manager"))
+			if err := manager.SetApprovedBackends([]string{backend}); err != nil {
+				t.Fatal(err)
+			}
+			cwd := t.TempDir()
+			result, err := manager.BackendHealth(context.Background(), backend, cwd)
+			if err != nil || !result.OK || !strings.Contains(result.Reply, "probe complete") {
+				t.Fatalf("BackendHealth = %+v, %v", result, err)
+			}
+			matches, err := filepath.Glob(filepath.Join(cwd, ".healthcheck-probe-*.txt"))
+			if err != nil || len(matches) != 0 {
+				t.Fatalf("health probe artifacts = %v, %v", matches, err)
+			}
+		})
 	}
-	if _, err := manager.WorkerHealth("other"); err == nil {
-		t.Fatal("unknown worker health succeeded")
+}
+
+func TestBackendHealthFailures(t *testing.T) {
+	t.Run("file not written", func(t *testing.T) {
+		manager := testManager(t, `cat >/dev/null; printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"did nothing"}}'`)
+		result, err := manager.BackendHealth(context.Background(), "codex", t.TempDir())
+		if err == nil || result.OK || result.Reason != "file-not-written" {
+			t.Fatalf("BackendHealth = %+v, %v", result, err)
+		}
+	})
+
+	t.Run("missing executable", func(t *testing.T) {
+		manager := New(t.TempDir())
+		manager.Adapters = map[string]Adapter{"codex": shellAdapter{executable: "definitely-not-a-real-agent"}}
+		if err := manager.SetApprovedBackends([]string{"codex"}); err != nil {
+			t.Fatal(err)
+		}
+		result, err := manager.BackendHealth(context.Background(), "codex", t.TempDir())
+		if err == nil || result.Reason != "unavailable" {
+			t.Fatalf("BackendHealth = %+v, %v", result, err)
+		}
+	})
+
+	t.Run("context timeout", func(t *testing.T) {
+		manager := testManager(t, `cat >/dev/null; exec sleep 30`)
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		result, err := manager.BackendHealth(ctx, "codex", t.TempDir())
+		if err == nil || result.Reason != "cancelled" || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("BackendHealth = %+v, %v", result, err)
+		}
+	})
+}
+
+func TestSendRejectsUnapprovedBackend(t *testing.T) {
+	manager := New(t.TempDir())
+	if err := manager.SetApprovedBackends([]string{"codex"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Send("forgecode", writeRequest(t), t.TempDir()); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Fatalf("Send error = %v", err)
 	}
 }
 
@@ -238,6 +355,7 @@ func testManager(t *testing.T, script string) *Manager {
 	t.Helper()
 	manager := New(filepath.Join(t.TempDir(), "agent-manager"))
 	manager.Adapters = map[string]Adapter{"codex": shellAdapter{script: script}}
+	manager.ApprovedBackends = []string{"codex"}
 	manager.LaunchSupervisor = func(id string) error {
 		go func() { _ = manager.Supervise(context.Background(), id) }()
 		return nil
@@ -260,6 +378,7 @@ func testForgeManager(t *testing.T, script string) *Manager {
 			return "029a3702-f8fa-470f-8a28-190c0f53410e", nil
 		}},
 	}
+	manager.ApprovedBackends = []string{"forgecode"}
 	manager.LaunchSupervisor = func(id string) error {
 		go func() { _ = manager.Supervise(context.Background(), id) }()
 		return nil
