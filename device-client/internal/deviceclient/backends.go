@@ -42,8 +42,8 @@ var backendRegistry = []Backend{
 	{
 		ID:          "forgecode",
 		DisplayName: "Forgecode",
-		Executable:  "mct-forge",
-		InstallHelp: "Install Forgecode and the mct-forge wrapper, then ensure mct-forge is on PATH.",
+		Executable:  "forge",
+		InstallHelp: "Install Forgecode, then ensure forge is on PATH.",
 	},
 	{
 		ID:          "claude",

@@ -40,17 +40,74 @@ type Meta struct {
 type Adapter interface {
 	Name() string
 	Executable() string
-	Command(context.Context, string, string) *exec.Cmd
+	Prepare(context.Context, string, string) (Launch, error)
+	ConsumeStdout(io.Reader, func(string)) error
+}
+
+type Launch struct {
+	Command       *exec.Cmd
+	NativeSession string
 }
 
 type CodexAdapter struct{}
 
 func (CodexAdapter) Name() string       { return "codex" }
 func (CodexAdapter) Executable() string { return "codex" }
-func (CodexAdapter) Command(ctx context.Context, cwd, writableDir string) *exec.Cmd {
+func (CodexAdapter) Prepare(ctx context.Context, cwd, writableDir string) (Launch, error) {
 	command := exec.CommandContext(ctx, "codex", "exec", "--json", "--add-dir", writableDir, "-")
 	command.Dir = cwd
-	return command
+	return Launch{Command: command}, nil
+}
+
+func (CodexAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) error {
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var event struct {
+			Type     string `json:"type"`
+			ThreadID string `json:"thread_id"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &event) == nil && event.Type == "thread.started" && event.ThreadID != "" {
+			foundSession(event.ThreadID)
+		}
+	}
+	return scanner.Err()
+}
+
+type ForgecodeAdapter struct {
+	newSessionID func() (string, error)
+}
+
+func (ForgecodeAdapter) Name() string       { return "forgecode" }
+func (ForgecodeAdapter) Executable() string { return "forge" }
+func (a ForgecodeAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
+	newSessionID := a.newSessionID
+	if newSessionID == nil {
+		newSessionID = newUUIDv4
+	}
+	sessionID, err := newSessionID()
+	if err != nil {
+		return Launch{}, fmt.Errorf("generate forge conversation id: %w", err)
+	}
+	command := exec.CommandContext(ctx, "forge", "--conversation-id", sessionID)
+	command.Dir = cwd
+	return Launch{Command: command, NativeSession: sessionID}, nil
+}
+
+func (ForgecodeAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) error {
+	_, err := io.Copy(io.Discard, stdout)
+	return err
+}
+
+func newUUIDv4() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40
+	raw[8] = (raw[8] & 0x3f) | 0x80
+	encoded := hex.EncodeToString(raw[:])
+	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:], nil
 }
 
 type Manager struct {
@@ -63,8 +120,11 @@ type Manager struct {
 
 func New(root string) *Manager {
 	m := &Manager{
-		Root:           filepath.Clean(root),
-		Adapters:       map[string]Adapter{"codex": CodexAdapter{}},
+		Root: filepath.Clean(root),
+		Adapters: map[string]Adapter{
+			"codex":     CodexAdapter{},
+			"forgecode": ForgecodeAdapter{},
+		},
 		ExecutablePath: os.Executable,
 		Now:            time.Now,
 	}
@@ -168,7 +228,12 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		_ = m.finish(meta, StatusCrashed)
 		return err
 	}
-	command := adapter.Command(ctx, meta.CWD, m.TicketDir(id))
+	launch, err := adapter.Prepare(ctx, meta.CWD, m.TicketDir(id))
+	if err != nil {
+		_ = m.finish(meta, StatusCrashed)
+		return err
+	}
+	command := launch.Command
 	command.Stdin = strings.NewReader(string(request))
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -185,6 +250,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		return err
 	}
 	meta.PID = command.Process.Pid
+	meta.NativeSession = launch.NativeSession
 	meta.StartedAt = m.Now()
 	if err := m.writeMeta(meta); err != nil {
 		_ = command.Process.Kill()
@@ -195,22 +261,14 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		_, _ = io.Copy(io.Discard, stderr)
 		close(stderrDone)
 	}()
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		var event struct {
-			Type     string `json:"type"`
-			ThreadID string `json:"thread_id"`
+	stdoutErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
+		latest, err := m.readMeta(id)
+		if err == nil {
+			latest.NativeSession = nativeSession
+			meta = latest
+			_ = m.writeMeta(latest)
 		}
-		if json.Unmarshal(scanner.Bytes(), &event) == nil && event.Type == "thread.started" && event.ThreadID != "" {
-			latest, err := m.readMeta(id)
-			if err == nil {
-				latest.NativeSession = event.ThreadID
-				meta = latest
-				_ = m.writeMeta(latest)
-			}
-		}
-	}
+	})
 	waitErr := command.Wait()
 	<-stderrDone
 	latest, readErr := m.readMeta(id)
@@ -220,7 +278,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	if _, err := os.Stat(filepath.Join(m.TicketDir(id), "ticket-close.md")); err == nil {
 		return m.finish(meta, StatusClosed)
 	}
-	return errors.Join(waitErr, scanner.Err(), m.finish(meta, StatusCrashed))
+	return errors.Join(waitErr, stdoutErr, m.finish(meta, StatusCrashed))
 }
 
 func (m *Manager) Status(id string) (Meta, error) {

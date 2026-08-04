@@ -19,7 +19,7 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 	if !reflect.DeepEqual(ids, []string{"codex", "forgecode", "claude", "pi"}) {
 		t.Fatalf("backend IDs = %v", ids)
 	}
-	if !reflect.DeepEqual(executables, []string{"codex", "mct-forge", "claude", "pi"}) {
+	if !reflect.DeepEqual(executables, []string{"codex", "forge", "claude", "pi"}) {
 		t.Fatalf("backend executables = %v", executables)
 	}
 
@@ -37,7 +37,7 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 
 func TestResolveDelegationBackendsRechecksPATHAndEnforcesApproval(t *testing.T) {
 	approved := []string{"forgecode", "codex", "pi"}
-	available := map[string]bool{"mct-forge": true, "codex": true, "pi": false}
+	available := map[string]bool{"forge": true, "codex": true, "pi": false}
 	lookups := 0
 	lookup := func(executable string) (string, error) {
 		lookups++
@@ -58,7 +58,7 @@ func TestResolveDelegationBackendsRechecksPATHAndEnforcesApproval(t *testing.T) 
 		t.Fatalf("PATH lookups = %d, want 3", lookups)
 	}
 
-	available["mct-forge"] = false
+	available["forge"] = false
 	available["pi"] = true
 	resolved, err = ResolveDelegationBackends(approved, []string{"pi", "forgecode"}, lookup)
 	if err != nil || !reflect.DeepEqual(detectionIDs(resolved), []string{"pi"}) {
@@ -140,7 +140,7 @@ func TestSetupAgentsConfirmsDetectedDefaultOrder(t *testing.T) {
 		&output,
 		path,
 		nil,
-		fakeBackendLookup("mct-forge", "codex", "pi"),
+		fakeBackendLookup("forge", "codex", "pi"),
 	)
 	if err != nil {
 		t.Fatalf("SetupAgents: %v", err)
