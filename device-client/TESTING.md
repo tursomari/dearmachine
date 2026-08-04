@@ -90,3 +90,9 @@ its cases to the executable suite as the corresponding features are built.
 Live AgentMail and real `mct-agent` checks are deliberately excluded from
 `go test ./...`. Keep any future live smoke suite opt-in and credential-gated
 so the default test command remains deterministic and safe.
+
+For a live test of Forgecode, Codex, and ordered fallback through the complete
+email lifecycle, give
+[`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md) to a capable local
+agent. It is a human-guided agent prompt, not an executable test script, and it
+includes the required Forge logout and login gates.
