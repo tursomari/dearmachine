@@ -96,6 +96,30 @@ require a returning start command must provide a background wrapper.
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
 
+## Agent Manager help
+
+Run `agent-manager --help` or `agent-manager help` for the top-level command
+menu. Help is also available for every command group and subcommand:
+
+```bash
+agent-manager backend --help
+agent-manager backend health --help
+agent-manager help ticket
+agent-manager help ticket send
+```
+
+`help`, `-h`, and `--help` are accepted at their applicable command level.
+Syntax errors name the exact help command for that context. For example, an
+incomplete health command reports:
+
+```text
+agent-manager: backend health requires <name>
+Run "agent-manager backend health --help" for usage.
+```
+
+Help is resolved before backend configuration or execution, so asking for
+health help never launches a probe.
+
 ## Verify
 
 ```bash

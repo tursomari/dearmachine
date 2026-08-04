@@ -8,6 +8,117 @@ import (
 	"testing"
 )
 
+func TestHelpMenusAtEveryCommandLevel(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "root flag",
+			args: []string{"--help"},
+			want: []string{"Usage:\n  agent-manager <command>", "backend", "ticket", "worker"},
+		},
+		{
+			name: "root command",
+			args: []string{"help"},
+			want: []string{"Usage:\n  agent-manager <command>"},
+		},
+		{
+			name: "backend group",
+			args: []string{"backend", "--help"},
+			want: []string{"agent-manager backend <command>", "health <name>"},
+		},
+		{
+			name: "backend subcommand flag",
+			args: []string{"backend", "health", "--help"},
+			want: []string{"agent-manager backend health <name>", "transient file-write probe"},
+		},
+		{
+			name: "backend subcommand command",
+			args: []string{"backend", "help", "health"},
+			want: []string{"agent-manager backend health <name>"},
+		},
+		{
+			name: "hierarchical help command",
+			args: []string{"help", "ticket", "send"},
+			want: []string{"agent-manager ticket send --backend <name>", "--file <path>", "--cwd <project-dir>"},
+		},
+		{
+			name: "ticket subcommand flag",
+			args: []string{"ticket", "status", "--help"},
+			want: []string{"agent-manager ticket status <ticket-id>"},
+		},
+		{
+			name: "worker group",
+			args: []string{"worker", "help"},
+			want: []string{"agent-manager worker <name> status"},
+		},
+		{
+			name: "worker status topic",
+			args: []string{"help", "worker", "status"},
+			want: []string{"agent-manager worker <name> status"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output strings.Builder
+			if err := run(test.args, &output, io.Discard); err != nil {
+				t.Fatalf("run help: %v", err)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(output.String(), want) {
+					t.Errorf("help output missing %q:\n%s", want, output.String())
+				}
+			}
+		})
+	}
+}
+
+func TestSyntaxErrorsPointToExactHelpCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing root command", want: `Run "agent-manager --help" for usage.`},
+		{name: "unknown root command", args: []string{"bogus"}, want: `Run "agent-manager --help" for usage.`},
+		{name: "missing backend command", args: []string{"backend"}, want: `Run "agent-manager backend --help" for usage.`},
+		{name: "unknown backend command", args: []string{"backend", "bogus"}, want: `Run "agent-manager backend --help" for usage.`},
+		{name: "backend list arguments", args: []string{"backend", "list", "extra"}, want: `Run "agent-manager backend list --help" for usage.`},
+		{name: "missing health backend", args: []string{"backend", "health"}, want: `Run "agent-manager backend health --help" for usage.`},
+		{name: "missing ticket command", args: []string{"ticket"}, want: `Run "agent-manager ticket --help" for usage.`},
+		{name: "unknown ticket command", args: []string{"ticket", "bogus"}, want: `Run "agent-manager ticket --help" for usage.`},
+		{name: "unknown nested help topic", args: []string{"help", "ticket", "bogus"}, want: `Run "agent-manager ticket --help" for usage.`},
+		{name: "missing send flags", args: []string{"ticket", "send"}, want: `Run "agent-manager ticket send --help" for usage.`},
+		{name: "unknown send flag", args: []string{"ticket", "send", "--bogus"}, want: `Run "agent-manager ticket send --help" for usage.`},
+		{name: "missing ticket id", args: []string{"ticket", "view"}, want: `Run "agent-manager ticket view --help" for usage.`},
+		{name: "invalid worker syntax", args: []string{"worker", "codex"}, want: `Run "agent-manager worker --help" for usage.`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := run(test.args, io.Discard, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("run error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestBackendHealthHelpDoesNotRequireConfigurationOrRunProbe(t *testing.T) {
+	t.Setenv("DEARMACHINE_BACKENDS", "")
+	t.Setenv("PATH", t.TempDir())
+	var output strings.Builder
+	if err := run([]string{"backend", "health", "--help"}, &output, io.Discard); err != nil {
+		t.Fatalf("run backend health help: %v", err)
+	}
+	if !strings.Contains(output.String(), "agent-manager backend health <name>") {
+		t.Fatalf("health help output = %q", output.String())
+	}
+}
+
 func TestBackendListPrintsApprovedPriorityOrderOnly(t *testing.T) {
 	t.Setenv("DEARMACHINE_HOME", t.TempDir())
 	t.Setenv("DEARMACHINE_BACKENDS", `["forgecode","codex"]`)
