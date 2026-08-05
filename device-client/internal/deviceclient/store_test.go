@@ -3,10 +3,49 @@ package deviceclient
 import (
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestOpenStoreCreatesPrivateStateAndTightensExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "state.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	for checkedPath, want := range map[string]os.FileMode{
+		filepath.Dir(path): 0o700,
+		path:               0o600,
+	} {
+		info, err := os.Stat(checkedPath)
+		if err != nil {
+			t.Fatalf("stat %s: %v", checkedPath, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("mode for %s = %o, want %o", checkedPath, got, want)
+		}
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("loosen store mode: %v", err)
+	}
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer store.Close()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat reopened store: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("reopened store mode = %o, want 600", got)
+	}
+}
 
 func TestStoreMigratesPreOutboundMessageIDSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")

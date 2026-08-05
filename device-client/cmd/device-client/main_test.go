@@ -43,7 +43,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse defaults: %v", err)
 	}
-	if defaults.dbPath != "device-client.db" || defaults.projectDir != "." ||
+	if defaults.dbPath != "" || defaults.projectDir != "." ||
 		defaults.mctBinary != "mct-agent" || defaults.pollInterval != time.Minute ||
 		defaults.entryPointRepo != "~/.dearmachine/entrypoint/main" ||
 		defaults.entryPointPrompt != "~/.dearmachine/entrypoint/main/documentation/update-prompt-template.md" {
@@ -78,6 +78,31 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		cfg.pollInterval != 250*time.Millisecond ||
 		cfg.pidfile != "/tmp/device-client.pid" || !cfg.once || !cfg.verbose {
 		t.Fatalf("unexpected parsed config: %+v", cfg)
+	}
+}
+
+func TestRunUsesPrivateDefaultDatabasePath(t *testing.T) {
+	app := &fakeApplication{}
+	deps := testDependencies(t, app)
+	home, err := deps.userHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var opened string
+	deps.openStore = func(path string) (*deviceclient.Store, error) {
+		opened = path
+		return deviceclient.OpenStore(filepath.Join(t.TempDir(), "test.db"))
+	}
+	if err := run(
+		[]string{"--inbox-id", "inbox-123", "--once"},
+		func(string) string { return "test-key" },
+		deps,
+	); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	want := filepath.Join(home, ".dearmachine", "state", "device-client.db")
+	if opened != want {
+		t.Fatalf("opened database = %q, want %q", opened, want)
 	}
 }
 

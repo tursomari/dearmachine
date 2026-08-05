@@ -119,7 +119,12 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	flags.SetOutput(output)
 	var cfg config
 	flags.StringVar(&cfg.inboxID, "inbox-id", "", "AgentMail inbox ID")
-	flags.StringVar(&cfg.dbPath, "db", "device-client.db", "SQLite state database path")
+	flags.StringVar(
+		&cfg.dbPath,
+		"db",
+		"",
+		"SQLite state database path (default: ~/.dearmachine/state/device-client.db)",
+	)
 	flags.StringVar(
 		&cfg.projectDir,
 		"project",
@@ -205,8 +210,15 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
+	dbPath := cfg.dbPath
+	if strings.TrimSpace(dbPath) == "" {
+		dbPath, err = deviceclient.DefaultDeviceDatabasePath(deps.userHomeDir)
+		if err != nil {
+			return err
+		}
+	}
 
-	store, err := deps.openStore(cfg.dbPath)
+	store, err := deps.openStore(dbPath)
 	if err != nil {
 		return err
 	}

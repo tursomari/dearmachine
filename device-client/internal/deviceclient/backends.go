@@ -58,6 +58,17 @@ func DefaultDeviceConfigPath(userHomeDir func() (string, error)) (string, error)
 	return filepath.Join(root, ".dearmachine", "config", "device-client.toml"), nil
 }
 
+func DefaultDeviceDatabasePath(userHomeDir func() (string, error)) (string, error) {
+	root, err := userHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+	if strings.TrimSpace(root) == "" {
+		return "", fmt.Errorf("user home directory is empty")
+	}
+	return filepath.Join(root, ".dearmachine", "state", "device-client.db"), nil
+}
+
 func DefaultAgentManagerPath(userHomeDir func() (string, error)) (string, error) {
 	root, err := userHomeDir()
 	if err != nil {

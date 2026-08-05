@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -39,6 +42,33 @@ const (
 )
 
 func OpenStore(path string) (*Store, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, fmt.Errorf("SQLite store path is empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create SQLite store directory: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("prepare SQLite store: %w", err)
+	}
+	info, statErr := file.Stat()
+	if statErr == nil && !info.Mode().IsRegular() {
+		statErr = fmt.Errorf("path is not a regular file")
+	}
+	chmodErr := file.Chmod(0o600)
+	closeErr := file.Close()
+	if statErr != nil {
+		return nil, fmt.Errorf("inspect SQLite store: %w", statErr)
+	}
+	if chmodErr != nil {
+		return nil, fmt.Errorf("secure SQLite store: %w", chmodErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close prepared SQLite store: %w", closeErr)
+	}
+
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite store: %w", err)

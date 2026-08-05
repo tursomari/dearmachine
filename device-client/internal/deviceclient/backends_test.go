@@ -36,11 +36,14 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 }
 
 func TestDeviceConfigRoundTripAndDefaultPath(t *testing.T) {
-	path, err := DefaultDeviceConfigPath(func() (string, error) {
-		return t.TempDir(), nil
-	})
+	home := t.TempDir()
+	path, err := DefaultDeviceConfigPath(func() (string, error) { return home, nil })
 	if err != nil || !strings.HasSuffix(path, filepath.Join(".dearmachine", "config", "device-client.toml")) {
 		t.Fatalf("DefaultDeviceConfigPath = %q, %v", path, err)
+	}
+	databasePath, err := DefaultDeviceDatabasePath(func() (string, error) { return home, nil })
+	if err != nil || databasePath != filepath.Join(home, ".dearmachine", "state", "device-client.db") {
+		t.Fatalf("DefaultDeviceDatabasePath = %q, %v", databasePath, err)
 	}
 	config := DeviceConfig{
 		Version:  DeviceConfigVersion,

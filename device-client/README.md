@@ -68,9 +68,14 @@ export AGENTMAIL_API_KEY=am_your_key
 go run ./cmd/device-client \
   --inbox-id your-inbox-id \
   --project /path/to/mct/project \
-  --db ./device-client.db \
-  --pidfile ./run/device-client.pid
+  --pidfile ~/.dearmachine/run/device-client.pid
 ```
+
+The default SQLite state database is
+`~/.dearmachine/state/device-client.db`. Device Client creates its state
+directory with mode `0700` and creates or tightens the database to mode `0600`.
+Pass `--db /absolute/path/to/device-client.db` only when an isolated instance
+needs a separate store.
 
 The daemon runs `mct-agent sync` before polling begins and again immediately
 before each `mct-agent run`. Runs use `--mode agent-managed` and receive the
