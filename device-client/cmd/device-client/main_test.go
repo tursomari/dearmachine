@@ -16,6 +16,7 @@ import (
 
 	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/dearmachine/dearmachine/internal/deviceclient"
+	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
 type fakeApplication struct {
@@ -43,7 +44,9 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		t.Fatalf("parse defaults: %v", err)
 	}
 	if defaults.dbPath != "device-client.db" || defaults.projectDir != "." ||
-		defaults.mctBinary != "mct-agent" || defaults.pollInterval != time.Minute {
+		defaults.mctBinary != "mct-agent" || defaults.pollInterval != time.Minute ||
+		defaults.entryPointRepo != "~/.dearmachine/entrypoint/main" ||
+		defaults.entryPointPrompt != "~/.dearmachine/entrypoint/main/documentation/update-prompt-template.md" {
 		t.Fatalf("unexpected defaults: %+v", defaults)
 	}
 	if defaults.inboxID != "" || defaults.model != "" || defaults.pidfile != "" ||
@@ -57,6 +60,8 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		"--project", "/tmp/project",
 		"--model", "fast-model",
 		"--mct-agent", "/tmp/mct-agent",
+		"--entry-point-repo", "/tmp/entrypoint",
+		"--entry-point-prompt", "/tmp/entrypoint/documentation/update.md",
 		"--poll-interval", "250ms",
 		"--pidfile", "/tmp/device-client.pid",
 		"--once",
@@ -68,7 +73,9 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 	}
 	if cfg.inboxID != "inbox-123" || cfg.dbPath != "/tmp/state.db" ||
 		cfg.projectDir != "/tmp/project" || cfg.model != "fast-model" ||
-		cfg.mctBinary != "/tmp/mct-agent" || cfg.pollInterval != 250*time.Millisecond ||
+		cfg.mctBinary != "/tmp/mct-agent" || cfg.entryPointRepo != "/tmp/entrypoint" ||
+		cfg.entryPointPrompt != "/tmp/entrypoint/documentation/update.md" ||
+		cfg.pollInterval != 250*time.Millisecond ||
 		cfg.pidfile != "/tmp/device-client.pid" || !cfg.once || !cfg.verbose {
 		t.Fatalf("unexpected parsed config: %+v", cfg)
 	}
@@ -161,6 +168,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				pidfile      string
 				signals      []os.Signal
 				stopped      bool
+				orchestrator *synctrigger.Orchestrator
 			)
 			ctx := context.WithValue(context.Background(), "test-key", "signal-context")
 			deps := dependencies{
@@ -182,11 +190,13 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 					_ *deviceclient.Mailbox,
 					_ *deviceclient.Store,
 					_ *deviceclient.MCTRunner,
+					gotOrchestrator *synctrigger.Orchestrator,
 					gotInterval time.Duration,
 					_ *log.Logger,
 					gotVerbose bool,
 					gotPIDFile string,
 				) (application, error) {
+					orchestrator = gotOrchestrator
 					pollInterval, verbose, pidfile = gotInterval, gotVerbose, gotPIDFile
 					return app, nil
 				},
@@ -225,6 +235,9 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				pollInterval != 3*time.Second || !verbose || pidfile != "/run/device-client.pid" {
 				t.Fatalf("unexpected construction: db=%q inbox=%q runner=%q,%q,%q app=%s,%v,%q",
 					storePath, inboxID, binary, projectDir, model, pollInterval, verbose, pidfile)
+			}
+			if orchestrator != nil {
+				t.Fatal("expected orchestrator to be nil when entry-point repo is missing")
 			}
 			if len(signals) != 2 || signals[0] != os.Interrupt || signals[1] != syscall.SIGTERM {
 				t.Fatalf("wired signals = %v", signals)
@@ -273,6 +286,7 @@ func TestRunReportsDependencyConstructionFailures(t *testing.T) {
 					*deviceclient.Mailbox,
 					*deviceclient.Store,
 					*deviceclient.MCTRunner,
+					*synctrigger.Orchestrator,
 					time.Duration,
 					*log.Logger,
 					bool,
@@ -349,6 +363,7 @@ func testDependencies(t *testing.T, app application) dependencies {
 			*deviceclient.Mailbox,
 			*deviceclient.Store,
 			*deviceclient.MCTRunner,
+			*synctrigger.Orchestrator,
 			time.Duration,
 			*log.Logger,
 			bool,

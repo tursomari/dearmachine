@@ -12,24 +12,27 @@ import (
 	"time"
 
 	agentmail "github.com/agentmail-to/agentmail-go"
+	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
 type App struct {
-	mailbox      *Mailbox
-	store        *Store
-	runner       *MCTRunner
-	pollInterval time.Duration
-	logger       *log.Logger
-	verbose      bool
-	pidfile      string
-	processed    int
-	threads      map[string]struct{}
+	mailbox          *Mailbox
+	store            *Store
+	runner           *MCTRunner
+	syncOrchestrator *synctrigger.Orchestrator
+	pollInterval     time.Duration
+	logger           *log.Logger
+	verbose          bool
+	pidfile          string
+	processed        int
+	threads          map[string]struct{}
 }
 
 func New(
 	mailbox *Mailbox,
 	store *Store,
 	runner *MCTRunner,
+	syncOrchestrator *synctrigger.Orchestrator,
 	pollInterval time.Duration,
 	logger *log.Logger,
 	verbose bool,
@@ -51,14 +54,15 @@ func New(
 		return nil, fmt.Errorf("logger is required")
 	}
 	return &App{
-		mailbox:      mailbox,
-		store:        store,
-		runner:       runner,
-		pollInterval: pollInterval,
-		logger:       logger,
-		verbose:      verbose,
-		pidfile:      pidfile,
-		threads:      make(map[string]struct{}),
+		mailbox:          mailbox,
+		store:            store,
+		runner:           runner,
+		syncOrchestrator: syncOrchestrator,
+		pollInterval:     pollInterval,
+		logger:           logger,
+		verbose:          verbose,
+		pidfile:          pidfile,
+		threads:          make(map[string]struct{}),
 	}, nil
 }
 
@@ -84,6 +88,11 @@ func (a *App) Run(ctx context.Context) (runErr error) {
 				return nil
 			}
 			return err
+		}
+		if a.syncOrchestrator != nil {
+			if err := a.syncOrchestrator.OrchestrateSync(ctx); err != nil {
+				a.logger.Printf("sync trigger: %v", err)
+			}
 		}
 
 		timer := time.NewTimer(a.pollInterval)

@@ -678,6 +678,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		mailbox,
 		store,
 		runner,
+		nil,
 		time.Minute,
 		log.New(io.Discard, "", 0),
 		false,

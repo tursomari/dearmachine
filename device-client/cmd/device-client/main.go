@@ -17,6 +17,7 @@ import (
 
 	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/dearmachine/dearmachine/internal/deviceclient"
+	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
 func main() {
@@ -29,17 +30,19 @@ func main() {
 }
 
 type config struct {
-	inboxID      string
-	dbPath       string
-	projectDir   string
-	model        string
-	mctBinary    string
-	deviceConfig string
-	managerPath  string
-	pollInterval time.Duration
-	pidfile      string
-	once         bool
-	verbose      bool
+	inboxID          string
+	dbPath           string
+	projectDir       string
+	model            string
+	mctBinary        string
+	deviceConfig     string
+	managerPath      string
+	entryPointRepo   string
+	entryPointPrompt string
+	pollInterval     time.Duration
+	pidfile          string
+	once             bool
+	verbose          bool
 }
 
 type application interface {
@@ -55,6 +58,7 @@ type dependencies struct {
 		*deviceclient.Mailbox,
 		*deviceclient.Store,
 		*deviceclient.MCTRunner,
+		*synctrigger.Orchestrator,
 		time.Duration,
 		*log.Logger,
 		bool,
@@ -79,6 +83,7 @@ func defaultDependencies() dependencies {
 			mailbox *deviceclient.Mailbox,
 			store *deviceclient.Store,
 			runner *deviceclient.MCTRunner,
+			syncOrchestrator *synctrigger.Orchestrator,
 			pollInterval time.Duration,
 			logger *log.Logger,
 			verbose bool,
@@ -88,6 +93,7 @@ func defaultDependencies() dependencies {
 				mailbox,
 				store,
 				runner,
+				syncOrchestrator,
 				pollInterval,
 				logger,
 				verbose,
@@ -142,6 +148,18 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		"agent-manager",
 		"",
 		"agent-manager executable (default: ~/.dearmachine/agent-manager/agent-manager)",
+	)
+	flags.StringVar(
+		&cfg.entryPointRepo,
+		"entry-point-repo",
+		"~/.dearmachine/entrypoint/main",
+		"entry-point repo path (default: ~/.dearmachine/entrypoint/main)",
+	)
+	flags.StringVar(
+		&cfg.entryPointPrompt,
+		"entry-point-prompt",
+		"~/.dearmachine/entrypoint/main/documentation/update-prompt-template.md",
+		"entry-point sync prompt template path (default: ~/.dearmachine/entrypoint/main/documentation/update-prompt-template.md)",
 	)
 	flags.DurationVar(
 		&cfg.pollInterval,
@@ -201,12 +219,18 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err := runner.ConfigureAgentManaged(backends, managerPath); err != nil {
 		return err
 	}
+	logger := deps.newLogger()
+	orchestrator, err := buildOrchestrator(cfg, deps, logger)
+	if err != nil {
+		return err
+	}
 	app, err := deps.newApp(
 		mailbox,
 		store,
 		runner,
+		orchestrator,
 		cfg.pollInterval,
-		deps.newLogger(),
+		logger,
 		cfg.verbose,
 		cfg.pidfile,
 	)
@@ -252,6 +276,49 @@ func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, er
 		return nil, "", fmt.Errorf("resolve agent-manager path: %w", err)
 	}
 	return append([]string(nil), deviceConfig.Backends...), managerPath, nil
+}
+
+func buildOrchestrator(cfg config, deps dependencies, logger *log.Logger) (*synctrigger.Orchestrator, error) {
+	entryPointRepo := strings.TrimSpace(cfg.entryPointRepo)
+	if entryPointRepo == "" {
+		return nil, nil
+	}
+	resolvedRepo, err := resolvePath(entryPointRepo, deps.userHomeDir)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(resolvedRepo); err != nil {
+		return nil, nil
+	}
+	resolvedPrompt, err := resolvePath(cfg.entryPointPrompt, deps.userHomeDir)
+	if err != nil {
+		return nil, err
+	}
+	return &synctrigger.Orchestrator{
+		RepoPath:           resolvedRepo,
+		MCTBinary:          cfg.mctBinary,
+		PromptTemplatePath: resolvedPrompt,
+		Logger:             logger,
+	}, nil
+}
+
+func resolvePath(path string, userHomeDir func() (string, error)) (string, error) {
+	path = strings.TrimSpace(path)
+	if strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		home, err := userHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		if strings.TrimSpace(home) == "" {
+			return "", fmt.Errorf("home directory is empty")
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~"+string(filepath.Separator)))
+	}
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve path %q: %w", path, err)
+	}
+	return resolved, nil
 }
 
 type repeatedStrings []string
