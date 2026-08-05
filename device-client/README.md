@@ -158,6 +158,12 @@ health help never launches a probe.
 
 ## Verify
 
+For an opt-in live smoke test that does not share the normal Device Client's
+inbox or runtime state, follow
+[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md). The ordered Forgecode,
+Codex, and fallback protocol remains in
+[`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md).
+
 ```bash
 go test ./...
 go build -o /tmp/device-client-spike ./cmd/device-client

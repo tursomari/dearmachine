@@ -10,6 +10,11 @@ agent-managed shell session, backend health checks, delegated ticket, and
 selected worker. It deliberately leaves timing and environment discovery to the
 agent so the test does not depend on brittle sleeps, paths, or identifiers.
 
+Use [`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md) for the detailed
+provisioning, isolation, and teardown procedure. Apply it independently to each
+test below so every backend exercise has a dedicated inbox and fresh runtime
+state.
+
 ## Prompt to give the testing agent
 
 You are conducting a live, human-guided integration test of DearMachine's

@@ -99,6 +99,12 @@ Live AgentMail and real `mct-agent` checks are deliberately excluded from
 `go test ./...`. Keep any future live smoke suite opt-in and credential-gated
 so the default test command remains deterministic and safe.
 
+For a single end-to-end exercise with a dedicated AgentMail inbox, database,
+manager home, PID file, and temporary runtime directory, give
+[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md) to a capable local agent.
+It includes safe provisioning, lifecycle observation, and permanent inbox and
+runtime cleanup.
+
 For a live test of Forgecode, Codex, and ordered fallback through the complete
 email lifecycle, give
 [`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md) to a capable local
