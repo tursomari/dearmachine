@@ -195,6 +195,12 @@ health help never launches a probe.
 
 ## Verify
 
+For a recoverable local reset and a rebuild from the current default-branch
+HEAD, follow
+[`UNINSTALL_REINSTALL.md`](./UNINSTALL_REINSTALL.md). The runbook preserves the
+old installation until the fresh instance passes verification and does not
+automatically import remote history into a privacy-cleaned repository.
+
 For an opt-in live smoke test that does not share the normal Device Client's
 inbox or runtime state, follow
 [`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md). The ordered Forgecode,
