@@ -122,6 +122,64 @@ func TestDetectSessionsNonExistentRepo(t *testing.T) {
 	}
 }
 
+func TestDefaultGitLastCommitTimeUsesInternalReadmeMarker(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo, syncedTime := initGitRepoWithCommit(t)
+	syncedCommit := gitCommandOutput(t, repo, "rev-parse", "HEAD")
+
+	laterTime := syncedTime.Add(2 * time.Hour)
+	writeCommitAt(t, repo, "documentation.md", "later", laterTime)
+
+	projectID := "test-entry-point"
+	markerDir := filepath.Join(repo, ".machtiani")
+	if err := os.MkdirAll(markerDir, 0o700); err != nil {
+		t.Fatalf("create project marker dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(markerDir, "project.uuid"), []byte(projectID+"\n"), 0o600); err != nil {
+		t.Fatalf("write project marker: %v", err)
+	}
+	syncStateDir := filepath.Join(
+		home,
+		".machtiani",
+		projectID,
+		"artifacts",
+		"readme",
+		".state",
+	)
+	if err := os.MkdirAll(syncStateDir, 0o700); err != nil {
+		t.Fatalf("create sync state dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(syncStateDir, "last_project_commit"),
+		[]byte(syncedCommit+"\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write sync marker: %v", err)
+	}
+
+	got, err := DefaultGitLastCommitTime(repo)
+	if err != nil {
+		t.Fatalf("DefaultGitLastCommitTime: %v", err)
+	}
+	if !got.Equal(syncedTime) {
+		t.Fatalf("last sync time = %s, want %s", got, syncedTime)
+	}
+}
+
+func TestDefaultGitLastCommitTimeFallsBackToFirstCommit(t *testing.T) {
+	repo, firstTime := initGitRepoWithCommit(t)
+	writeCommitAt(t, repo, "later.txt", "later", firstTime.Add(3*time.Hour))
+
+	got, err := DefaultGitLastCommitTime(repo)
+	if err != nil {
+		t.Fatalf("DefaultGitLastCommitTime: %v", err)
+	}
+	if !got.Equal(firstTime) {
+		t.Fatalf("fallback sync time = %s, want first commit %s", got, firstTime)
+	}
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
@@ -174,4 +232,32 @@ func runGitCommand(t *testing.T, dir string, env []string, args ...string) {
 			strings.TrimSpace(string(output)),
 		)
 	}
+}
+
+func gitCommandOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return strings.TrimSpace(string(output))
+}
+
+func writeCommitAt(t *testing.T, repo, name, content string, commitTime time.Time) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	env := []string{
+		"GIT_AUTHOR_NAME=Synctrigger",
+		"GIT_AUTHOR_EMAIL=test@example.com",
+		"GIT_AUTHOR_DATE=" + commitTime.Format(time.RFC3339),
+		"GIT_COMMITTER_NAME=Synctrigger",
+		"GIT_COMMITTER_EMAIL=test@example.com",
+		"GIT_COMMITTER_DATE=" + commitTime.Format(time.RFC3339),
+	}
+	runGitCommand(t, repo, env, "add", name)
+	runGitCommand(t, repo, env, "commit", "-m", "later", "--date", commitTime.Format(time.RFC3339))
 }

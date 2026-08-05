@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,15 +79,18 @@ func TestOrchestrateNoForkNeeded(t *testing.T) {
 func TestOrchestrateSuccess(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{}
+	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
 	o := &Orchestrator{
 		RepoPath:           "/repo",
 		MCTBinary:          "mct-agent",
 		PromptTemplatePath: "/prompt.md",
+		StatePath:          statePath,
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
 			return []SessionInfo{
-				{SessionID: "older", UpdatedAt: time.Now()},
-				{SessionID: "new", UpdatedAt: time.Now().Add(time.Hour)},
+				{SessionID: "older", UpdatedAt: baseTime},
+				{SessionID: "new", UpdatedAt: baseTime.Add(time.Hour)},
 			}, nil
 		},
 		GitLastCommitTime: func(string) (time.Time, error) {
@@ -123,6 +127,20 @@ func TestOrchestrateSuccess(t *testing.T) {
 				t.Fatalf("command %d arg %d = %q, want %q", i, j, got[j+1], wantArg)
 			}
 		}
+	}
+	checkpoint, err := loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("loadReviewCheckpoint: %v", err)
+	}
+	if checkpoint.SessionID != "new" || !checkpoint.UpdatedAt.Equal(baseTime.Add(time.Hour)) {
+		t.Fatalf("checkpoint = %+v, want newest session", checkpoint)
+	}
+
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("second OrchestrateSync: %v", err)
+	}
+	if len(runner.entries) != len(want) {
+		t.Fatalf("command count after checkpoint = %d, want %d", len(runner.entries), len(want))
 	}
 }
 
@@ -165,6 +183,7 @@ func TestOrchestrateRunFails(t *testing.T) {
 		RepoPath:           "/repo",
 		MCTBinary:          "mct-agent",
 		PromptTemplatePath: "/prompt.md",
+		StatePath:          filepath.Join(t.TempDir(), "sync-trigger.json"),
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
 			return []SessionInfo{
@@ -181,8 +200,47 @@ func TestOrchestrateRunFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "run failed") {
 		t.Fatalf("OrchestrateSync error = %v, want run failure", err)
 	}
-	if len(runner.entries) != 2 {
-		t.Fatalf("command count = %d, want 2", len(runner.entries))
+	if len(runner.entries) != 3 {
+		t.Fatalf("command count = %d, want 3", len(runner.entries))
+	}
+	cleanup := runner.entries[2]
+	if cleanup.name != "mct-agent" || strings.Join(cleanup.args, " ") != "session delete forked-123" {
+		t.Fatalf("cleanup command = %s %s, want session delete", cleanup.name, strings.Join(cleanup.args, " "))
+	}
+}
+
+func TestOrchestrateSyncFailureDoesNotAdvanceCheckpoint(t *testing.T) {
+	t.Parallel()
+	runner := &mockRunner{
+		errAt: map[string]error{"mct-agent sync --include-docs": errors.New("sync failed")},
+	}
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	o := &Orchestrator{
+		RepoPath:           "/repo",
+		MCTBinary:          "mct-agent",
+		PromptTemplatePath: "/prompt.md",
+		StatePath:          statePath,
+		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			return []SessionInfo{
+				{SessionID: "older", UpdatedAt: time.Now()},
+				{SessionID: "new", UpdatedAt: time.Now().Add(time.Hour)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return time.Time{}, nil },
+		RunCommand:        runner.Run,
+	}
+
+	err := o.OrchestrateSync(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "sync failed") {
+		t.Fatalf("OrchestrateSync error = %v, want sync failure", err)
+	}
+	checkpoint, err := loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("loadReviewCheckpoint: %v", err)
+	}
+	if !checkpoint.UpdatedAt.IsZero() {
+		t.Fatalf("checkpoint advanced after sync failure: %+v", checkpoint)
 	}
 }
 

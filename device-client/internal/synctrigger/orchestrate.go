@@ -2,10 +2,15 @@ package synctrigger
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // CommandRunner executes a shell command in a directory.
@@ -28,10 +33,16 @@ type Orchestrator struct {
 	RepoPath           string
 	MCTBinary          string
 	PromptTemplatePath string
+	StatePath          string
 	Lister             SessionLister
 	GitLastCommitTime  GitLastCommitTime
 	RunCommand         CommandRunner
 	Logger             *log.Logger
+}
+
+type reviewCheckpoint struct {
+	SessionID string    `json:"session_id"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OrchestrateSync executes the session fork/run/delete/sync pipeline for
@@ -55,8 +66,26 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	if runCommand == nil {
 		runCommand = DefaultCommandRunner
 	}
+	checkpointPath := o.StatePath
+	if strings.TrimSpace(checkpointPath) == "" {
+		checkpointPath = filepath.Join(o.RepoPath, "state", "sync-trigger.json")
+	}
+	checkpoint, err := loadReviewCheckpoint(checkpointPath)
+	if err != nil {
+		return fmt.Errorf("load sync-trigger checkpoint: %w", err)
+	}
+	effectiveBoundary := func(repoPath string) (time.Time, error) {
+		syncTime, err := gitLastCommitTime(repoPath)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if checkpoint.UpdatedAt.After(syncTime) {
+			return checkpoint.UpdatedAt, nil
+		}
+		return syncTime, nil
+	}
 
-	detected, err := DetectSessions(ctx, o.RepoPath, lister, gitLastCommitTime)
+	detected, err := DetectSessions(ctx, o.RepoPath, lister, effectiveBoundary)
 	if err != nil {
 		return fmt.Errorf("detect sync sessions: %w", err)
 	}
@@ -90,7 +119,32 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		o.PromptTemplatePath,
 	)
 	if err != nil {
-		return fmt.Errorf("run forked session %s: %w: %s", forkedSessionID, err, strings.TrimSpace(string(runOutput)))
+		runErr := fmt.Errorf(
+			"run forked session %s: %w: %s",
+			forkedSessionID,
+			err,
+			strings.TrimSpace(string(runOutput)),
+		)
+		deleteOutput, deleteErr := runCommand(
+			ctx,
+			o.RepoPath,
+			o.MCTBinary,
+			"session",
+			"delete",
+			forkedSessionID,
+		)
+		if deleteErr != nil {
+			return errors.Join(
+				runErr,
+				fmt.Errorf(
+					"delete failed fork %s: %w: %s",
+					forkedSessionID,
+					deleteErr,
+					strings.TrimSpace(string(deleteOutput)),
+				),
+			)
+		}
+		return runErr
 	}
 
 	deleteOutput, err := runCommand(
@@ -109,8 +163,63 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sync: %w: %s", err, strings.TrimSpace(string(syncOutput)))
 	}
+	latest := detected.NewSessions[0]
+	if err := saveReviewCheckpoint(checkpointPath, reviewCheckpoint{
+		SessionID: latest.SessionID,
+		UpdatedAt: latest.UpdatedAt,
+	}); err != nil {
+		return fmt.Errorf("save sync-trigger checkpoint: %w", err)
+	}
 	if o.Logger != nil {
 		o.Logger.Printf("sync trigger: orchestration complete for forked session %s", forkedSessionID)
 	}
 	return nil
+}
+
+func loadReviewCheckpoint(path string) (reviewCheckpoint, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return reviewCheckpoint{}, nil
+		}
+		return reviewCheckpoint{}, err
+	}
+	var checkpoint reviewCheckpoint
+	if err := json.Unmarshal(data, &checkpoint); err != nil {
+		return reviewCheckpoint{}, err
+	}
+	return checkpoint, nil
+}
+
+func saveReviewCheckpoint(path string, checkpoint reviewCheckpoint) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(checkpoint, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".sync-trigger-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }

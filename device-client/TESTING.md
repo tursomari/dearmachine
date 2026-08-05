@@ -78,6 +78,12 @@ The automated suite is split by responsibility:
 - `internal/deviceclient/mct_test.go` covers subprocess and status failures.
 - `internal/deviceclient/store_test.go` covers SQLite migrations and durable
   state invariants.
+- `internal/synctrigger/detection_test.go` covers the internal-README commit
+  boundary, first-commit fallback, session ordering, and the two-session
+  threshold.
+- `internal/synctrigger/orchestrate_test.go` covers fork/run/delete/sync order,
+  failed-run cleanup, checkpoint persistence, no-op suppression, and retry
+  eligibility after sync failure.
 
 Test functions follow Go's `TestBehaviorDescription` naming convention. The
 shared application rig remains in `app_test.go`; direct tests use smaller

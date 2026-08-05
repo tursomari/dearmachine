@@ -101,6 +101,37 @@ require a returning start command must provide a background wrapper.
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
 
+## Entry-point session-driven sync
+
+When `~/.dearmachine/entrypoint/main` exists, Device Client evaluates its
+mct-agent sessions after every successful poll. Override the paths with
+`--entry-point-repo` and `--entry-point-prompt`, or pass an empty
+`--entry-point-repo` to disable the trigger.
+
+For email sessions themselves to count toward the trigger, launch Device
+Client with `--project` set to the entry-point repository. Two distinct new
+threads then create two distinct mct-agent sessions. After two sessions newer
+than the effective review boundary, the trigger:
+
+1. forks the most recently updated session;
+2. resumes the fork with the entry-point update prompt;
+3. deletes the temporary fork;
+4. runs `mct-agent sync --include-docs`; and
+5. records the newest reviewed source session in
+   `state/sync-trigger.json`.
+
+The effective boundary is the newer of that local checkpoint and the project
+commit stored by mct-agent's internal-README sync state. It is deliberately not
+the repository's latest arbitrary commit. The checkpoint prevents an
+immediate repeat when the review correctly decides that no documentation
+change is warranted. It is written only after the complete pipeline succeeds,
+so failed runs remain eligible for retry. A failed forked run is cleaned up
+before the error is reported.
+
+The `state/` checkpoint is host-local and should remain ignored by Git. The
+internal-README marker remains owned by mct-agent under the UUID project store
+in `~/.machtiani/`.
+
 ## Agent Manager help
 
 Run `agent-manager --help` or `agent-manager help` for the top-level command

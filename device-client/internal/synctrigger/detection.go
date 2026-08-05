@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -34,7 +35,8 @@ type DetectionResult struct {
 // SessionLister returns mct-agent sessions for a repo.
 type SessionLister func(ctx context.Context, repoDir string) ([]SessionInfo, error)
 
-// GitLastCommitTime returns the timestamp of the latest commit in a repo.
+// GitLastCommitTime returns the timestamp of the project commit most recently
+// processed by internal-README sync.
 type GitLastCommitTime func(repoDir string) (time.Time, error)
 
 type sessionRecord struct {
@@ -134,7 +136,10 @@ func DefaultSessionLister(ctx context.Context, repoDir string) ([]SessionInfo, e
 	return decoded, nil
 }
 
-// DefaultGitLastCommitTime returns the latest commit timestamp for the repo using git.
+// DefaultGitLastCommitTime returns the timestamp of the project commit most
+// recently processed by mct-agent's internal-README sync. If the project has
+// not been synced yet, it returns the first commit timestamp so later project
+// commits do not erase unsummarized session activity.
 func DefaultGitLastCommitTime(repoDir string) (time.Time, error) {
 	if strings.TrimSpace(repoDir) == "" {
 		return time.Time{}, fmt.Errorf("entry-point repo path is required")
@@ -154,24 +159,95 @@ func DefaultGitLastCommitTime(repoDir string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("entry-point path is not a git repository: %w", err)
 	}
 
-	command := exec.Command("git", "log", "-1", "--format=%cI")
+	commit, found, err := lastSyncedProjectCommit(repoDir)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !found {
+		commit, err = firstProjectCommit(repoDir)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if commit == "" {
+			return time.Time{}, nil
+		}
+	}
+	return projectCommitTime(repoDir, commit)
+}
+
+func lastSyncedProjectCommit(repoDir string) (string, bool, error) {
+	markerPath := filepath.Join(repoDir, ".machtiani", "project.uuid")
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read entry-point project marker: %w", err)
+	}
+	uuid := strings.TrimSpace(string(marker))
+	if uuid == "" || filepath.Base(uuid) != uuid || strings.ContainsAny(uuid, `/\\`) {
+		return "", false, fmt.Errorf("entry-point project marker contains an invalid UUID")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false, fmt.Errorf("resolve home directory: %w", err)
+	}
+	lastCommitPath := filepath.Join(
+		home,
+		".machtiani",
+		uuid,
+		"artifacts",
+		"readme",
+		".state",
+		"last_project_commit",
+	)
+	data, err := os.ReadFile(lastCommitPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read internal-README sync marker: %w", err)
+	}
+	commit := strings.TrimSpace(string(data))
+	if commit == "" {
+		return "", false, nil
+	}
+	return commit, true, nil
+}
+
+func firstProjectCommit(repoDir string) (string, error) {
+	command := exec.Command("git", "rev-list", "--max-parents=0", "HEAD")
 	command.Dir = repoDir
 	output, err := command.CombinedOutput()
 	if err != nil {
 		text := strings.TrimSpace(string(output))
-		if text == "" ||
-			strings.Contains(text, "does not have any commits yet") ||
+		if strings.Contains(text, "does not have any commits yet") ||
 			strings.Contains(text, "bad revision 'HEAD'") ||
 			strings.Contains(text, "unknown revision") {
-			return time.Time{}, nil
+			return "", nil
 		}
-		return time.Time{}, fmt.Errorf("determine last sync commit time: %w: %s", err, text)
+		return "", fmt.Errorf("determine first project commit: %w: %s", err, text)
 	}
+	commits := strings.Fields(string(output))
+	if len(commits) == 0 {
+		return "", nil
+	}
+	return commits[0], nil
+}
 
-	text := strings.TrimSpace(string(output))
-	if text == "" {
-		return time.Time{}, nil
+func projectCommitTime(repoDir, commit string) (time.Time, error) {
+	command := exec.Command("git", "show", "-s", "--format=%cI", commit)
+	command.Dir = repoDir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return time.Time{}, fmt.Errorf(
+			"determine sync commit time for %s: %w: %s",
+			commit,
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
+	text := strings.TrimSpace(string(output))
 	parsed, err := time.Parse(time.RFC3339, text)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse last sync commit time %q: %w", text, err)
