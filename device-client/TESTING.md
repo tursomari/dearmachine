@@ -90,10 +90,10 @@ shared application rig remains in `app_test.go`; direct tests use smaller
 purpose-built helpers. The HTTP fake and shell fixture support injected API
 errors, malformed responses, command failures, missing output, and delays.
 
-The broader
-[`device_client_test_suite.md`](../docs_staging/device_client_test_suite.md) is
-a pseudocode scenario catalog, not a list of tests that all exist today. Add
-its cases to the executable suite as the corresponding features are built.
+The broader local `.scratch/docs_staging/device_client_test_suite.md` is a
+non-versioned pseudocode scenario catalog, not a list of tests that all exist
+today. Add its cases to the executable suite as the corresponding features are
+built.
 
 Live AgentMail and real `mct-agent` checks are deliberately excluded from
 `go test ./...`. Keep any future live smoke suite opt-in and credential-gated

@@ -106,19 +106,15 @@ Current behavior and test commands are documented in
 
 ## Design references and documentation cleanup
 
-- [`docs_staging/device_client_spec.md`](docs_staging/device_client_spec.md)
-  describes the target Device Client, including unimplemented behavior. Keep it
-  labeled as a target specification rather than current operational truth.
-- [`docs_staging/device_client_test_suite.md`](docs_staging/device_client_test_suite.md)
-  is the future scenario catalog. Keep it as design input and link implemented
-  cases to executable tests instead of duplicating those cases in another doc.
-- [`docs_staging/relay_email_spec_sanity_checked.md`](docs_staging/relay_email_spec_sanity_checked.md)
-  remains the target relay capability profile and should stay separate from
-  Device Client runtime documentation.
-- `docs_staging/device-client-config.md` duplicates the Device Client README
-  and implies a model must be supplied even though model selection is optional.
-  Consolidate any still-useful credential/setup guidance into
+- Non-versioned design inputs are kept locally under
+  `.scratch/docs_staging/`. They include the target Device Client specification,
+  future scenario catalog, and relay capability profile. Treat them as design
+  inputs rather than current operational truth.
+- The local `device-client-config.md` staging note duplicates the Device Client
+  README and implies a model must be supplied even though model selection is
+  optional. Consolidate any still-useful credential/setup guidance into
   `device-client/README.md`, then retire the staging note.
 - When the Device Client specification stabilizes against implemented code,
-  promote it from `docs_staging/` to a normal documentation location. Until
-  then, avoid presenting staged design documents as shipped behavior.
+  promote it from `.scratch/docs_staging/` to a normal versioned documentation
+  location. Until then, avoid presenting staged design documents as shipped
+  behavior.
