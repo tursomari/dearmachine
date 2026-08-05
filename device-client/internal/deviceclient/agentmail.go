@@ -172,11 +172,11 @@ func messageTime(message agentmail.Message) time.Time {
 }
 
 func messageBody(message agentmail.Message) string {
-	if message.Text != "" {
-		return message.Text
-	}
 	if message.ExtractedText != "" {
 		return message.ExtractedText
+	}
+	if message.Text != "" {
+		return message.Text
 	}
 	return message.Preview
 }

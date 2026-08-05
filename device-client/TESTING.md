@@ -65,6 +65,8 @@ The suite favors behavior-level component tests over isolated mocks:
   recovery scenarios.
 - `t.TempDir()` and test-only environment variables keep runs isolated and
   credential-free.
+- Follow-up tests verify that AgentMail `extracted_text` supplies only the new
+  user contribution while the existing mct-agent session supplies history.
 
 The automated suite is split by responsibility:
 

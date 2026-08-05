@@ -201,6 +201,41 @@ func TestMailboxReplyRequiresReceiptMessageID(t *testing.T) {
 	}
 }
 
+func TestMessageBodyPrefersExtractedText(t *testing.T) {
+	tests := []struct {
+		name    string
+		message agentmail.Message
+		want    string
+	}{
+		{
+			name: "extracted text",
+			message: agentmail.Message{
+				ExtractedText: "new reply",
+				Text:          "new reply\n\n> quoted history",
+				Preview:       "preview",
+			},
+			want: "new reply",
+		},
+		{
+			name:    "plain text fallback",
+			message: agentmail.Message{Text: "plain body", Preview: "preview"},
+			want:    "plain body",
+		},
+		{
+			name:    "preview fallback",
+			message: agentmail.Message{Preview: "preview"},
+			want:    "preview",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := messageBody(test.message); got != test.want {
+				t.Fatalf("messageBody() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func newMailboxTestPair(t *testing.T) (*fakeAgentMail, *Mailbox) {
 	t.Helper()
 	fake := newFakeAgentMail(t)

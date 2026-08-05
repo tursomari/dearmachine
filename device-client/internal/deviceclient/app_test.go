@@ -132,6 +132,11 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	rig.setAnswer("Initial report.")
 	mustProcess(t, rig)
 	original := rig.session("thread-001")
+	rig.mail.fail(
+		http.MethodGet,
+		fakeInboxPrefix+"threads/thread-001",
+		fakeHTTPResponse{status: http.StatusServiceUnavailable},
+	)
 
 	followUp := testMessage("msg-002", "thread-001", "Add a regional breakdown.")
 	followUp.Subject = "Re: Q3 report"
@@ -151,8 +156,18 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	if got := rig.capture("session-env-2"); got != "" {
 		t.Fatalf("resumed run set MACHTIANI_SESSION_ID = %q", got)
 	}
-	if !strings.Contains(rig.capture("text-2"), "[Previous messages in this thread:]") {
-		t.Fatalf("follow-up prompt omitted history:\n%s", rig.capture("text-2"))
+	prompt := rig.capture("text-2")
+	if !strings.Contains(prompt, "Add a regional breakdown.") {
+		t.Fatalf("follow-up prompt omitted latest message:\n%s", prompt)
+	}
+	for _, unwanted := range []string{
+		"[Previous messages in this thread:]",
+		"Build the Q3 report.",
+		"Initial report.",
+	} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("follow-up prompt contains prior context %q:\n%s", unwanted, prompt)
+		}
 	}
 
 	replies := rig.mail.sentReplies()
@@ -205,32 +220,38 @@ func TestAskUserThenResumeWithAnswer(t *testing.T) {
 	}
 }
 
-func TestQuoteBackMarkersArePreservedWithThreadContext(t *testing.T) {
+func TestFollowUpUsesExtractedTextWithoutQuotedHistory(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-020", "thread-004", "Draft a proposal."))
 	rig.setAnswer("Here is the proposal draft.")
 	mustProcess(t, rig)
 
-	body := "Take a different approach.\n\n" +
-		"> Here is the expanded Section 3:\n" +
-		"> \n" +
-		"> Prior cost analysis.\n\n" +
-		"Focus Section 3 on costs."
-	rig.mail.add(testMessage("msg-024", "thread-004", body))
+	message := testMessage(
+		"msg-024",
+		"thread-004",
+		"Focus Section 3 on costs.\n\n"+strings.Repeat("> quoted history\n", 10_000),
+	)
+	message.ExtractedText = "Focus Section 3 on costs."
+	rig.mail.add(message)
 	rig.setAnswer("I've updated section 3.")
 	mustProcess(t, rig)
 
 	prompt := rig.capture("text-2")
-	for _, want := range []string{
+	if !strings.Contains(prompt, "Focus Section 3 on costs.") {
+		t.Fatalf("prompt omitted extracted text:\n%s", prompt)
+	}
+	for _, unwanted := range []string{
 		"[Previous messages in this thread:]",
 		"Draft a proposal.",
-		"> Here is the expanded Section 3:",
-		"> Prior cost analysis.",
-		"Focus Section 3 on costs.",
+		"Here is the proposal draft.",
+		"> quoted history",
 	} {
-		if !strings.Contains(prompt, want) {
-			t.Errorf("prompt missing %q:\n%s", want, prompt)
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt contains unwanted context %q", unwanted)
 		}
+	}
+	if len(prompt) > 1_000 {
+		t.Fatalf("prompt length = %d, want compact extracted message", len(prompt))
 	}
 	if got := rig.mail.sentReplies()[1].Text; got != "I've updated section 3." {
 		t.Fatalf("reply = %q", got)
@@ -271,11 +292,7 @@ func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 	if session := rig.session(message.ThreadID); session.Sequence != 1 {
 		t.Fatalf("committed sequence before reply = %d, want 1", session.Sequence)
 	}
-	history, err := rig.app.mailbox.Thread(context.Background(), message.ThreadID)
-	if err != nil {
-		t.Fatalf("Thread: %v", err)
-	}
-	prompt := formatPrompt(message, pending.Session, history)
+	prompt := formatPrompt(message, pending.Session)
 	if err := rig.store.MarkRunning(message.MessageID, prompt); err != nil {
 		t.Fatalf("MarkRunning: %v", err)
 	}
@@ -329,11 +346,7 @@ func TestRestartRecoversAcceptedMCTResultWithoutDuplicatePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginMessage: %v", err)
 	}
-	history, err := rig.app.mailbox.Thread(context.Background(), message.ThreadID)
-	if err != nil {
-		t.Fatalf("Thread: %v", err)
-	}
-	prompt := formatPrompt(message, pending.Session, history)
+	prompt := formatPrompt(message, pending.Session)
 	if err := rig.store.MarkRunning(message.MessageID, prompt); err != nil {
 		t.Fatalf("MarkRunning: %v", err)
 	}

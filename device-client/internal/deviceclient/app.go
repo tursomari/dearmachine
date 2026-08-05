@@ -210,18 +210,10 @@ func (a *App) processPending(
 		}
 	}
 
-	var history []agentmail.Message
-	var err error
-	if !pending.Session.IsNew {
-		history, err = a.mailbox.Thread(ctx, message.ThreadID)
-		if err != nil {
-			return err
-		}
-	}
-
-	prompt := formatPrompt(message, pending.Session, history)
+	prompt := formatPrompt(message, pending.Session)
 	finalPath := recoveryResultPath(pending.Session.SessionID, message.MessageID)
 	var result RunResult
+	var err error
 	switch pending.State {
 	case messageReceived:
 		if err := a.store.MarkRunning(message.MessageID, prompt); err != nil {
@@ -322,7 +314,6 @@ func recoveryResultPath(sessionID, messageID string) string {
 func formatPrompt(
 	message agentmail.Message,
 	session Session,
-	history []agentmail.Message,
 ) string {
 	var prompt strings.Builder
 	fmt.Fprintf(
@@ -339,36 +330,10 @@ func formatPrompt(
 		session.Sequence,
 	)
 
-	contextMessages := withoutMessage(history, message.MessageID)
-	if len(contextMessages) > 0 {
-		prompt.WriteString("[Previous messages in this thread:]\n")
-		for _, previous := range contextMessages {
-			role := "Agent"
-			if strings.EqualFold(previous.From, message.From) {
-				role = "User"
-			}
-			fmt.Fprintf(&prompt, "[%s:] %s\n\n", role, messageBody(previous))
-		}
-	}
-
 	prompt.WriteString("\n")
 	prompt.WriteString(messageBody(message))
 	prompt.WriteString("\n\n[End of email]")
 	return prompt.String()
-}
-
-func withoutMessage(messages []agentmail.Message, messageID string) []agentmail.Message {
-	result := make([]agentmail.Message, 0, len(messages))
-	for _, message := range messages {
-		if message.MessageID != messageID {
-			result = append(result, message)
-		}
-	}
-	const contextLimit = 10
-	if len(result) > contextLimit {
-		result = result[len(result)-contextLimit:]
-	}
-	return result
 }
 
 func idempotencyKey(sessionID, messageID string) string {
