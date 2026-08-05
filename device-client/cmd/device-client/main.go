@@ -17,6 +17,7 @@ import (
 
 	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/dearmachine/dearmachine/internal/deviceclient"
+	"github.com/dearmachine/dearmachine/internal/entrypoint"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
@@ -180,6 +181,9 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 }
 
 func run(args []string, getenv func(string) string, deps dependencies) error {
+	if len(args) > 0 && args[0] == "init" {
+		return runInit(args[1:], deps)
+	}
 	if len(args) > 0 && args[0] == "setup-agents" {
 		return runSetupAgents(args[1:], deps)
 	}
@@ -249,6 +253,75 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
+}
+
+func runInit(args []string, deps dependencies) error {
+	output := deps.flagOutput
+	if output == nil {
+		output = io.Discard
+	}
+	stdout := deps.stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	flags := flag.NewFlagSet("init", flag.ContinueOnError)
+	flags.SetOutput(output)
+	repoPath := flags.String(
+		"entry-point-repo",
+		"~/.dearmachine/entrypoint/main",
+		"entry-point repository to initialize",
+	)
+	mctBinary := flags.String("mct-agent", "mct-agent", "path to the mct-agent executable")
+	snapshotDir := flags.String(
+		"snapshot-dir",
+		"",
+		"optional directory for internal README snapshots around each sync",
+	)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected init arguments: %v", flags.Args())
+	}
+	resolvedRepo, err := resolvePath(*repoPath, deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	resolvedSnapshots := ""
+	if strings.TrimSpace(*snapshotDir) != "" {
+		resolvedSnapshots, err = resolvePath(*snapshotDir, deps.userHomeDir)
+		if err != nil {
+			return err
+		}
+	}
+	result, err := entrypoint.Initialize(context.Background(), entrypoint.Options{
+		RepoPath:    resolvedRepo,
+		MCTBinary:   *mctBinary,
+		SnapshotDir: resolvedSnapshots,
+	})
+	if err != nil {
+		return err
+	}
+	if result.AlreadyInitialized {
+		_, err = fmt.Fprintf(stdout, "Entry point already initialized; left unchanged: %s\n", result.RepoPath)
+		return err
+	}
+	if _, err := fmt.Fprintf(
+		stdout,
+		"Initialized entry point: %s\nSkeleton commit: %s\nDearMachine commit: %s\nProject store: %s\n",
+		result.RepoPath,
+		result.SkeletonCommit,
+		result.DearMachineCommit,
+		result.ProjectStore,
+	); err != nil {
+		return err
+	}
+	for _, snapshot := range result.Snapshots {
+		if _, err := fmt.Fprintf(stdout, "Internal README snapshot: %s\n", snapshot); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, error) {

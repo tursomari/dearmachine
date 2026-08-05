@@ -1,0 +1,3 @@
+.machtiani/
+state/*
+!state/README.md

@@ -101,6 +101,38 @@ require a returning start command must provide a background wrapper.
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
 
+## Initialize the machine entry point
+
+Before using entry-point session maintenance on a new machine, initialize its
+user-owned repository:
+
+```bash
+device-client init \
+  --entry-point-repo ~/.dearmachine/entrypoint/main \
+  --mct-agent /absolute/path/to/mct-agent
+```
+
+Initialization configures local Git LFS and bootstraps the repository in two
+stages. The first commit contains only a neutral machine-entry-point skeleton:
+the top-level README, directory READMEs, repository rules, and the generic
+maintenance prompt. mct-agent initializes the project identity and syncs that
+skeleton before DearMachine-specific material exists. The second commit adds
+the DearMachine architecture reference and configuration runbook, followed by
+a second documentation-aware sync.
+
+Pass `--snapshot-dir /absolute/path` to preserve the internal README at all
+four sync boundaries:
+
+- `01-before-skeleton-sync.md`
+- `02-after-skeleton-sync.md`
+- `03-before-dearmachine-sync.md`
+- `04-after-dearmachine-sync.md`
+
+An existing Git repository is reported as already initialized and is left
+unchanged. A non-empty directory that is not a Git repository is rejected.
+Failed first-time initialization leaves an explicit marker in `.git` and will
+not be mistaken for a complete repository on retry.
+
 ## Entry-point session-driven sync
 
 When `~/.dearmachine/entrypoint/main` exists, Device Client evaluates its

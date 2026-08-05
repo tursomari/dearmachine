@@ -321,6 +321,44 @@ func TestRunReturnsSelectedCommandError(t *testing.T) {
 	}
 }
 
+func TestRunInitDoesNotRequireMailConfigurationAndLeavesExistingRepoUntouched(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	readme := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(readme, []byte("existing entry point\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output strings.Builder
+	deps := dependencies{
+		stdout:      &output,
+		flagOutput:  io.Discard,
+		userHomeDir: func() (string, error) { return t.TempDir(), nil },
+	}
+	if err := run(
+		[]string{"init", "--entry-point-repo", repo, "--mct-agent", "/missing/mct-agent"},
+		func(string) string { return "" },
+		deps,
+	); err != nil {
+		t.Fatalf("run init: %v", err)
+	}
+	if !strings.Contains(output.String(), "already initialized; left unchanged") {
+		t.Fatalf("init output = %q", output.String())
+	}
+	data, err := os.ReadFile(readme)
+	if err != nil || string(data) != "existing entry point\n" {
+		t.Fatalf("existing README changed: %q, %v", data, err)
+	}
+}
+
+func TestRunInitRejectsUnexpectedArguments(t *testing.T) {
+	err := runInit([]string{"unexpected"}, dependencies{flagOutput: io.Discard})
+	if err == nil || !strings.Contains(err.Error(), "unexpected init arguments") {
+		t.Fatalf("runInit error = %v", err)
+	}
+}
+
 func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
 	repo := t.TempDir()
 	prompt := filepath.Join(repo, "documentation", "update-prompt.md")

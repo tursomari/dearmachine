@@ -99,6 +99,12 @@ Live AgentMail and real `mct-agent` checks are deliberately excluded from
 `go test ./...`. Keep any future live smoke suite opt-in and credential-gated
 so the default test command remains deterministic and safe.
 
+`internal/entrypoint/bootstrap_test.go` verifies the two-stage seed boundary,
+command order, internal-README snapshots, existing-repository preservation,
+non-empty-directory rejection, and explicit incomplete-bootstrap state. The
+neutral skeleton test also prevents DearMachine-specific framing from entering
+the first sync.
+
 For a single end-to-end exercise with a dedicated AgentMail inbox, database,
 manager home, PID file, and temporary runtime directory, give
 [`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md) to a capable local agent.
