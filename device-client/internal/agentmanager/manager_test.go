@@ -57,7 +57,16 @@ func TestCodexAdapterAddsTicketDirectory(t *testing.T) {
 	if command.Dir != "/project" {
 		t.Fatalf("command directory = %q", command.Dir)
 	}
-	want := []string{"codex", "exec", "--json", "--add-dir", "/tickets/ticket-1", "-"}
+	want := []string{
+		"codex",
+		"exec",
+		"--json",
+		"--sandbox",
+		"workspace-write",
+		"--add-dir",
+		"/tickets/ticket-1",
+		"-",
+	}
 	if !slices.Equal(command.Args, want) {
 		t.Fatalf("command args = %v, want %v", command.Args, want)
 	}

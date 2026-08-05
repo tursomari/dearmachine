@@ -60,7 +60,17 @@ type CodexAdapter struct{}
 func (CodexAdapter) Name() string       { return "codex" }
 func (CodexAdapter) Executable() string { return "codex" }
 func (CodexAdapter) Prepare(ctx context.Context, cwd, writableDir string) (Launch, error) {
-	command := exec.CommandContext(ctx, "codex", "exec", "--json", "--add-dir", writableDir, "-")
+	command := exec.CommandContext(
+		ctx,
+		"codex",
+		"exec",
+		"--json",
+		"--sandbox",
+		"workspace-write",
+		"--add-dir",
+		writableDir,
+		"-",
+	)
 	command.Dir = cwd
 	return Launch{Command: command}, nil
 }
