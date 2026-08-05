@@ -100,9 +100,9 @@ func TestOrchestrateSuccess(t *testing.T) {
 
 	want := [][]string{
 		{"mct-agent", "session", "fork", "new"},
-		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md", "--commit"},
+		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
 		{"mct-agent", "session", "delete", "forked-123"},
-		{"mct-agent", "sync", "--include-docs", "--commit"},
+		{"mct-agent", "sync", "--include-docs"},
 	}
 	if len(runner.entries) != len(want) {
 		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))
@@ -159,7 +159,7 @@ func TestOrchestrateForkFails(t *testing.T) {
 func TestOrchestrateRunFails(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{
-		errAt: map[string]error{"mct-agent run --session-id forked-123 --file /prompt.md --commit": errors.New("run failed")},
+		errAt: map[string]error{"mct-agent run --session-id forked-123 --file /prompt.md": errors.New("run failed")},
 	}
 	o := &Orchestrator{
 		RepoPath:           "/repo",

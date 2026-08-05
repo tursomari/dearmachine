@@ -88,7 +88,6 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		forkedSessionID,
 		"--file",
 		o.PromptTemplatePath,
-		"--commit",
 	)
 	if err != nil {
 		return fmt.Errorf("run forked session %s: %w: %s", forkedSessionID, err, strings.TrimSpace(string(runOutput)))
@@ -106,7 +105,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		return fmt.Errorf("delete forked session %s: %w: %s", forkedSessionID, err, strings.TrimSpace(string(deleteOutput)))
 	}
 
-	syncOutput, err := runCommand(ctx, o.RepoPath, o.MCTBinary, "sync", "--include-docs", "--commit")
+	syncOutput, err := runCommand(ctx, o.RepoPath, o.MCTBinary, "sync", "--include-docs")
 	if err != nil {
 		return fmt.Errorf("sync: %w: %s", err, strings.TrimSpace(string(syncOutput)))
 	}
