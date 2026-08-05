@@ -19,6 +19,11 @@ const (
 	bootstrapMarkerName      = "dearmachine-bootstrap-in-progress"
 )
 
+var localExcludePatterns = []string{
+	"/.scratch/",
+	"/.secrets/",
+}
+
 //go:embed all:seed
 var seedFiles embed.FS
 
@@ -88,6 +93,9 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 	}
 
 	if _, err := run(ctx, runCommand, repoPath, "git", "init"); err != nil {
+		return Result{}, err
+	}
+	if err := installLocalExcludes(repoPath); err != nil {
 		return Result{}, err
 	}
 	markerPath := filepath.Join(repoPath, ".git", bootstrapMarkerName)
@@ -180,6 +188,42 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 
 	completed = true
 	return result, nil
+}
+
+func installLocalExcludes(repoPath string) error {
+	excludePath := filepath.Join(repoPath, ".git", "info", "exclude")
+	data, err := os.ReadFile(excludePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read local Git excludes: %w", err)
+	}
+
+	contents := string(data)
+	lines := strings.Split(contents, "\n")
+	for _, pattern := range localExcludePatterns {
+		present := false
+		for _, line := range lines {
+			if strings.TrimSpace(line) == pattern {
+				present = true
+				break
+			}
+		}
+		if present {
+			continue
+		}
+		if contents != "" && !strings.HasSuffix(contents, "\n") {
+			contents += "\n"
+		}
+		contents += pattern + "\n"
+		lines = append(lines, pattern)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(excludePath), 0o700); err != nil {
+		return fmt.Errorf("create local Git info directory: %w", err)
+	}
+	if err := os.WriteFile(excludePath, []byte(contents), 0o600); err != nil {
+		return fmt.Errorf("write local Git excludes: %w", err)
+	}
+	return nil
 }
 
 func absolutePath(path, label string) (string, error) {

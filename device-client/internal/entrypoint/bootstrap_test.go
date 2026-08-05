@@ -100,6 +100,9 @@ func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
 	assertFileContains(t, filepath.Join(repo, "documentation", "dearmachine-architecture.md"), "one machine-level service")
 	assertFileContains(t, filepath.Join(repo, "process", "configure-dearmachine.md"), "Configure DearMachine")
 	assertFileContains(t, filepath.Join(repo, ".gitignore"), "!state/README.md")
+	assertFileContains(t, filepath.Join(repo, ".git", "info", "exclude"), "/.scratch/")
+	assertFileContains(t, filepath.Join(repo, ".git", "info", "exclude"), "/.secrets/")
+	assertFileNotContains(t, filepath.Join(repo, ".gitignore"), ".secrets")
 	if _, err := os.Stat(filepath.Join(repo, ".git", bootstrapMarkerName)); !os.IsNotExist(err) {
 		t.Fatalf("bootstrap marker remains after success: %v", err)
 	}
@@ -150,6 +153,35 @@ func TestInitializeLeavesExistingRepositoryUntouched(t *testing.T) {
 		t.Fatalf("result/calls = %+v / %v", result, runner.calls)
 	}
 	assertFileContains(t, filepath.Join(repo, "README.md"), "user content")
+}
+
+func TestInstallLocalExcludesPreservesExistingEntriesAndIsIdempotent(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	infoDir := filepath.Join(repo, ".git", "info")
+	if err := os.MkdirAll(infoDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	excludePath := filepath.Join(infoDir, "exclude")
+	if err := os.WriteFile(excludePath, []byte("/local-only/\n/.scratch/\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := installLocalExcludes(repo); err != nil {
+		t.Fatalf("installLocalExcludes first call: %v", err)
+	}
+	if err := installLocalExcludes(repo); err != nil {
+		t.Fatalf("installLocalExcludes second call: %v", err)
+	}
+
+	data, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/local-only/\n/.scratch/\n/.secrets/\n"
+	if string(data) != want {
+		t.Fatalf("exclude contents = %q, want %q", data, want)
+	}
 }
 
 func TestInitializeRejectsNonEmptyNonRepository(t *testing.T) {
@@ -223,5 +255,16 @@ func assertFileContains(t *testing.T, path, want string) {
 	}
 	if !strings.Contains(string(data), want) {
 		t.Fatalf("%s does not contain %q:\n%s", path, want, data)
+	}
+}
+
+func assertFileNotContains(t *testing.T, path, unwanted string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if strings.Contains(string(data), unwanted) {
+		t.Fatalf("%s unexpectedly contains %q:\n%s", path, unwanted, data)
 	}
 }

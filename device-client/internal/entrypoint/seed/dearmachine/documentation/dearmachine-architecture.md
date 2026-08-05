@@ -30,7 +30,12 @@ backends = ["codex", "forgecode"]
 ```
 
 Backend order is priority order. At least one supported backend is required.
-The AgentMail API credential must be present in the Device Client environment.
+The provisioned mailbox address and other sensitive operational notes belong in
+`.scratch/`, while API credentials and other secret values belong in
+`.secrets/`. Bootstrap adds both directories to the repository's local
+`.git/info/exclude`; neither directory is represented in tracked `.gitignore`.
+The Device Client process must load the AgentMail API credential from the local
+secret store into its environment.
 
 Important launch settings include:
 
