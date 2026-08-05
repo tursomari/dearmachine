@@ -182,6 +182,14 @@ transcript, or version-controlled files.
    operator's database disposition. If it is reset or delete, quote the exact
    authorization in the execution record before proceeding.
 
+6. Inventory legacy database locations as well as the configured path. Older
+   Device Client revisions could place `device-client.db` in the project working
+   directory. Search the configured project, DearMachine runtime and backup
+   roots, prior test runtimes, and the user's approved home-directory scope for
+   Device Client database names and SQLite sidecars. Classify every match by
+   schema and path; never infer that an arbitrary `.db` file belongs to
+   DearMachine.
+
 ## Phase 2: Stop and perform a recoverable uninstall
 
 1. Stop the Device Client gracefully. Wait for shutdown, then confirm that the
@@ -401,10 +409,10 @@ test ! -e "$old_database-shm" || rm -- "$old_database-shm"
 
 For a custom database, substitute the exact backup path recorded during
 preflight. Historical Device Client snapshots may also exist under a
-`backups/` directory or an old test runtime. Delete each only after matching it
-to the preflight inventory and receiving explicit authorization for that
-specific cleanup scope. Use exact validated paths, not a wildcard or a broad
-recursive command.
+`backups/` directory, an old test runtime, or a legacy project root. Delete each
+only after matching it to the preflight inventory and receiving explicit
+authorization for that specific cleanup scope. Use exact validated paths, not
+a wildcard or a broad recursive command.
 
 Do not recursively delete the complete uninstall backup or other DearMachine or
 Machtiani state unless the operator separately requested a completely fresh
