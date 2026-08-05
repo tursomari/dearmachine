@@ -220,7 +220,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return err
 	}
 	logger := deps.newLogger()
-	orchestrator, err := buildOrchestrator(cfg, deps, logger)
+	orchestrator, err := buildOrchestrator(cfg, deps, logger, backends, managerPath)
 	if err != nil {
 		return err
 	}
@@ -278,7 +278,13 @@ func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, er
 	return append([]string(nil), deviceConfig.Backends...), managerPath, nil
 }
 
-func buildOrchestrator(cfg config, deps dependencies, logger *log.Logger) (*synctrigger.Orchestrator, error) {
+func buildOrchestrator(
+	cfg config,
+	deps dependencies,
+	logger *log.Logger,
+	backends []string,
+	managerPath string,
+) (*synctrigger.Orchestrator, error) {
 	entryPointRepo := strings.TrimSpace(cfg.entryPointRepo)
 	if entryPointRepo == "" {
 		return nil, nil
@@ -297,6 +303,8 @@ func buildOrchestrator(cfg config, deps dependencies, logger *log.Logger) (*sync
 	return &synctrigger.Orchestrator{
 		RepoPath:           resolvedRepo,
 		MCTBinary:          cfg.mctBinary,
+		AgentManagerPath:   managerPath,
+		Backends:           append([]string(nil), backends...),
 		PromptTemplatePath: resolvedPrompt,
 		Logger:             logger,
 	}, nil

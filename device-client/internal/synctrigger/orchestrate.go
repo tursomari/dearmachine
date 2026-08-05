@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
 
 // CommandRunner executes a shell command in a directory.
@@ -28,10 +30,57 @@ func DefaultCommandRunner(
 	return command.CombinedOutput()
 }
 
+func agentManagedCommandRunner(managerPath string, backends []string) (CommandRunner, error) {
+	managerPath = strings.TrimSpace(managerPath)
+	if managerPath == "" || !filepath.IsAbs(managerPath) {
+		return nil, fmt.Errorf("absolute agent-manager path is required")
+	}
+	encodedBackends, err := backendcatalog.Encode(backends)
+	if err != nil {
+		return nil, fmt.Errorf("encode configured agent backends: %w", err)
+	}
+	environment := managedEnvironment(os.Environ(), managerPath, encodedBackends)
+	return func(
+		ctx context.Context,
+		dir string,
+		name string,
+		args ...string,
+	) ([]byte, error) {
+		command := exec.CommandContext(ctx, name, args...)
+		command.Dir = dir
+		command.Env = environment
+		return command.CombinedOutput()
+	}, nil
+}
+
+func managedEnvironment(environment []string, managerPath, encodedBackends string) []string {
+	blocked := map[string]struct{}{
+		"AGENT_MANAGER_PATH":               {},
+		"DEARMACHINE_BACKEND":              {},
+		backendcatalog.EnvironmentVariable: {},
+		"MACHTIANI_SESSION_ID":             {},
+	}
+	filtered := make([]string, 0, len(environment)+2)
+	for _, entry := range environment {
+		key, _, found := strings.Cut(entry, "=")
+		if _, remove := blocked[key]; found && remove {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return append(
+		filtered,
+		"AGENT_MANAGER_PATH="+managerPath,
+		backendcatalog.EnvironmentVariable+"="+encodedBackends,
+	)
+}
+
 // Orchestrator coordinates sync-trigger session orchestration.
 type Orchestrator struct {
 	RepoPath           string
 	MCTBinary          string
+	AgentManagerPath   string
+	Backends           []string
 	PromptTemplatePath string
 	StatePath          string
 	Lister             SessionLister
@@ -64,7 +113,11 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	}
 	runCommand := o.RunCommand
 	if runCommand == nil {
-		runCommand = DefaultCommandRunner
+		configuredRunner, err := agentManagedCommandRunner(o.AgentManagerPath, o.Backends)
+		if err != nil {
+			return fmt.Errorf("configure sync-trigger command: %w", err)
+		}
+		runCommand = configuredRunner
 	}
 	checkpointPath := o.StatePath
 	if strings.TrimSpace(checkpointPath) == "" {
@@ -125,14 +178,16 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 			err,
 			strings.TrimSpace(string(runOutput)),
 		)
+		cleanupContext, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		deleteOutput, deleteErr := runCommand(
-			ctx,
+			cleanupContext,
 			o.RepoPath,
 			o.MCTBinary,
 			"session",
 			"delete",
 			forkedSessionID,
 		)
+		cancelCleanup()
 		if deleteErr != nil {
 			return errors.Join(
 				runErr,

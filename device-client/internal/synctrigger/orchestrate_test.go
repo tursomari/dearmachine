@@ -209,6 +209,79 @@ func TestOrchestrateRunFails(t *testing.T) {
 	}
 }
 
+func TestOrchestrateRunCancellationStillCleansUpFork(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	var cleanupContextErr error
+	o := &Orchestrator{
+		RepoPath:           "/repo",
+		MCTBinary:          "mct-agent",
+		PromptTemplatePath: "/prompt.md",
+		StatePath:          filepath.Join(t.TempDir(), "sync-trigger.json"),
+		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			return []SessionInfo{
+				{SessionID: "older", UpdatedAt: time.Now()},
+				{SessionID: "newer", UpdatedAt: time.Now().Add(time.Hour)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return time.Time{}, nil },
+		RunCommand: func(commandContext context.Context, _ string, _ string, args ...string) ([]byte, error) {
+			command := strings.Join(args, " ")
+			switch command {
+			case "session fork newer":
+				return []byte("forked-123\n"), nil
+			case "run --session-id forked-123 --file /prompt.md":
+				cancel()
+				return nil, context.Canceled
+			case "session delete forked-123":
+				cleanupContextErr = commandContext.Err()
+				return nil, nil
+			default:
+				t.Fatalf("unexpected command: %s", command)
+				return nil, nil
+			}
+		},
+	}
+
+	err := o.OrchestrateSync(ctx)
+	if err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("OrchestrateSync error = %v, want cancellation", err)
+	}
+	if cleanupContextErr != nil {
+		t.Fatalf("cleanup context error = %v, want active cleanup context", cleanupContextErr)
+	}
+}
+
+func TestAgentManagedCommandRunnerSetsConfiguredEnvironment(t *testing.T) {
+	t.Setenv("AGENT_MANAGER_PATH", "/stale/manager")
+	t.Setenv("DEARMACHINE_BACKEND", "stale")
+	t.Setenv("DEARMACHINE_BACKENDS", `["stale"]`)
+	t.Setenv("MACHTIANI_SESSION_ID", "stale-session")
+
+	runner, err := agentManagedCommandRunner(
+		"/configured/agent-manager",
+		[]string{"forgecode", "codex"},
+	)
+	if err != nil {
+		t.Fatalf("agentManagedCommandRunner: %v", err)
+	}
+	output, err := runner(
+		context.Background(),
+		t.TempDir(),
+		"sh",
+		"-c",
+		`printf '%s\n%s\n%s\n%s\n' "$AGENT_MANAGER_PATH" "$DEARMACHINE_BACKENDS" "${DEARMACHINE_BACKEND-unset}" "${MACHTIANI_SESSION_ID-unset}"`,
+	)
+	if err != nil {
+		t.Fatalf("run command: %v: %s", err, output)
+	}
+	want := "/configured/agent-manager\n[\"forgecode\",\"codex\"]\nunset\nunset\n"
+	if string(output) != want {
+		t.Fatalf("managed environment = %q, want %q", output, want)
+	}
+}
+
 func TestOrchestrateSyncFailureDoesNotAdvanceCheckpoint(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{

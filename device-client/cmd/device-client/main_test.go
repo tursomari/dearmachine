@@ -321,6 +321,43 @@ func TestRunReturnsSelectedCommandError(t *testing.T) {
 	}
 }
 
+func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
+	repo := t.TempDir()
+	prompt := filepath.Join(repo, "documentation", "update-prompt.md")
+	manager := "/configured/agent-manager"
+	backends := []string{"forgecode", "codex"}
+	orchestrator, err := buildOrchestrator(
+		config{
+			entryPointRepo:   repo,
+			entryPointPrompt: prompt,
+			mctBinary:        "/configured/mct-agent",
+		},
+		dependencies{userHomeDir: func() (string, error) { return t.TempDir(), nil }},
+		log.New(io.Discard, "", 0),
+		backends,
+		manager,
+	)
+	if err != nil {
+		t.Fatalf("buildOrchestrator: %v", err)
+	}
+	if orchestrator == nil {
+		t.Fatal("buildOrchestrator returned nil")
+	}
+	if orchestrator.AgentManagerPath != manager || !slices.Equal(orchestrator.Backends, backends) {
+		t.Fatalf(
+			"agent-managed configuration = %q, %v; want %q, %v",
+			orchestrator.AgentManagerPath,
+			orchestrator.Backends,
+			manager,
+			backends,
+		)
+	}
+	backends[0] = "codex"
+	if !slices.Equal(orchestrator.Backends, []string{"forgecode", "codex"}) {
+		t.Fatalf("orchestrator backends alias caller slice: %v", orchestrator.Backends)
+	}
+}
+
 func TestSetupAgentsUsesDearMachineConfigPath(t *testing.T) {
 	home := t.TempDir()
 	var output strings.Builder
