@@ -6,7 +6,7 @@ cross-repository project-management backlog.
 
 ## Current baseline
 
-The Go Device Client proves the core loop: poll AgentMail, map email threads to
+The Go DearMachine Client proves the core loop: poll AgentMail, map email threads to
 durable `mct-agent` sessions in SQLite, recover interrupted work, and send
 AnswerUser or AskUser replies. It is single-threaded and has passed two manual
 live-test rounds. The automated suite currently has 14 passing tests and 71.2%
@@ -48,6 +48,10 @@ Current behavior and test commands are documented in
   documented deployment smoke test.
 - Add enough health reporting to distinguish a live process, a working poll
   loop, and successful `mct-agent` execution.
+- Add a reproducible Nix build (flake.nix) so the client and its toolchain can
+  be built declaratively on any machine.
+- Package the client as an OCI container image for one‑off deployment,
+  paralleling the existing WSL provisioning path.
 
 ## 3. Close security and failure-handling gaps
 
@@ -87,11 +91,30 @@ Current behavior and test commands are documented in
 - Replace spike-only flags with the intended configuration file and
   `machinemail up`, `status`, and `down` lifecycle.
 - Add attachment handling with explicit limits and safe local staging.
+- Implement configurable email‑response tiers (Plain, Formatted, Complete)
+  that control message format, attachment policy, and artifact packaging per
+  session configuration.
+- Implement attachment inbox/outbox staging per session‑thread with
+  timestamped directories (`.attachments-inbox/` and
+  `.attachments-outbox/`). The outbox holds files that `mct-agent` intends to
+  share as email attachments, since the turn conclusion is the email response.
+- Rename the client from Device Client to DearMachine Client across code,
+  documentation, and CLI surface.
 - Implement AskUser expiry and clear operator/user recovery messages.
 - Add structured logs and minimal diagnostics without retaining email content
   unnecessarily.
 - Implement and verify the OpenPGP path only after the core delivery and local
   execution lifecycle is dependable.
+
+## 7. Agent-managed modes and personalisation
+
+- Define mode profiles (base, Coder, Administrative) that configure the
+  agent's system instructions, attachment behaviour, and output expectations.
+- Support per‑user preference and values imbuing during device initialization,
+  starting with Magnifica Humanitas alignment and user‑specific goals for the
+  base mode.
+- Wire the attachment inbox/outbox into agent sessions so `mct-agent` can
+  discover inbound attachments and publish outbound artifacts.
 
 ## Alpha milestones
 
@@ -103,6 +126,9 @@ Current behavior and test commands are documented in
    concurrency with executable scenario tests.
 4. **Transport-ready alpha:** AgentMail behind a tested interface and a clear
    path to the self-hosted relay.
+5. **Personalized alpha:** Configurable email tiers, attachment round‑trip, at
+   least two agent‑managed modes, and values‑driven initialization seeded from
+   user preferences and Magnifica Humanitas.
 
 ## Design references and documentation cleanup
 
