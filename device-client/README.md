@@ -135,6 +135,31 @@ cleanup error. An already-running follow-up in a session with committed history
 is rejected because silently removing it could leave that continuing session
 with ambiguous partial context.
 
+To deliberately abandon exactly one already-running follow-up, stop Device
+Client and use the explicit recovery command instead:
+
+```bash
+device-client inbox abandon \
+  --project ~/.dearmachine/entrypoint/main \
+  --pidfile ~/.dearmachine/run/device-client.pid \
+  --reason "stalled disposable test" \
+  '<message-id>'
+```
+
+`inbox abandon` is not an alias for ordinary skip. Before every established
+follow-up starts, Device Client forks its committed mct session and records that
+clean checkpoint in the durable pending row. The command requires a `running`
+pending message with that checkpoint, atomically remaps the thread to it,
+records the selected message as locally skipped, removes its pending row, and
+deletes the partial source session. AgentMail remains unchanged. Future
+follow-ups continue from the last committed sequence; unskipping the abandoned
+message makes that message eligible again against the clean checkpoint.
+
+The abandon command accepts one explicit message ID only. It intentionally has
+no `--current` mode, so an operator cannot force-skip unrelated unread mail by
+accident. Use ordinary `inbox skip` for an unread or provisional message that
+has not entered an established session.
+
 Every inbox mutation checks the supplied PID file, or the normal
 `~/.dearmachine/run/device-client.pid` by default, and refuses to proceed when
 that PID is alive. This protects the normal installed invocation and isolated

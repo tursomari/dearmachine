@@ -40,6 +40,23 @@ if [ "$1" = "session" ] && [ "$2" = "show" ]; then
 	exit 0
 fi
 
+if [ "$1" = "session" ] && [ "$2" = "fork" ]; then
+	if [ -n "${FAKE_MCT_FORK_ERROR-}" ]; then
+		printf '%s\n' "$FAKE_MCT_FORK_ERROR" >&2
+	fi
+	if [ "${FAKE_MCT_FORK_EXIT-0}" -ne 0 ]; then
+		exit "$FAKE_MCT_FORK_EXIT"
+	fi
+	printf '%s\n' "$3" >> "$capture_dir/forked-sessions"
+	printf '%s\n' "${FAKE_MCT_FORK_ID-forked-session}"
+	exit 0
+fi
+
+if [ "$1" = "session" ] && [ "$2" = "delete" ]; then
+	printf '%s\n' "$3" >> "$capture_dir/deleted-sessions"
+	exit 0
+fi
+
 if [ "$1" != "run" ]; then
 	echo "unexpected command: $*" >&2
 	exit 2

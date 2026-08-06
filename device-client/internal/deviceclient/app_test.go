@@ -156,6 +156,12 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	if got := rig.capture("session-env-2"); got != "" {
 		t.Fatalf("resumed run set MACHTIANI_SESSION_ID = %q", got)
 	}
+	if got := rig.capture("forked-sessions"); got != original.SessionID+"\n" {
+		t.Fatalf("checkpointed sessions = %q, want original session", got)
+	}
+	if got := rig.capture("deleted-sessions"); got != "forked-session\n" {
+		t.Fatalf("cleaned checkpoints = %q, want completed checkpoint", got)
+	}
 	prompt := rig.capture("text-2")
 	if !strings.Contains(prompt, "Add a regional breakdown.") {
 		t.Fatalf("follow-up prompt omitted latest message:\n%s", prompt)
@@ -173,6 +179,34 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	replies := rig.mail.sentReplies()
 	if got := replies[len(replies)-1].Text; got != "Here is the regional breakdown." {
 		t.Fatalf("follow-up reply = %q", got)
+	}
+}
+
+func TestFollowUpCheckpointFailureLeavesMessageReceived(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage("msg-001", "thread-001", "Initial request."))
+	rig.setAnswer("Initial answer.")
+	mustProcess(t, rig)
+	original := rig.session("thread-001")
+
+	rig.mail.add(testMessage("msg-002", "thread-001", "Follow-up request."))
+	t.Setenv("FAKE_MCT_FORK_EXIT", "17")
+	t.Setenv("FAKE_MCT_FORK_ERROR", "checkpoint failed")
+	err := rig.app.ProcessOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "checkpoint committed mct session") {
+		t.Fatalf("ProcessOnce error = %v", err)
+	}
+	pending, err := rig.store.Pending()
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("Pending = %+v, %v", pending, err)
+	}
+	if pending[0].MessageID != "msg-002" || pending[0].State != messageReceived ||
+		pending[0].CheckpointSessionID != "" {
+		t.Fatalf("pending after checkpoint failure = %+v", pending[0])
+	}
+	session := rig.session("thread-001")
+	if session.SessionID != original.SessionID || session.Sequence != 1 {
+		t.Fatalf("session after checkpoint failure = %+v", session)
 	}
 }
 

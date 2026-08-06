@@ -26,13 +26,14 @@ type Session struct {
 }
 
 type PendingMessage struct {
-	MessageID  string
-	ThreadID   string
-	Session    Session
-	State      string
-	Prompt     string
-	ResultKind ResultKind
-	ResultText string
+	MessageID           string
+	ThreadID            string
+	Session             Session
+	CheckpointSessionID string
+	State               string
+	Prompt              string
+	ResultKind          ResultKind
+	ResultText          string
 }
 
 type MessageRef struct {
@@ -51,6 +52,17 @@ type AbandonedMessage struct {
 	MessageID      string
 	SessionID      string
 	CleanupSession bool
+}
+
+// AbandonPlan identifies an in-progress follow-up and the committed session
+// boundary that must be preserved when the partial turn is abandoned.
+type AbandonPlan struct {
+	MessageID           string
+	ThreadID            string
+	SessionID           string
+	CheckpointSessionID string
+	PendingSequence     int
+	CommittedSequence   int
 }
 
 const (
@@ -131,6 +143,7 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     prompt TEXT NOT NULL DEFAULT '',
     result_kind TEXT NOT NULL DEFAULT '',
     result_text TEXT NOT NULL DEFAULT '',
+    checkpoint_session_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(thread_id, sequence)
@@ -148,6 +161,13 @@ CREATE TABLE IF NOT EXISTS skipped_messages (
 	if err := s.addColumnIfMissing(
 		"processed_messages",
 		"outbound_message_id",
+		`TEXT NOT NULL DEFAULT ''`,
+	); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(
+		"pending_messages",
+		"checkpoint_session_id",
 		`TEXT NOT NULL DEFAULT ''`,
 	); err != nil {
 		return err
@@ -282,6 +302,205 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 		return nil, fmt.Errorf("commit skipped messages: %w", err)
 	}
 	return abandoned, nil
+}
+
+// PrepareAbandon returns the stable state needed to restore the clean session
+// checkpoint created before an established follow-up started. The caller must
+// stop Device Client before calling this method and keep it stopped until
+// CommitAbandon succeeds.
+func (s *Store) PrepareAbandon(messageID string) (AbandonPlan, error) {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return AbandonPlan{}, fmt.Errorf("message ID is required")
+	}
+
+	var plan AbandonPlan
+	var state string
+	err := s.db.QueryRow(
+		`SELECT p.message_id,
+		        p.thread_id,
+		        t.session_id,
+		        p.sequence,
+		        t.sequence,
+		        p.checkpoint_session_id,
+		        p.state
+		   FROM pending_messages p
+		   JOIN thread_sessions t ON t.thread_id = p.thread_id
+		  WHERE p.message_id = ?`,
+		messageID,
+	).Scan(
+		&plan.MessageID,
+		&plan.ThreadID,
+		&plan.SessionID,
+		&plan.PendingSequence,
+		&plan.CommittedSequence,
+		&plan.CheckpointSessionID,
+		&state,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AbandonPlan{}, fmt.Errorf("pending message %s was not found", messageID)
+	}
+	if err != nil {
+		return AbandonPlan{}, fmt.Errorf("prepare in-progress message abandonment: %w", err)
+	}
+	if state != messageRunning {
+		return AbandonPlan{}, fmt.Errorf(
+			"message %s is %s, not a running follow-up",
+			messageID,
+			state,
+		)
+	}
+	if plan.CommittedSequence <= 0 {
+		return AbandonPlan{}, fmt.Errorf(
+			"message %s has no committed session history; use inbox skip instead",
+			messageID,
+		)
+	}
+	if plan.PendingSequence != plan.CommittedSequence+1 {
+		return AbandonPlan{}, fmt.Errorf(
+			"message %s sequence %d does not follow committed sequence %d",
+			messageID,
+			plan.PendingSequence,
+			plan.CommittedSequence,
+		)
+	}
+	if strings.TrimSpace(plan.CheckpointSessionID) == "" {
+		return AbandonPlan{}, fmt.Errorf(
+			"message %s has no clean pre-run session checkpoint",
+			messageID,
+		)
+	}
+	if plan.CheckpointSessionID == plan.SessionID {
+		return AbandonPlan{}, fmt.Errorf(
+			"message %s has an invalid pre-run session checkpoint",
+			messageID,
+		)
+	}
+	return plan, nil
+}
+
+// CommitAbandon atomically remaps a thread to a clean fork of its committed
+// mct history, records the partial message as locally skipped, and removes its
+// durable pending row. The plan is revalidated so a stale plan cannot rewrite
+// newer state.
+func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
+	if strings.TrimSpace(plan.MessageID) == "" || strings.TrimSpace(plan.ThreadID) == "" ||
+		strings.TrimSpace(plan.SessionID) == "" {
+		return fmt.Errorf("complete abandon plan is required")
+	}
+	if strings.TrimSpace(plan.CheckpointSessionID) == "" ||
+		plan.CheckpointSessionID == plan.SessionID {
+		return fmt.Errorf("valid pre-run session checkpoint is required")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin in-progress message abandonment: %w", err)
+	}
+	defer tx.Rollback()
+
+	var current AbandonPlan
+	var state string
+	err = tx.QueryRow(
+		`SELECT p.message_id,
+		        p.thread_id,
+		        t.session_id,
+		        p.sequence,
+		        t.sequence,
+		        p.checkpoint_session_id,
+		        p.state
+		   FROM pending_messages p
+		   JOIN thread_sessions t ON t.thread_id = p.thread_id
+		  WHERE p.message_id = ?`,
+		plan.MessageID,
+	).Scan(
+		&current.MessageID,
+		&current.ThreadID,
+		&current.SessionID,
+		&current.PendingSequence,
+		&current.CommittedSequence,
+		&current.CheckpointSessionID,
+		&state,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("pending message %s changed before abandonment", plan.MessageID)
+	}
+	if err != nil {
+		return fmt.Errorf("revalidate in-progress message abandonment: %w", err)
+	}
+	if current != plan || state != messageRunning || current.CommittedSequence <= 0 ||
+		current.PendingSequence != current.CommittedSequence+1 {
+		return fmt.Errorf("pending message %s changed before abandonment", plan.MessageID)
+	}
+
+	var skippedThread string
+	err = tx.QueryRow(
+		`SELECT thread_id FROM skipped_messages WHERE message_id = ?`,
+		plan.MessageID,
+	).Scan(&skippedThread)
+	switch {
+	case err == nil && skippedThread != plan.ThreadID:
+		return fmt.Errorf(
+			"skipped message %s belongs to thread %s, not %s",
+			plan.MessageID,
+			skippedThread,
+			plan.ThreadID,
+		)
+	case err != nil && !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("query existing skipped message: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	update, err := tx.Exec(
+		`UPDATE thread_sessions
+		    SET session_id = ?, updated_at = ?
+		  WHERE thread_id = ? AND session_id = ? AND sequence = ?`,
+		plan.CheckpointSessionID,
+		now,
+		plan.ThreadID,
+		plan.SessionID,
+		plan.CommittedSequence,
+	)
+	if err != nil {
+		return fmt.Errorf("replace abandoned mct session: %w", err)
+	}
+	changed, err := update.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check abandoned mct session replacement: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("thread session changed before abandonment")
+	}
+
+	if _, err := tx.Exec(
+		`INSERT INTO skipped_messages (message_id, thread_id, reason, skipped_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(message_id) DO UPDATE SET reason = excluded.reason`,
+		plan.MessageID,
+		plan.ThreadID,
+		strings.TrimSpace(reason),
+		now,
+	); err != nil {
+		return fmt.Errorf("record abandoned message as skipped: %w", err)
+	}
+	deleted, err := tx.Exec(
+		`DELETE FROM pending_messages WHERE message_id = ?`,
+		plan.MessageID,
+	)
+	if err != nil {
+		return fmt.Errorf("remove abandoned pending message: %w", err)
+	}
+	changed, err = deleted.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check abandoned pending message removal: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("pending message %s changed before abandonment", plan.MessageID)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit in-progress message abandonment: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) UnskipMessages(messageIDs []string) error {
@@ -493,13 +712,18 @@ func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, 
 }
 
 func (s *Store) MarkRunning(messageID, prompt string) error {
+	return s.MarkRunningWithCheckpoint(messageID, prompt, "")
+}
+
+func (s *Store) MarkRunningWithCheckpoint(messageID, prompt, checkpointSessionID string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(
 		`UPDATE pending_messages
-		    SET state = ?, prompt = ?, updated_at = ?
+		    SET state = ?, prompt = ?, checkpoint_session_id = ?, updated_at = ?
 		  WHERE message_id = ? AND state = ?`,
 		messageRunning,
 		prompt,
+		strings.TrimSpace(checkpointSessionID),
 		now,
 		messageID,
 		messageReceived,
@@ -640,6 +864,7 @@ SELECT p.message_id,
        t.session_id,
        p.sequence,
        t.status,
+       p.checkpoint_session_id,
        p.state,
        p.prompt,
        p.result_kind,
@@ -661,6 +886,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.Session.SessionID,
 		&pending.Session.Sequence,
 		&pending.Session.Status,
+		&pending.CheckpointSessionID,
 		&pending.State,
 		&pending.Prompt,
 		&pending.ResultKind,

@@ -28,6 +28,8 @@ func runInbox(args []string, getenv func(string) string, deps dependencies) erro
 		return runInboxHelp(args[1:], deps.flagOutput)
 	case "skip":
 		return runInboxSkip(args[1:], getenv, deps)
+	case "abandon":
+		return runInboxAbandon(args[1:], deps)
 	case "unskip":
 		return runInboxUnskip(args[1:], deps)
 	case "skipped":
@@ -47,6 +49,8 @@ func runInboxHelp(args []string, output io.Writer) error {
 	switch args[0] {
 	case "skip":
 		return inboxSkipHelp(output)
+	case "abandon":
+		return inboxAbandonHelp(output)
 	case "unskip":
 		return inboxUnskipHelp(output)
 	case "skipped":
@@ -174,6 +178,88 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 				))
 			}
 		}
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func runInboxAbandon(args []string, deps dependencies) error {
+	output := outputOrDiscard(deps.flagOutput)
+	stdout := outputOrDiscard(deps.stdout)
+	flags := flag.NewFlagSet("inbox abandon", flag.ContinueOnError)
+	flags.SetOutput(output)
+	dbPath := flags.String("db", "", "SQLite state database path")
+	pidfile := flags.String("pidfile", "", "Device Client PID file to check")
+	projectDir := flags.String("project", ".", "mct-agent project containing the session")
+	mctBinary := flags.String("mct-agent", "mct-agent", "path to the mct-agent executable")
+	reason := flags.String(
+		"reason",
+		"operator abandoned in-progress follow-up",
+		"local audit reason",
+	)
+	flags.Usage = func() { _ = inboxAbandonHelp(output) }
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf(
+			"exactly one pending message ID is required\n" +
+				"Run \"device-client inbox abandon --help\" for usage",
+		)
+	}
+	messageID := strings.TrimSpace(flags.Arg(0))
+	if messageID == "" {
+		return fmt.Errorf("message ID is required")
+	}
+
+	resolvedDB, resolvedPID, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
+	if err != nil {
+		return err
+	}
+	if err := ensureDeviceClientStopped(resolvedPID); err != nil {
+		return err
+	}
+	resolvedProject, err := resolvePath(*projectDir, deps.userHomeDir)
+	if err != nil {
+		return fmt.Errorf("resolve mct project: %w", err)
+	}
+
+	store, err := deps.openStore(resolvedDB)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	plan, err := store.PrepareAbandon(messageID)
+	if err != nil {
+		return err
+	}
+	runner, err := deps.newRunner(*mctBinary, resolvedProject, "")
+	if err != nil {
+		return fmt.Errorf("prepare mct session abandonment: %w", err)
+	}
+	ctx := context.Background()
+	if err := store.CommitAbandon(plan, *reason); err != nil {
+		return err
+	}
+
+	var cleanupErrors []error
+	if err := deviceclient.RemoveRecoveryResult(plan.SessionID, plan.MessageID); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+	if err := runner.DeleteSession(ctx, plan.SessionID); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf(
+			"message %s remains abandoned, but clean partial session %s: %w",
+			plan.MessageID,
+			plan.SessionID,
+			err,
+		))
+	}
+	if _, err := fmt.Fprintf(
+		stdout,
+		"Abandoned message %s locally at committed sequence %d. AgentMail unchanged.\n",
+		plan.MessageID,
+		plan.CommittedSequence,
+	); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
 	}
 	return errors.Join(cleanupErrors...)
 }
@@ -334,7 +420,8 @@ func inboxHelp(output io.Writer) error {
   device-client inbox <command> [flags]
 
 Commands:
-  skip      Locally suppress selected AgentMail messages
+  skip      Locally suppress messages that have not started
+  abandon   Force-skip one running follow-up using a clean session fork
   unskip    Make locally skipped messages eligible again
   skipped   List locally skipped messages
 
@@ -359,6 +446,27 @@ Flags:
   --db <path>        SQLite state database (default: normal Device Client DB)
   --pidfile <path>   PID file to check (default: normal Device Client PID file)
   --project <path>   mct-agent project for abandoned-session cleanup
+  --mct-agent <path> mct-agent executable
+  --reason <text>    Local audit reason
+`)
+	return err
+}
+
+func inboxAbandonHelp(output io.Writer) error {
+	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
+  device-client inbox abandon [flags] <message-id>
+
+Force-skips one running follow-up in an established thread without changing
+AgentMail. Device Client must be stopped. Every established follow-up receives
+a clean pre-run session checkpoint. This command atomically remaps the thread
+to that checkpoint, records the message as locally skipped, and removes the
+partial source session. Use ordinary inbox skip for messages that have not
+started.
+
+Flags:
+  --db <path>        SQLite state database (default: normal Device Client DB)
+  --pidfile <path>   PID file to check (default: normal Device Client PID file)
+  --project <path>   mct-agent project containing the session
   --mct-agent <path> mct-agent executable
   --reason <text>    Local audit reason
 `)

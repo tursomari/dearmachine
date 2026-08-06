@@ -119,6 +119,17 @@ func TestMCTRunnerNonzeroExitContracts(t *testing.T) {
 			},
 		},
 		{
+			name:       "session fork",
+			exitEnv:    "FAKE_MCT_FORK_EXIT",
+			errorEnv:   "FAKE_MCT_FORK_ERROR",
+			diagnostic: "fork diagnostic",
+			want:       "mct-agent session fork failed: exit status 17: fork diagnostic",
+			operation: func(ctx context.Context, fixture *mctTestFixture) error {
+				_, err := fixture.runner.ForkSession(ctx, fixture.session.SessionID)
+				return err
+			},
+		},
+		{
 			name:       "session show",
 			exitEnv:    "FAKE_MCT_SHOW_EXIT",
 			errorEnv:   "FAKE_MCT_SHOW_ERROR",
@@ -138,6 +149,37 @@ func TestMCTRunnerNonzeroExitContracts(t *testing.T) {
 			err := test.operation(context.Background(), fixture)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("operation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestMCTRunnerForkAndDeleteSession(t *testing.T) {
+	fixture := newMCTTestFixture(t)
+	t.Setenv("FAKE_MCT_FORK_ID", "replacement-session")
+	forked, err := fixture.runner.ForkSession(context.Background(), fixture.session.SessionID)
+	if err != nil || forked != "replacement-session" {
+		t.Fatalf("ForkSession = %q, %v", forked, err)
+	}
+	if err := fixture.runner.DeleteSession(context.Background(), fixture.session.SessionID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	deleted, err := os.ReadFile(filepath.Join(os.Getenv("FAKE_MCT_CAPTURE"), "deleted-sessions"))
+	if err != nil || string(deleted) != fixture.session.SessionID+"\n" {
+		t.Fatalf("deleted sessions = %q, %v", deleted, err)
+	}
+}
+
+func TestMCTRunnerForkRejectsInvalidSessionID(t *testing.T) {
+	fixture := newMCTTestFixture(t)
+	for _, forkedID := range []string{"", "two session-ids", fixture.session.SessionID} {
+		t.Run(strings.ReplaceAll(forkedID, " ", "_"), func(t *testing.T) {
+			t.Setenv("FAKE_MCT_FORK_ID", forkedID)
+			if _, err := fixture.runner.ForkSession(
+				context.Background(),
+				fixture.session.SessionID,
+			); err == nil {
+				t.Fatalf("ForkSession accepted %q", forkedID)
 			}
 		})
 	}

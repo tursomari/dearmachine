@@ -239,9 +239,32 @@ func (a *App) processPending(
 	var err error
 	switch pending.State {
 	case messageReceived:
-		if err := a.store.MarkRunning(message.MessageID, prompt); err != nil {
+		checkpointSessionID := ""
+		if !pending.Session.IsNew {
+			checkpointSessionID, err = a.runner.ForkSession(ctx, pending.Session.SessionID)
+			if err != nil {
+				return fmt.Errorf("checkpoint committed mct session before follow-up: %w", err)
+			}
+		}
+		if err := a.store.MarkRunningWithCheckpoint(
+			message.MessageID,
+			prompt,
+			checkpointSessionID,
+		); err != nil {
+			if checkpointSessionID != "" {
+				cleanupErr := a.runner.DeleteSession(ctx, checkpointSessionID)
+				if cleanupErr != nil {
+					cleanupErr = fmt.Errorf(
+						"clean unused mct checkpoint %s: %w",
+						checkpointSessionID,
+						cleanupErr,
+					)
+				}
+				return errors.Join(err, cleanupErr)
+			}
 			return err
 		}
+		pending.CheckpointSessionID = checkpointSessionID
 		result, err = a.runner.Run(ctx, pending.Session, prompt, finalPath)
 	case messageRunning:
 		result, err = a.runner.Recover(
@@ -294,6 +317,17 @@ func (a *App) processPending(
 	}
 	if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
 		return err
+	}
+	if pending.CheckpointSessionID != "" {
+		if err := a.runner.DeleteSession(ctx, pending.CheckpointSessionID); err != nil {
+			a.logger.Printf(
+				"checkpoint cleanup failed message=%s session=%s checkpoint=%s error=%v",
+				message.MessageID,
+				pending.Session.SessionID,
+				pending.CheckpointSessionID,
+				err,
+			)
+		}
 	}
 
 	a.logger.Printf(

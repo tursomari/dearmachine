@@ -223,6 +223,44 @@ func (r *MCTRunner) DeleteSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// ForkSession creates a clean continuation from the committed state of an
+// inactive mct session. mct-agent excludes disposable shell-agent state from
+// the fork, which makes this suitable for abandoning an interrupted turn.
+func (r *MCTRunner) ForkSession(ctx context.Context, sessionID string) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", fmt.Errorf("mct session ID is required")
+	}
+	command := exec.CommandContext(
+		ctx,
+		r.binary,
+		"session", "fork", sessionID,
+	)
+	command.Dir = r.projectDir
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return "", fmt.Errorf(
+			"mct-agent session fork failed: %w: %s",
+			err,
+			strings.TrimSpace(stderr.String()),
+		)
+	}
+	forkedID := strings.TrimSpace(stdout.String())
+	if forkedID == "" || len(strings.Fields(forkedID)) != 1 {
+		return "", fmt.Errorf("mct-agent session fork returned an invalid session ID")
+	}
+	if forkedID == sessionID {
+		return "", fmt.Errorf("mct-agent session fork returned the source session ID")
+	}
+	return forkedID, nil
+}
+
 func RemoveRecoveryResult(sessionID, messageID string) error {
 	path := recoveryResultPath(sessionID, messageID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

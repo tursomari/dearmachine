@@ -305,6 +305,65 @@ pending database rows, ticket state, and recent logs before considering a
 forced kill. Do not kill an individual child first, because doing so can leave
 the durable message state ambiguous.
 
+## Abandon one stuck follow-up
+
+Use this recovery only when the User explicitly intends to suppress one
+already-running follow-up. Restarting alone is not enough: a `running` pending
+row is durable and will be recovered on startup. Ordinary `inbox skip` also
+rejects an in-progress follow-up with committed history.
+
+1. Capture the full monitoring snapshot, including the exact message, thread,
+   session, sequence, child processes, and recent trajectory state.
+2. Stop the normal client gracefully and verify its PID file is absent. If the
+   stuck agent launched a detached disposable process outside the unit's
+   control group, identify it by its recorded temporary runtime and stop that
+   isolated process separately; never match or kill by a broad name.
+3. Back up the state database before the mutation.
+4. Run `inbox abandon` with the exact message ID, normal database, normal PID
+   file, entry-point project, and mct-agent path:
+
+```bash
+dm_message_id='<exact-message-id>'
+
+cp --preserve=mode,timestamps \
+  /home/david/.dearmachine/state/device-client.db \
+  "/home/david/.dearmachine/state/device-client.db.before-abandon.$(date -u +%Y%m%dT%H%M%SZ)"
+
+/home/david/.local/bin/device-client inbox abandon \
+  --db /home/david/.dearmachine/state/device-client.db \
+  --pidfile /home/david/.dearmachine/run/device-client.pid \
+  --project /home/david/.dearmachine/entrypoint/main \
+  --mct-agent /home/david/.local/bin/mct-agent \
+  --reason "operator abandoned stuck follow-up" \
+  "$dm_message_id"
+```
+
+The command requires an inactive mct session and a clean checkpoint recorded
+before that follow-up started. It atomically remaps the email thread to the
+checkpoint, records only the selected message as locally skipped, removes its
+pending row, and deletes the partial source session. It does not query or modify
+AgentMail and does not require the API key. A legacy running row created before
+checkpoint support is rejected instead of guessing at a rollback boundary.
+
+Before relaunching, verify:
+
+```bash
+/home/david/.local/bin/device-client inbox skipped \
+  --db /home/david/.dearmachine/state/device-client.db
+
+sqlite3 -header -column /home/david/.dearmachine/state/device-client.db '
+  SELECT p.message_id, p.thread_id, t.session_id, p.sequence, p.state
+    FROM pending_messages AS p
+    JOIN thread_sessions AS t USING (thread_id)
+   ORDER BY p.created_at;
+'
+```
+
+Confirm the exact message appears in the local skip list, its pending row is
+absent, and the thread retains its prior committed sequence under a replacement
+session ID. Then relaunch and verify that later unread mail can progress. Keep
+the database backup until the next follow-up in that thread completes.
+
 ## Restart
 
 1. Record the pre-restart monitoring snapshot.
