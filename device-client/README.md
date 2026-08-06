@@ -69,7 +69,8 @@ export AGENTMAIL_API_KEY=am_your_key
 
 go run ./cmd/device-client \
   --inbox-id your-inbox-id \
-  --project /path/to/mct/project \
+  --project ~/.dearmachine/entrypoint/main \
+  --entry-point-repo ~/.dearmachine/entrypoint/main \
   --pidfile ~/.dearmachine/run/device-client.pid
 ```
 
@@ -107,6 +108,34 @@ require a returning start command must provide a background wrapper.
 
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
+
+## Task project and entry-point repository
+
+`--project` and `--entry-point-repo` are independent settings:
+
+- `--project` selects the working directory and mct-agent project where email
+  sessions are created. Its default is `.`, the directory from which Device
+  Client was launched.
+- `--entry-point-repo` selects only the repository inspected and maintained by
+  entry-point documentation sync. Its default is
+  `~/.dearmachine/entrypoint/main`.
+
+Setting `--entry-point-repo` does not make a different `--project` inherit the
+entry point's context, documentation, or session history. For normal installed
+operation, point both settings at the initialized entry point:
+
+```bash
+device-client \
+  --inbox-id your-inbox-id \
+  --project ~/.dearmachine/entrypoint/main \
+  --entry-point-repo ~/.dearmachine/entrypoint/main \
+  --pidfile ~/.dearmachine/run/device-client.pid
+```
+
+Use different paths only for deliberate development, migration, or isolated
+testing arrangements. A disposable test normally supplies its test project
+through `--project` and disables real entry-point maintenance with
+`--entry-point-repo ""`.
 
 ## Initialize the machine entry point
 

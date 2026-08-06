@@ -129,7 +129,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		&cfg.projectDir,
 		"project",
 		".",
-		"project directory used as the mct-agent working directory",
+		"mct-agent session working directory; independent of --entry-point-repo",
 	)
 	flags.StringVar(
 		&cfg.model,
@@ -159,7 +159,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		&cfg.entryPointRepo,
 		"entry-point-repo",
 		"~/.dearmachine/entrypoint/main",
-		"entry-point repo path (default: ~/.dearmachine/entrypoint/main)",
+		"repository used for entry-point documentation sync, not the session working directory",
 	)
 	flags.StringVar(
 		&cfg.entryPointPrompt,

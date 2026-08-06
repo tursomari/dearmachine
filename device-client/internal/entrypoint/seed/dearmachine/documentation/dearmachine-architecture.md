@@ -40,12 +40,20 @@ secret store into its environment.
 Important launch settings include:
 
 - `--inbox-id`: dedicated AgentMail inbox.
-- `--project`: project used for mct-agent sessions.
+- `--project`: working directory and mct-agent project used for email sessions;
+  it defaults to the Device Client launch directory.
+- `--entry-point-repo`: repository used only for entry-point documentation
+  sync; it defaults to `~/.dearmachine/entrypoint/main` and does not provide
+  entry-point context to a different `--project`.
 - `--config`: backend configuration file.
 - `--agent-manager`: Agent Manager executable.
 - `--mct-agent`: mct-agent executable.
 - `--db` and `--pidfile`: local runtime state.
 - `--poll-interval`: delay between completed polling cycles.
+
+In a normal installation, both `--project` and `--entry-point-repo` must point
+to this initialized entry-point repository. Different paths are reserved for
+deliberate development, migration, or isolated testing arrangements.
 
 ## Source Pointers
 
