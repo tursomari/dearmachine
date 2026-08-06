@@ -223,24 +223,32 @@ mct-agent sessions after every successful poll. Override the paths with
 `--entry-point-repo` to disable the trigger.
 
 For email sessions themselves to count toward the trigger, launch Device
-Client with `--project` set to the entry-point repository. Two distinct new
-threads then create two distinct mct-agent sessions. After two sessions newer
-than the effective review boundary, the trigger:
+Client with `--project` set to the entry-point repository. Distinct new threads
+create distinct mct-agent sessions. Device Client deliberately holds the newest
+session until a later session arrives. Once at least two sessions are newer
+than the review boundary, each successful poll reviews the oldest eligible
+session while leaving the newest held:
 
-1. forks the most recently updated session;
+1. forks the oldest eligible session;
 2. resumes the fork with the entry-point update prompt;
 3. deletes the temporary fork;
 4. runs `mct-agent sync --include-docs`; and
-5. records the newest reviewed source session in
+5. records that reviewed source session in
    `state/sync-trigger.json`.
 
-The effective boundary is the newer of that local checkpoint and the project
-commit stored by mct-agent's internal-README sync state. It is deliberately not
-the repository's latest arbitrary commit. The checkpoint prevents an
-immediate repeat when the review correctly decides that no documentation
-change is warranted. It is written only after the complete pipeline succeeds,
-so failed runs remain eligible for retry. A failed forked run is cleaned up
-before the error is reported.
+Before the first checkpoint, the project commit stored by mct-agent's
+internal-README sync supplies the bootstrap boundary. Afterward, the checkpoint
+is authoritative; a maintenance commit created after a held source session
+must not make that session disappear. The checkpoint prevents an immediate
+repeat when review correctly decides that no documentation change is
+warranted. It is written only after the complete pipeline succeeds, so failed
+runs remain eligible for retry. A failed forked run is cleaned up before the
+error is reported.
+
+For example, session B releases A for review, then session C releases B. With a
+larger backlog, later successful polls drain the backlog oldest-first while one
+newest session remains held. Equal update timestamps use the session ID as a
+stable tie-breaker.
 
 The `state/` checkpoint is host-local and should remain ignored by Git. The
 internal-README marker remains owned by mct-agent under the UUID project store
@@ -278,11 +286,13 @@ HEAD, follow
 old installation until the fresh instance passes verification and does not
 automatically import remote history into a privacy-cleaned repository.
 
-For an opt-in live smoke test that does not share the normal Device Client's
-inbox or runtime state, follow
-[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md). The ordered Forge,
-Codex, and fallback protocol remains in
-[`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md).
+Shared live-test provisioning and teardown are documented in
+[`TEMPORARY_INSTANCE.md`](./TEMPORARY_INSTANCE.md). The ordinary email and
+skip/unskip smoke test is in
+[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md); ordered Forge, Codex, and
+fallback are in [`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md); and the
+rolling checkpoint and internal-README update-sync evaluation is in
+[`LIVE_UPDATE_SYNC_TESTING.md`](./LIVE_UPDATE_SYNC_TESTING.md).
 
 ```bash
 go test ./...
