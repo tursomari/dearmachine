@@ -35,6 +35,24 @@ type PendingMessage struct {
 	ResultText string
 }
 
+type MessageRef struct {
+	MessageID string
+	ThreadID  string
+}
+
+type SkippedMessage struct {
+	MessageID string `json:"message_id"`
+	ThreadID  string `json:"thread_id"`
+	Reason    string `json:"reason"`
+	SkippedAt string `json:"skipped_at"`
+}
+
+type AbandonedMessage struct {
+	MessageID      string
+	SessionID      string
+	CleanupSession bool
+}
+
 const (
 	messageReceived    = "received"
 	messageRunning     = "running"
@@ -116,6 +134,13 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(thread_id, sequence)
+);
+
+CREATE TABLE IF NOT EXISTS skipped_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    skipped_at TEXT NOT NULL
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
@@ -128,6 +153,204 @@ CREATE TABLE IF NOT EXISTS pending_messages (
 		return err
 	}
 	return nil
+}
+
+func (s *Store) IsSkipped(messageID string) (bool, error) {
+	var found int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM skipped_messages WHERE message_id = ?`,
+		messageID,
+	).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query skipped message: %w", err)
+	}
+	return true, nil
+}
+
+func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedMessage, error) {
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("no messages selected")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin skipping messages: %w", err)
+	}
+	defer tx.Rollback()
+
+	seen := make(map[string]struct{}, len(messages))
+	var abandoned []AbandonedMessage
+	for _, message := range messages {
+		message.MessageID = strings.TrimSpace(message.MessageID)
+		message.ThreadID = strings.TrimSpace(message.ThreadID)
+		if message.MessageID == "" || message.ThreadID == "" {
+			return nil, fmt.Errorf("message and thread IDs are required")
+		}
+		if _, duplicate := seen[message.MessageID]; duplicate {
+			continue
+		}
+		seen[message.MessageID] = struct{}{}
+
+		var existingThread string
+		err := tx.QueryRow(
+			`SELECT thread_id FROM skipped_messages WHERE message_id = ?`,
+			message.MessageID,
+		).Scan(&existingThread)
+		switch {
+		case err == nil && existingThread != message.ThreadID:
+			return nil, fmt.Errorf(
+				"skipped message %s belongs to thread %s, not %s",
+				message.MessageID,
+				existingThread,
+				message.ThreadID,
+			)
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			return nil, fmt.Errorf("query existing skipped message: %w", err)
+		}
+
+		var (
+			pendingThread     string
+			sessionID         string
+			pendingState      string
+			committedSequence int
+		)
+		err = tx.QueryRow(
+			`SELECT p.thread_id, t.session_id, p.state, t.sequence
+			   FROM pending_messages p
+			   JOIN thread_sessions t ON t.thread_id = p.thread_id
+			  WHERE p.message_id = ?`,
+			message.MessageID,
+		).Scan(&pendingThread, &sessionID, &pendingState, &committedSequence)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("inspect pending message before skip: %w", err)
+		}
+		if err == nil && pendingThread != message.ThreadID {
+			return nil, fmt.Errorf(
+				"pending message %s belongs to thread %s, not %s",
+				message.MessageID,
+				pendingThread,
+				message.ThreadID,
+			)
+		}
+		if err == nil && pendingState != messageReceived && committedSequence > 0 {
+			return nil, fmt.Errorf(
+				"cannot safely skip in-progress follow-up %s: session %s already has committed history",
+				message.MessageID,
+				sessionID,
+			)
+		}
+
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if _, err := tx.Exec(
+			`INSERT INTO skipped_messages (message_id, thread_id, reason, skipped_at)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT(message_id) DO UPDATE SET reason = excluded.reason`,
+			message.MessageID,
+			message.ThreadID,
+			strings.TrimSpace(reason),
+			now,
+		); err != nil {
+			return nil, fmt.Errorf("record skipped message: %w", err)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+
+		if _, err := tx.Exec(
+			`DELETE FROM pending_messages WHERE message_id = ?`,
+			message.MessageID,
+		); err != nil {
+			return nil, fmt.Errorf("remove skipped pending message: %w", err)
+		}
+		if committedSequence == 0 {
+			if _, err := tx.Exec(
+				`DELETE FROM thread_sessions WHERE thread_id = ? AND sequence = 0`,
+				message.ThreadID,
+			); err != nil {
+				return nil, fmt.Errorf("remove provisional thread session: %w", err)
+			}
+		}
+		abandoned = append(abandoned, AbandonedMessage{
+			MessageID:      message.MessageID,
+			SessionID:      sessionID,
+			CleanupSession: pendingState != messageReceived && committedSequence == 0,
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit skipped messages: %w", err)
+	}
+	return abandoned, nil
+}
+
+func (s *Store) UnskipMessages(messageIDs []string) error {
+	if len(messageIDs) == 0 {
+		return fmt.Errorf("no messages selected")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin unskipping messages: %w", err)
+	}
+	defer tx.Rollback()
+	seen := make(map[string]struct{}, len(messageIDs))
+	for _, messageID := range messageIDs {
+		messageID = strings.TrimSpace(messageID)
+		if messageID == "" {
+			return fmt.Errorf("message ID is required")
+		}
+		if _, duplicate := seen[messageID]; duplicate {
+			continue
+		}
+		seen[messageID] = struct{}{}
+		result, err := tx.Exec(
+			`DELETE FROM skipped_messages WHERE message_id = ?`,
+			messageID,
+		)
+		if err != nil {
+			return fmt.Errorf("unskip message %s: %w", messageID, err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("check unskip for message %s: %w", messageID, err)
+		}
+		if changed != 1 {
+			return fmt.Errorf("message %s is not skipped", messageID)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit unskipped messages: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SkippedMessages() ([]SkippedMessage, error) {
+	rows, err := s.db.Query(
+		`SELECT message_id, thread_id, reason, skipped_at
+		   FROM skipped_messages
+		  ORDER BY skipped_at, message_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query skipped messages: %w", err)
+	}
+	defer rows.Close()
+	messages := make([]SkippedMessage, 0)
+	for rows.Next() {
+		var message SkippedMessage
+		if err := rows.Scan(
+			&message.MessageID,
+			&message.ThreadID,
+			&message.Reason,
+			&message.SkippedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan skipped message: %w", err)
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query skipped messages: %w", err)
+	}
+	return messages, nil
 }
 
 func (s *Store) addColumnIfMissing(table, column, declaration string) error {

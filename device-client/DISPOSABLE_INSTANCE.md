@@ -38,6 +38,10 @@ Identify or ask the tester for:
 Confirm that the sender is already accepted by the relevant AgentMail allow
 list before sending. Adding a sender after a rejected email does not recover
 the earlier message; send a new message only after allowlisting is confirmed.
+For two temporary AgentMail inboxes, verify the sender can send to the receiver,
+the receiver can receive from the sender, and the receiver can send or reply
+back to the sender. A receive or reply entry alone may not satisfy the send
+allow list used by the reply endpoint.
 
 ### Isolation contract
 
@@ -184,6 +188,32 @@ a repository root as a recursive deletion target.
 Do not infer success from a reply alone. For an agent-managed task, verify the
 approved backend order, health-check outcomes, selected ticket worker, closed
 ticket result, and same-thread reply.
+
+### Optional local skip and unskip exercise
+
+Use this exercise when validating Device Client's local inbox suppression. It
+replaces the ordinary exercise above for the same disposable instance.
+
+1. Keep the disposable Device Client stopped and send one ordinary, meaningful
+   task to its temporary inbox. Record the exact inbound message and thread IDs.
+2. Run `device-client inbox skip --current` with the temporary inbox, database,
+   PID file, project, and mct-agent paths supplied explicitly. Confirm its local
+   skip list contains exactly the recorded message.
+3. Start the disposable client and observe at least two polls. Confirm the
+   message remains unread in AgentMail, no mct-agent session or Agent Manager
+   ticket is created, no backend starts, and no reply is sent.
+4. Stop the client, then run `device-client inbox unskip <message-id>` with the
+   same database and PID file. Confirm the local skip list is empty and
+   AgentMail remains unchanged at that point.
+5. Start the same disposable client again. Monitor the full lifecycle and
+   confirm that the unskipped task creates exactly one session, executes once,
+   sends exactly one same-thread reply, leaves no pending database row, and is
+   marked processed normally.
+6. Stop the client and perform the standard teardown below.
+
+Do not perform this proof against the normal inbox. The temporary inbox is what
+makes both the negative claim (nothing ran while skipped) and the positive
+claim (one run after unskip) conclusive without risking real messages.
 
 ### Pass criteria
 

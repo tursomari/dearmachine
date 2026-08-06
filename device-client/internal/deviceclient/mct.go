@@ -196,6 +196,41 @@ func (r *MCTRunner) Recover(
 	return r.Run(ctx, resumed, recoveryPrompt, finalPath)
 }
 
+func (r *MCTRunner) DeleteSession(ctx context.Context, sessionID string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("mct session ID is required")
+	}
+	command := exec.CommandContext(
+		ctx,
+		r.binary,
+		"session", "delete", sessionID,
+	)
+	command.Dir = r.projectDir
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return fmt.Errorf(
+			"mct-agent session delete failed: %w: %s",
+			err,
+			strings.TrimSpace(output.String()),
+		)
+	}
+	return nil
+}
+
+func RemoveRecoveryResult(sessionID, messageID string) error {
+	path := recoveryResultPath(sessionID, messageID)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove abandoned mct result: %w", err)
+	}
+	return nil
+}
+
 func resultFromState(
 	state sessionState,
 	finalPath string,

@@ -192,6 +192,9 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if len(args) > 0 && args[0] == "setup-agents" {
 		return runSetupAgents(args[1:], deps)
 	}
+	if len(args) > 0 && args[0] == "inbox" {
+		return runInbox(args[1:], getenv, deps)
+	}
 	flagOutput := deps.flagOutput
 	if flagOutput == nil {
 		flagOutput = io.Discard

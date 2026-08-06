@@ -143,6 +143,20 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 		a.logger.Printf("poll: %d unread messages", len(messages))
 	}
 	for _, message := range messages {
+		skipped, err := a.store.IsSkipped(message.MessageID)
+		if err != nil {
+			return err
+		}
+		if skipped {
+			if a.verbose {
+				a.logger.Printf(
+					"poll: locally skipped message=%s thread=%s",
+					message.MessageID,
+					message.ThreadID,
+				)
+			}
+			continue
+		}
 		seen, err := a.store.Seen(message.MessageID)
 		if err != nil {
 			return err

@@ -348,6 +348,179 @@ func TestStoreCompletedSessionResumesAtNextSequenceAfterReopen(t *testing.T) {
 	}
 }
 
+func TestStoreSkipAndUnskipPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	ref := MessageRef{MessageID: "message-1", ThreadID: "thread-1"}
+	abandoned, err := store.SkipMessages([]MessageRef{ref}, "stale request")
+	if err != nil || len(abandoned) != 0 {
+		t.Fatalf("SkipMessages = %+v, %v", abandoned, err)
+	}
+	if skipped, err := store.IsSkipped(ref.MessageID); err != nil || !skipped {
+		t.Fatalf("IsSkipped = %v, %v", skipped, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store.Close()
+	messages, err := store.SkippedMessages()
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("SkippedMessages = %+v, %v", messages, err)
+	}
+	if got := messages[0]; got.MessageID != ref.MessageID || got.ThreadID != ref.ThreadID ||
+		got.Reason != "stale request" || got.SkippedAt == "" {
+		t.Fatalf("skipped record = %+v", got)
+	}
+	if err := store.UnskipMessages([]string{ref.MessageID}); err != nil {
+		t.Fatalf("UnskipMessages: %v", err)
+	}
+	if skipped, err := store.IsSkipped(ref.MessageID); err != nil || skipped {
+		t.Fatalf("IsSkipped after unskip = %v, %v", skipped, err)
+	}
+	if err := store.UnskipMessages([]string{ref.MessageID}); err == nil {
+		t.Fatal("second UnskipMessages succeeded")
+	}
+}
+
+func TestStoreSkipAbandonsInitialPendingSession(t *testing.T) {
+	store := openTestStore(t)
+	pending, _, err := store.BeginMessage("message-1", "thread-1")
+	if err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	abandoned, err := store.SkipMessages(
+		[]MessageRef{{MessageID: pending.MessageID, ThreadID: pending.ThreadID}},
+		"cancel interrupted request",
+	)
+	if err != nil || len(abandoned) != 1 {
+		t.Fatalf("SkipMessages = %+v, %v", abandoned, err)
+	}
+	if got := abandoned[0]; got.SessionID != pending.Session.SessionID || !got.CleanupSession {
+		t.Fatalf("abandoned message = %+v", got)
+	}
+	if messages, err := store.Pending(); err != nil || len(messages) != 0 {
+		t.Fatalf("Pending = %+v, %v", messages, err)
+	}
+	if _, err := store.Session(pending.ThreadID); err == nil {
+		t.Fatal("provisional thread session remains")
+	}
+	if err := store.UnskipMessages([]string{pending.MessageID}); err != nil {
+		t.Fatalf("UnskipMessages: %v", err)
+	}
+	restarted, existed, err := store.BeginMessage(pending.MessageID, pending.ThreadID)
+	if err != nil || existed {
+		t.Fatalf("BeginMessage after unskip = %+v, %v, %v", restarted, existed, err)
+	}
+	if restarted.Session.SessionID == pending.Session.SessionID || !restarted.Session.IsNew {
+		t.Fatalf("session was not restarted cleanly: old=%+v new=%+v", pending.Session, restarted.Session)
+	}
+}
+
+func TestStoreSkipReceivedFollowupPreservesCommittedSession(t *testing.T) {
+	store := openTestStore(t)
+	first, _, err := store.BeginMessage("message-1", "thread-1")
+	if err != nil {
+		t.Fatalf("BeginMessage first: %v", err)
+	}
+	if err := store.MarkRunning(first.MessageID, "prompt"); err != nil {
+		t.Fatalf("MarkRunning first: %v", err)
+	}
+	if err := store.StoreResult(first.MessageID, RunResult{Kind: ResultAnswer, Text: "done"}); err != nil {
+		t.Fatalf("StoreResult first: %v", err)
+	}
+	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
+		t.Fatalf("Complete first: %v", err)
+	}
+	second, _, err := store.BeginMessage("message-2", "thread-1")
+	if err != nil {
+		t.Fatalf("BeginMessage second: %v", err)
+	}
+	abandoned, err := store.SkipMessages(
+		[]MessageRef{{MessageID: second.MessageID, ThreadID: second.ThreadID}},
+		"skip unread follow-up",
+	)
+	if err != nil || len(abandoned) != 1 || abandoned[0].CleanupSession {
+		t.Fatalf("SkipMessages = %+v, %v", abandoned, err)
+	}
+	session, err := store.Session(second.ThreadID)
+	if err != nil {
+		t.Fatalf("Session: %v", err)
+	}
+	if session.SessionID != first.Session.SessionID || session.Sequence != 1 {
+		t.Fatalf("preserved session = %+v", session)
+	}
+}
+
+func TestStoreRejectsRunningFollowupSkipAtomically(t *testing.T) {
+	store := openTestStore(t)
+	first, _, err := store.BeginMessage("message-1", "thread-1")
+	if err != nil {
+		t.Fatalf("BeginMessage first: %v", err)
+	}
+	if err := store.MarkRunning(first.MessageID, "prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(first.MessageID, RunResult{Kind: ResultAnswer, Text: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.BeginMessage("message-2", "thread-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunning(second.MessageID, "follow-up prompt"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.SkipMessages(
+		[]MessageRef{{MessageID: second.MessageID, ThreadID: second.ThreadID}},
+		"unsafe cancellation",
+	)
+	if err == nil || !strings.Contains(err.Error(), "cannot safely skip in-progress follow-up") {
+		t.Fatalf("SkipMessages error = %v", err)
+	}
+	if skipped, err := store.IsSkipped(second.MessageID); err != nil || skipped {
+		t.Fatalf("IsSkipped after rejected transaction = %v, %v", skipped, err)
+	}
+	pending, err := store.Pending()
+	if err != nil || len(pending) != 1 || pending[0].MessageID != second.MessageID {
+		t.Fatalf("Pending after rejected transaction = %+v, %v", pending, err)
+	}
+}
+
+func TestStoreRejectsSkipWhenMessageThreadDoesNotMatchPendingState(t *testing.T) {
+	store := openTestStore(t)
+	if _, _, err := store.BeginMessage("message-1", "thread-1"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.SkipMessages(
+		[]MessageRef{{MessageID: "message-1", ThreadID: "different-thread"}},
+		"bad remote state",
+	)
+	if err == nil || !strings.Contains(err.Error(), "belongs to thread thread-1") {
+		t.Fatalf("SkipMessages error = %v", err)
+	}
+	if skipped, err := store.IsSkipped("message-1"); err != nil || skipped {
+		t.Fatalf("IsSkipped after rejected mismatch = %v, %v", skipped, err)
+	}
+	pending, err := store.Pending()
+	if err != nil || len(pending) != 1 {
+		t.Fatalf("Pending after rejected mismatch = %+v, %v", pending, err)
+	}
+}
+
 func TestStoreClosedDatabaseErrors(t *testing.T) {
 	store := openTestStore(t)
 	if err := store.Close(); err != nil {
@@ -361,6 +534,12 @@ func TestStoreClosedDatabaseErrors(t *testing.T) {
 	}
 	if _, err := store.Pending(); err == nil {
 		t.Fatal("Pending succeeded on closed database")
+	}
+	if _, err := store.IsSkipped("message-1"); err == nil {
+		t.Fatal("IsSkipped succeeded on closed database")
+	}
+	if _, err := store.SkippedMessages(); err == nil {
+		t.Fatal("SkippedMessages succeeded on closed database")
 	}
 	if _, err := store.Session("thread-1"); err == nil || errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("Session closed database error = %v", err)

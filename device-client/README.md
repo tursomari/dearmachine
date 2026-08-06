@@ -95,6 +95,52 @@ The first poll runs immediately. Later polls start 60 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single
 poll.
 
+## Locally skip inbox messages
+
+Stop Device Client before changing its local inbox decisions. To suppress the
+exact snapshot of messages that are currently unread without changing
+AgentMail, run:
+
+```bash
+device-client inbox skip \
+  --current \
+  --inbox-id your-inbox-id \
+  --project ~/.dearmachine/entrypoint/main \
+  --pidfile ~/.dearmachine/run/device-client.pid \
+  --reason "stale before restart"
+```
+
+Pass one or more message IDs instead of `--current` to select individual
+messages. `--current` records only the IDs returned by that read-only snapshot;
+mail arriving afterward remains eligible. Use `--db` when the client uses a
+non-default state database.
+
+Inspect and reverse local decisions with:
+
+```bash
+device-client inbox skipped
+device-client inbox skipped --json
+device-client inbox unskip <message-id>
+```
+
+These commands never delete messages, change labels, mark messages processed,
+or send replies through AgentMail. A skipped unread message therefore remains
+visible in each remote poll, but Device Client recognizes its local ID and does
+nothing. After `unskip`, the next poll handles the message normally.
+
+Skipping also removes a provisional first-message queue record left by an
+interrupted run and asks mct-agent to delete that abandoned session. If session
+cleanup fails, the message remains safely skipped and the command reports the
+cleanup error. An already-running follow-up in a session with committed history
+is rejected because silently removing it could leave that continuing session
+with ambiguous partial context.
+
+Every inbox mutation checks the supplied PID file, or the normal
+`~/.dearmachine/run/device-client.pid` by default, and refuses to proceed when
+that PID is alive. This protects the normal installed invocation and isolated
+instances that follow the documented PID-file convention; operators must still
+confirm that no client launched without that PID file is polling the database.
+
 Long-running mode logs successful startup and graceful-shutdown counts to
 stderr. Pass `--verbose` to also log the unread-message count for every poll;
 idle polls remain silent by default.

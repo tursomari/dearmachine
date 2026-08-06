@@ -611,6 +611,48 @@ func TestVerboseLogsPollCyclesWhileDefaultIsSilent(t *testing.T) {
 	}
 }
 
+func TestSkippedMessageRemainsUnreadUntilUnskipped(t *testing.T) {
+	rig := newTestRig(t)
+	message := testMessage("msg-skipped", "thread-skipped", "Do not run this yet.")
+	rig.mail.add(message)
+	if _, err := rig.store.SkipMessages(
+		[]MessageRef{{MessageID: message.MessageID, ThreadID: message.ThreadID}},
+		"live test",
+	); err != nil {
+		t.Fatalf("SkipMessages: %v", err)
+	}
+
+	mustProcess(t, rig)
+	mustProcess(t, rig)
+	if !rig.mail.isUnread(message.MessageID) {
+		t.Fatal("skipped message was changed on AgentMail")
+	}
+	if replies := rig.mail.sentReplies(); len(replies) != 0 {
+		t.Fatalf("skipped message received replies: %+v", replies)
+	}
+	if _, err := os.Stat(filepath.Join(rig.captureDir, "count")); !os.IsNotExist(err) {
+		t.Fatalf("mct-agent ran for skipped message; stat error = %v", err)
+	}
+	if _, err := rig.store.Session(message.ThreadID); err == nil {
+		t.Fatal("skipped message created a thread session")
+	}
+
+	if err := rig.store.UnskipMessages([]string{message.MessageID}); err != nil {
+		t.Fatalf("UnskipMessages: %v", err)
+	}
+	rig.setAnswer("Processed after unskip.")
+	mustProcess(t, rig)
+	if rig.mail.isUnread(message.MessageID) {
+		t.Fatal("unskipped processed message remains unread")
+	}
+	if replies := rig.mail.sentReplies(); len(replies) != 1 {
+		t.Fatalf("reply count after unskip = %d, want 1: %+v", len(replies), replies)
+	}
+	if got := rig.capture("count"); got != "1" {
+		t.Fatalf("mct-agent run count = %q, want 1", got)
+	}
+}
+
 func newTestRig(t *testing.T) *testRig {
 	return newTestRigWithModel(t, "test-model")
 }
