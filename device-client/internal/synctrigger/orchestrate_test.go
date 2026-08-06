@@ -79,6 +79,7 @@ func TestOrchestrateNoForkNeeded(t *testing.T) {
 func TestOrchestrateSuccess(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{}
+	var logs bytes.Buffer
 	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
 	o := &Orchestrator{
@@ -86,7 +87,7 @@ func TestOrchestrateSuccess(t *testing.T) {
 		MCTBinary:          "mct-agent",
 		PromptTemplatePath: "/prompt.md",
 		StatePath:          statePath,
-		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		Logger:             log.New(&logs, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
 			return []SessionInfo{
 				{SessionID: "older", UpdatedAt: baseTime},
@@ -103,7 +104,7 @@ func TestOrchestrateSuccess(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"mct-agent", "session", "fork", "new"},
+		{"mct-agent", "session", "fork", "older"},
 		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
 		{"mct-agent", "session", "delete", "forked-123"},
 		{"mct-agent", "sync", "--include-docs"},
@@ -132,8 +133,16 @@ func TestOrchestrateSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadReviewCheckpoint: %v", err)
 	}
-	if checkpoint.SessionID != "new" || !checkpoint.UpdatedAt.Equal(baseTime.Add(time.Hour)) {
-		t.Fatalf("checkpoint = %+v, want newest session", checkpoint)
+	if checkpoint.SessionID != "older" || !checkpoint.UpdatedAt.Equal(baseTime) {
+		t.Fatalf("checkpoint = %+v, want oldest session", checkpoint)
+	}
+	for _, wantLog := range []string{
+		"reviewing source session older; holding 1 newer session(s)",
+		"checkpoint advanced source=older",
+	} {
+		if !strings.Contains(logs.String(), wantLog) {
+			t.Fatalf("logs missing %q:\n%s", wantLog, logs.String())
+		}
 	}
 
 	if err := o.OrchestrateSync(context.Background()); err != nil {
@@ -144,10 +153,104 @@ func TestOrchestrateSuccess(t *testing.T) {
 	}
 }
 
+func TestOrchestrateDrainsBacklogOldestFirstAndHoldsNewest(t *testing.T) {
+	t.Parallel()
+	runner := &mockRunner{}
+	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	o := &Orchestrator{
+		RepoPath:           "/repo",
+		MCTBinary:          "mct-agent",
+		PromptTemplatePath: "/prompt.md",
+		StatePath:          statePath,
+		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			return []SessionInfo{
+				{SessionID: "session-d", UpdatedAt: baseTime.Add(4 * time.Hour)},
+				{SessionID: "session-b", UpdatedAt: baseTime.Add(2 * time.Hour)},
+				{SessionID: "session-a", UpdatedAt: baseTime.Add(time.Hour)},
+				{SessionID: "session-c", UpdatedAt: baseTime.Add(3 * time.Hour)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return baseTime, nil },
+		RunCommand:        runner.Run,
+	}
+
+	for range 4 {
+		if err := o.OrchestrateSync(context.Background()); err != nil {
+			t.Fatalf("OrchestrateSync: %v", err)
+		}
+	}
+
+	var forked []string
+	for _, entry := range runner.entries {
+		if entry.name == "mct-agent" && len(entry.args) == 3 &&
+			entry.args[0] == "session" && entry.args[1] == "fork" {
+			forked = append(forked, entry.args[2])
+		}
+	}
+	wantForked := []string{"session-a", "session-b", "session-c"}
+	if strings.Join(forked, ",") != strings.Join(wantForked, ",") {
+		t.Fatalf("forked sessions = %v, want %v", forked, wantForked)
+	}
+	checkpoint, err := loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("loadReviewCheckpoint: %v", err)
+	}
+	if checkpoint.SessionID != "session-c" {
+		t.Fatalf("checkpoint = %+v, want session-c with session-d held", checkpoint)
+	}
+}
+
+func TestOrchestrateCheckpointPreventsLaterGitSyncFromHidingHeldSession(t *testing.T) {
+	t.Parallel()
+	runner := &mockRunner{}
+	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := saveReviewCheckpoint(statePath, reviewCheckpoint{
+		SessionID: "session-a",
+		UpdatedAt: baseTime.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("saveReviewCheckpoint: %v", err)
+	}
+	o := &Orchestrator{
+		RepoPath:           "/repo",
+		MCTBinary:          "mct-agent",
+		PromptTemplatePath: "/prompt.md",
+		StatePath:          statePath,
+		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			return []SessionInfo{
+				{SessionID: "session-b", UpdatedAt: baseTime.Add(2 * time.Hour)},
+				{SessionID: "session-c", UpdatedAt: baseTime.Add(4 * time.Hour)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) {
+			t.Fatal("GitLastCommitTime called after checkpoint exists")
+			return baseTime.Add(3 * time.Hour), nil
+		},
+		RunCommand: runner.Run,
+	}
+
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("OrchestrateSync: %v", err)
+	}
+	if len(runner.entries) == 0 || strings.Join(runner.entries[0].args, " ") != "session fork session-b" {
+		t.Fatalf("first command = %+v, want held session-b review", runner.entries)
+	}
+	checkpoint, err := loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("loadReviewCheckpoint: %v", err)
+	}
+	if checkpoint.SessionID != "session-b" {
+		t.Fatalf("checkpoint = %+v, want session-b", checkpoint)
+	}
+}
+
 func TestOrchestrateForkFails(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{
-		errAt: map[string]error{"mct-agent session fork old": errors.New("fork failed")},
+		errAt: map[string]error{"mct-agent session fork older": errors.New("fork failed")},
 	}
 	o := &Orchestrator{
 		RepoPath:           "/repo",
@@ -229,7 +332,7 @@ func TestOrchestrateRunCancellationStillCleansUpFork(t *testing.T) {
 		RunCommand: func(commandContext context.Context, _ string, _ string, args ...string) ([]byte, error) {
 			command := strings.Join(args, " ")
 			switch command {
-			case "session fork newer":
+			case "session fork older":
 				return []byte("forked-123\n"), nil
 			case "run --session-id forked-123 --file /prompt.md":
 				cancel()

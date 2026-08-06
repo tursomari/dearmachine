@@ -127,18 +127,15 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load sync-trigger checkpoint: %w", err)
 	}
-	effectiveBoundary := func(repoPath string) (time.Time, error) {
-		syncTime, err := gitLastCommitTime(repoPath)
-		if err != nil {
-			return time.Time{}, err
-		}
-		if checkpoint.UpdatedAt.After(syncTime) {
-			return checkpoint.UpdatedAt, nil
-		}
-		return syncTime, nil
+	var detected *DetectionResult
+	if checkpoint.UpdatedAt.IsZero() {
+		detected, err = DetectSessions(ctx, o.RepoPath, lister, gitLastCommitTime)
+	} else {
+		detected, err = detectSessionsAfter(ctx, o.RepoPath, lister, sessionCursor{
+			SessionID: checkpoint.SessionID,
+			UpdatedAt: checkpoint.UpdatedAt,
+		})
 	}
-
-	detected, err := DetectSessions(ctx, o.RepoPath, lister, effectiveBoundary)
 	if err != nil {
 		return fmt.Errorf("detect sync sessions: %w", err)
 	}
@@ -149,7 +146,11 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		return nil
 	}
 	if o.Logger != nil {
-		o.Logger.Printf("sync trigger: forking session %s", detected.ForkSessionID)
+		o.Logger.Printf(
+			"sync trigger: reviewing source session %s; holding %d newer session(s)",
+			detected.ForkSessionID,
+			len(detected.NewSessions)-1,
+		)
 	}
 
 	forkOutput, err := runCommand(ctx, o.RepoPath, o.MCTBinary, "session", "fork", detected.ForkSessionID)
@@ -218,15 +219,20 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("sync: %w: %s", err, strings.TrimSpace(string(syncOutput)))
 	}
-	latest := detected.NewSessions[0]
+	reviewed := detected.NewSessions[0]
 	if err := saveReviewCheckpoint(checkpointPath, reviewCheckpoint{
-		SessionID: latest.SessionID,
-		UpdatedAt: latest.UpdatedAt,
+		SessionID: reviewed.SessionID,
+		UpdatedAt: reviewed.UpdatedAt,
 	}); err != nil {
 		return fmt.Errorf("save sync-trigger checkpoint: %w", err)
 	}
 	if o.Logger != nil {
-		o.Logger.Printf("sync trigger: orchestration complete for forked session %s", forkedSessionID)
+		o.Logger.Printf(
+			"sync trigger: checkpoint advanced source=%s updated_at=%s fork=%s",
+			reviewed.SessionID,
+			reviewed.UpdatedAt.Format(time.RFC3339Nano),
+			forkedSessionID,
+		)
 	}
 	return nil
 }

@@ -22,14 +22,16 @@ type SessionInfo struct {
 
 // DetectionResult is the output of DetectSessions.
 type DetectionResult struct {
-	// NewSessions are sessions created after the last sync commit timestamp.
+	// NewSessions are sessions updated after the review boundary, ordered from
+	// oldest to newest.
 	NewSessions []SessionInfo
-	// ForkSessionID is the SessionID of the most recent new session,
-	// or empty if fewer than 2 new sessions were found.
+	// ForkSessionID is the SessionID of the oldest reviewable session, or empty
+	// if fewer than 2 new sessions were found. The newest session is deliberately
+	// held until a later session arrives.
 	ForkSessionID string
-	// LastSyncCommitTime is the timestamp of the last internal-readme commit
-	// (or the repo's first commit if no internal readme exists).
-	LastSyncCommitTime time.Time
+	// ReviewBoundaryTime is the timestamp used to exclude already reviewed
+	// sessions. Before the first checkpoint, it comes from internal-README sync.
+	ReviewBoundaryTime time.Time
 }
 
 // SessionLister returns mct-agent sessions for a repo.
@@ -38,6 +40,11 @@ type SessionLister func(ctx context.Context, repoDir string) ([]SessionInfo, err
 // GitLastCommitTime returns the timestamp of the project commit most recently
 // processed by internal-README sync.
 type GitLastCommitTime func(repoDir string) (time.Time, error)
+
+type sessionCursor struct {
+	SessionID string
+	UpdatedAt time.Time
+}
 
 type sessionRecord struct {
 	SessionID string `json:"session_id"`
@@ -70,6 +77,15 @@ func DetectSessions(
 		return nil, err
 	}
 
+	return detectSessionsAfter(ctx, entryPointRepo, lister, sessionCursor{UpdatedAt: lastSyncTime})
+}
+
+func detectSessionsAfter(
+	ctx context.Context,
+	entryPointRepo string,
+	lister SessionLister,
+	boundary sessionCursor,
+) (*DetectionResult, error) {
 	sessions, err := lister(ctx, entryPointRepo)
 	if err != nil {
 		return nil, err
@@ -77,23 +93,35 @@ func DetectSessions(
 
 	newSessions := make([]SessionInfo, 0, len(sessions))
 	for _, session := range sessions {
-		if session.UpdatedAt.After(lastSyncTime) {
+		if sessionAfterCursor(session, boundary) {
 			newSessions = append(newSessions, session)
 		}
 	}
 
 	sort.Slice(newSessions, func(i, j int) bool {
-		return newSessions[i].UpdatedAt.After(newSessions[j].UpdatedAt)
+		if newSessions[i].UpdatedAt.Equal(newSessions[j].UpdatedAt) {
+			return newSessions[i].SessionID < newSessions[j].SessionID
+		}
+		return newSessions[i].UpdatedAt.Before(newSessions[j].UpdatedAt)
 	})
 
 	result := &DetectionResult{
 		NewSessions:        newSessions,
-		LastSyncCommitTime: lastSyncTime,
+		ReviewBoundaryTime: boundary.UpdatedAt,
 	}
 	if len(newSessions) >= 2 {
 		result.ForkSessionID = newSessions[0].SessionID
 	}
 	return result, nil
+}
+
+func sessionAfterCursor(session SessionInfo, boundary sessionCursor) bool {
+	if session.UpdatedAt.After(boundary.UpdatedAt) {
+		return true
+	}
+	return boundary.SessionID != "" &&
+		session.UpdatedAt.Equal(boundary.UpdatedAt) &&
+		session.SessionID > boundary.SessionID
 }
 
 // DefaultSessionLister lists sessions using `mct-agent session list --json`.

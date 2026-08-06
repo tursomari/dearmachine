@@ -19,8 +19,8 @@ func TestDetectSessionsNoCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectSessions: %v", err)
 	}
-	if !detected.LastSyncCommitTime.IsZero() {
-		t.Fatalf("last sync commit time = %s, want zero", detected.LastSyncCommitTime)
+	if !detected.ReviewBoundaryTime.IsZero() {
+		t.Fatalf("review boundary time = %s, want zero", detected.ReviewBoundaryTime)
 	}
 	if len(detected.NewSessions) != 0 {
 		t.Fatalf("new sessions count = %d, want 0", len(detected.NewSessions))
@@ -107,8 +107,37 @@ func TestDetectSessionsTwoNewSessions(t *testing.T) {
 	if len(detected.NewSessions) != 2 {
 		t.Fatalf("new sessions count = %d, want 2", len(detected.NewSessions))
 	}
-	if detected.ForkSessionID != "newest" {
-		t.Fatalf("fork session = %q, want newest", detected.ForkSessionID)
+	if detected.NewSessions[0].SessionID != "older" || detected.NewSessions[1].SessionID != "newest" {
+		t.Fatalf("new sessions = %+v, want oldest-first", detected.NewSessions)
+	}
+	if detected.ForkSessionID != "older" {
+		t.Fatalf("fork session = %q, want older", detected.ForkSessionID)
+	}
+}
+
+func TestDetectSessionsUsesSessionIDToOrderEqualTimestamps(t *testing.T) {
+	t.Parallel()
+	updatedAt := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	detected, err := detectSessionsAfter(
+		context.Background(),
+		"/repo",
+		func(context.Context, string) ([]SessionInfo, error) {
+			return []SessionInfo{
+				{SessionID: "session-c", UpdatedAt: updatedAt.Add(time.Minute)},
+				{SessionID: "session-a", UpdatedAt: updatedAt},
+				{SessionID: "session-b", UpdatedAt: updatedAt},
+			}, nil
+		},
+		sessionCursor{SessionID: "session-a", UpdatedAt: updatedAt},
+	)
+	if err != nil {
+		t.Fatalf("detectSessionsAfter: %v", err)
+	}
+	if len(detected.NewSessions) != 2 {
+		t.Fatalf("new sessions = %+v, want session-b and session-c", detected.NewSessions)
+	}
+	if detected.NewSessions[0].SessionID != "session-b" || detected.NewSessions[1].SessionID != "session-c" {
+		t.Fatalf("new sessions = %+v, want cursor order", detected.NewSessions)
 	}
 }
 
