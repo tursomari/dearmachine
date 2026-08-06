@@ -76,15 +76,64 @@ lines, checkpoint contents or absence, source and artifact Git heads/status,
 internal-README hash, and temporary-fork presence or absence. Never copy
 credentials.
 
-### Stable prompt corpus
+### Stable prompt sets
 
-Send each case as a new email thread, in this exact order. Do not reply in a
-test thread: a continuation changes the source session's `updated_at` and makes
-the ordering evidence inconclusive. If a prompt unexpectedly requires
-clarification, record the case as inconclusive and stop before sending the next
-case.
+Use the natural-user set by default. It exercises the behavior DearMachine must
+handle in normal use: inferring durable value without test-specific wording.
+Use the explicit-control set only when a baseline with unambiguous retention
+instructions is specifically useful. Record the selected set.
 
-#### Case A: `ephemeral-v1`
+Send its cases as new email threads in exact A-B-C order, followed by the shared
+D tail. Do not mix sets in one run. Do not reply in a test thread: a
+continuation changes the source session's `updated_at` and makes the ordering
+evidence inconclusive. If a prompt unexpectedly requires clarification, record
+the case as inconclusive and stop before sending the next case.
+
+#### Priority set: natural user requests
+
+This set tests whether maintenance infers durable value from an ordinary
+recurring problem rather than reacting to words about documentation or
+retention.
+
+##### Case A: `power-modes-v2`
+
+```text
+What's the practical difference between putting a laptop to sleep, hibernating
+it, and shutting it down?
+```
+
+Expected sensitivity: no durable documentation update. This is an ordinary
+general-information request without a recurring machine workflow.
+
+##### Case B: `recurring-memory-v2`
+
+```text
+My computer sometimes slows down, and I often want to know whether one
+application is consuming most of the memory. Can you check the current memory
+usage and trace it back to the responsible application?
+```
+
+Expected sensitivity: maintenance recognizes the recurring operational need
+and commits a reusable memory-diagnosis procedure or equivalent guidance. A
+snapshot of current consumers may support the immediate answer, but retaining
+short-lived process names and measurements as durable documentation should be
+reported as over-eager sensitivity unless there is a clear continuing reason.
+
+##### Case C: `recommendation-first-v2`
+
+```text
+Can you compare ZIP and tar.gz for sending a folder to someone? I usually find
+it easier when the recommendation comes first and the supporting details
+follow.
+```
+
+Expected sensitivity: observational only. Either a justified update or a
+justified no-op is recorded, with attention to whether one naturally phrased
+preference is enough to establish a durable convention.
+
+#### Optional control set: explicit boundary controls
+
+##### Case A: `ephemeral-v1`
 
 ```text
 This is a one-time, read-only inspection. Do not modify files and do not retain
@@ -95,7 +144,7 @@ describe the purpose of its main directories.
 Expected sensitivity: no durable documentation update when A is eventually
 reviewed.
 
-#### Case B: `durable-evidence-v1`
+##### Case B: `durable-evidence-v1`
 
 ```text
 This turn is read-only: do not modify files now. For future sessions on this
@@ -108,7 +157,7 @@ Expected sensitivity: when B is later reviewed, maintenance adds and commits a
 concise durable convention or equivalent guidance, and the internal README is
 updated from that new entry-point commit.
 
-#### Case C: `borderline-summary-v1`
+##### Case C: `borderline-summary-v1`
 
 ```text
 Do not modify files. I often find a short status summary before detailed
@@ -119,12 +168,10 @@ to document it, and briefly discuss when that presentation would help.
 Expected sensitivity: observational only. Either a justified update or a
 justified no-op is recorded for comparison with later runs.
 
-#### Case D: `tail-sentinel-v1`
+#### Shared Case D: `current-time-tail-v2`
 
 ```text
-This is a one-time, read-only check with no durable documentation value. Report
-the current branch name of the temporary entry-point repository and make no
-changes.
+What day of the week is it, and what is the current local time?
 ```
 
 Expected trigger behavior: D remains held and uncheckpointed at the end.
@@ -158,11 +205,15 @@ Expected trigger behavior: D remains held and uncheckpointed at the end.
 
 - Confirm maintenance selects B while holding C.
 - Confirm B's temporary fork completes and is deleted.
-- Confirm B's durable convention produces a new commit in the disposable entry
-  point, followed by a successful documentation-aware sync.
+- Confirm B's expected durable content for the selected set produces a new
+  commit in the disposable entry point, followed by a successful
+  documentation-aware sync.
 - Confirm the artifact repository has a new revision associated with that
-  entry-point commit and the internal README conveys the evidence-versus-
-  inference convention.
+  entry-point commit. For the priority natural-user set, the internal README
+  must convey a reusable way to attribute memory use to an application;
+  separately classify any retained volatile process snapshot. For the optional
+  explicit-control set, it must convey the evidence-versus-inference
+  convention.
 - Confirm the checkpoint now records B, even though the maintenance commit and
   artifact sync occurred after C's predecessor timestamps. This is the live
   regression proof that Git sync time did not hide B.
@@ -179,7 +230,8 @@ Expected trigger behavior: D remains held and uncheckpointed at the end.
 
 ### Required outcome classification
 
-Report each case in a table with:
+Report each case in its own short section. Avoid a wide table because session
+and thread identifiers make it difficult to read. Include:
 
 - safe case ID;
 - source-session order and timestamps;
@@ -204,7 +256,8 @@ Give separate verdicts:
 When a previous private report exists, compare the stable case outcomes and
 identify any shift toward over-eager or over-conservative documentation. Do not
 call a change in C alone a regression; report it as sensitivity drift with the
-tested DearMachine revision, mct-agent revision, and model selection.
+tested prompt set, DearMachine revision, mct-agent revision, and model
+selection.
 
 ### Finish and refine
 

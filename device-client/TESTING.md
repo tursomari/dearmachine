@@ -119,5 +119,6 @@ includes the required Forge logout and login gates.
 For a live evaluation of the rolling one-session checkpoint, valid
 documentation no-ops, durable entry-point updates, and internal-README sync,
 give [`LIVE_UPDATE_SYNC_TESTING.md`](./LIVE_UPDATE_SYNC_TESTING.md) to a capable
-local agent. Its stable synthetic prompt corpus supports sensitivity comparison
-across revisions without turning the live lifecycle into a brittle script.
+local agent. Its priority natural-user prompts and optional explicit controls
+support sensitivity comparison across revisions without turning the live
+lifecycle into a brittle script.
