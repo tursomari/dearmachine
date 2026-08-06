@@ -388,7 +388,7 @@ func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
 	repo := t.TempDir()
 	prompt := filepath.Join(repo, "documentation", "update-prompt.md")
 	manager := "/configured/agent-manager"
-	backends := []string{"forgecode", "codex"}
+	backends := []string{"forge", "codex"}
 	orchestrator, err := buildOrchestrator(
 		config{
 			entryPointRepo:   repo,
@@ -416,7 +416,7 @@ func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
 		)
 	}
 	backends[0] = "codex"
-	if !slices.Equal(orchestrator.Backends, []string{"forgecode", "codex"}) {
+	if !slices.Equal(orchestrator.Backends, []string{"forge", "codex"}) {
 		t.Fatalf("orchestrator backends alias caller slice: %v", orchestrator.Backends)
 	}
 }

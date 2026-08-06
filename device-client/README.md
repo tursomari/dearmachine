@@ -27,7 +27,7 @@ than one backend and set their priority order:
 cd device-client
 go run ./cmd/device-client setup-agents \
   --backend codex \
-  --backend forgecode
+  --backend forge
 ```
 
 The setup command verifies that each requested backend is currently on `PATH`,
@@ -35,14 +35,16 @@ asks for confirmation, and writes:
 
 ```toml
 version = 1
-backends = ["codex","forgecode"]
+backends = ["codex","forge"]
 ```
 
 `backends` is an approved list in priority order. Device Client validates and
 loads the complete list at startup, then passes that immutable snapshot to each
 managed mct-agent run. Restart Device Client after changing the configuration.
-Agent Manager currently supports `codex` and `forgecode`; an older config that
-names another backend is rejected with instructions to rerun `setup-agents`.
+Agent Manager currently supports `codex` and `forge`. A version-1 config using
+the former `forgecode` identifier is accepted and normalized to `forge` in
+memory; rerun `setup-agents` to rewrite it canonically. A config naming any
+other unsupported backend is rejected with instructions to rerun setup.
 
 The agent-managed coordinator discovers the approved order with
 `agent-manager backend list`, functionally probes candidates in order with
@@ -203,7 +205,7 @@ automatically import remote history into a privacy-cleaned repository.
 
 For an opt-in live smoke test that does not share the normal Device Client's
 inbox or runtime state, follow
-[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md). The ordered Forgecode,
+[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md). The ordered Forge,
 Codex, and fallback protocol remains in
 [`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md).
 

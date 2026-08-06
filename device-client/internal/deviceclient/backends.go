@@ -123,6 +123,7 @@ func LoadDeviceConfig(path string) (DeviceConfig, error) {
 	if !seenBackends {
 		return DeviceConfig{}, fmt.Errorf("device config backends are required")
 	}
+	config.Backends = backendcatalog.CanonicalizeIDs(config.Backends)
 	if err := validateBackendIDs(config.Backends, false); err != nil {
 		return DeviceConfig{}, fmt.Errorf(
 			"validate device config: %w; rerun device-client setup-agents",

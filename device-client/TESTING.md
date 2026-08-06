@@ -111,7 +111,7 @@ manager home, PID file, and temporary runtime directory, give
 It includes safe provisioning, lifecycle observation, and permanent inbox and
 runtime cleanup.
 
-For a live test of Forgecode, Codex, and ordered fallback through the complete
+For a live test of Forge, Codex, and ordered fallback through the complete
 email lifecycle, give
 [`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md) to a capable local
 agent. It is a human-guided agent prompt, not an executable test script, and it

@@ -26,7 +26,7 @@ The normal configuration is `~/.dearmachine/config/device-client.toml`:
 
 ```toml
 version = 1
-backends = ["codex", "forgecode"]
+backends = ["codex", "forge"]
 ```
 
 Backend order is priority order. At least one supported backend is required.

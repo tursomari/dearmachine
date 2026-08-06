@@ -105,13 +105,13 @@ func (CodexAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) (
 	return observation, nil
 }
 
-type ForgecodeAdapter struct {
+type ForgeAdapter struct {
 	newSessionID func() (string, error)
 }
 
-func (ForgecodeAdapter) Name() string       { return "forgecode" }
-func (ForgecodeAdapter) Executable() string { return "forge" }
-func (a ForgecodeAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
+func (ForgeAdapter) Name() string       { return "forge" }
+func (ForgeAdapter) Executable() string { return "forge" }
+func (a ForgeAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
 	newSessionID := a.newSessionID
 	if newSessionID == nil {
 		newSessionID = newUUIDv4
@@ -125,7 +125,7 @@ func (a ForgecodeAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, e
 	return Launch{Command: command, NativeSession: sessionID}, nil
 }
 
-func (ForgecodeAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) (Observation, error) {
+func (ForgeAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) (Observation, error) {
 	captured := &tailWriter{limit: 64 * 1024}
 	_, err := io.Copy(captured, stdout)
 	return Observation{Reply: string(captured.content)}, err
@@ -186,8 +186,8 @@ func New(root string) *Manager {
 	m := &Manager{
 		Root: filepath.Clean(root),
 		Adapters: map[string]Adapter{
-			"codex":     CodexAdapter{},
-			"forgecode": ForgecodeAdapter{},
+			"codex": CodexAdapter{},
+			"forge": ForgeAdapter{},
 		},
 		ExecutablePath: os.Executable,
 		Now:            time.Now,

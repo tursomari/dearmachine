@@ -20,9 +20,9 @@ state.
 You are conducting a live, human-guided integration test of DearMachine's
 ordered backend selection. Run the three tests below in order:
 
-1. Forgecode as the only approved backend.
+1. Forge as the only approved backend.
 2. Codex as the only approved backend.
-3. Forgecode first and Codex second, with Forge deliberately logged out, so the
+3. Forge first and Codex second, with Forge deliberately logged out, so the
    live task must fall back to Codex.
 
 Treat each test as an independent end-to-end exercise. Do not change product
@@ -96,13 +96,13 @@ For each test, retain evidence of:
 Do not count a test as passed based only on a successful email reply. The
 trajectory and closed-ticket metadata must prove which backend was selected.
 
-### Test 1: Forgecode only
+### Test 1: Forge only
 
 1. Write an isolated Device Client configuration with:
 
    ```toml
    version = 1
-   backends = ["forgecode"]
+   backends = ["forge"]
    ```
 
 2. Start the isolated Device Client with that configuration, the freshly built
@@ -110,8 +110,8 @@ trajectory and closed-ticket metadata must prove which backend was selected.
    polling suitable for observation.
 3. Send a new-thread email containing a meaningful read-only task.
 4. Observe the entire lifecycle through the email reply.
-5. Pass only if Forgecode's functional health check succeeds, the ticket worker
-   is `forgecode`, the ticket closes successfully, and a substantive reply
+5. Pass only if Forge's functional health check succeeds, the ticket worker is
+   `forge`, the ticket closes successfully, and a substantive reply
    arrives in the original email thread.
 6. Stop the isolated Device Client cleanly before changing configuration.
 
@@ -132,7 +132,7 @@ trajectory and closed-ticket metadata must prove which backend was selected.
    the original email thread.
 6. Stop the isolated Device Client cleanly.
 
-### Test 3: Forgecode-to-Codex fallback
+### Test 3: Forge-to-Codex fallback
 
 This test has a mandatory human gate. Do not log the tester out yourself.
 
@@ -149,15 +149,15 @@ Wait for explicit confirmation. Then:
 
    ```toml
    version = 1
-   backends = ["forgecode", "codex"]
+   backends = ["forge", "codex"]
    ```
 
 2. Start the isolated Device Client again with fresh runtime state.
 3. Send a third meaningful read-only task in a new email thread.
 4. Observe the ordered health checks, ticket lifecycle, and email reply.
 5. Pass only if all of the following are proven:
-   - the approved order is Forgecode followed by Codex;
-   - Forgecode is tried first and its functional health check fails because it
+   - the approved order is Forge followed by Codex;
+   - Forge is tried first and its functional health check fails because it
      cannot perform the probe while logged out;
    - Codex is checked only after that failure and passes;
    - the ticket worker is `codex`;
@@ -188,6 +188,6 @@ After all three tests:
    configured order, observed health-check order and outcomes, selected worker,
    ticket result, email-reply result, and supporting session/ticket identifiers.
 6. Clearly distinguish expected fallback from a silent substitution. In Test 3,
-   Codex use is a pass only when Forgecode was visibly attempted first and
+   Codex use is a pass only when Forge was visibly attempted first and
    failed its functional probe.
 7. Mention whether the tester confirmed that Forge login was restored.

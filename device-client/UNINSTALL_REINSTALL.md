@@ -25,7 +25,7 @@ The following are outside the uninstall scope and must be preserved:
 
 - the DearMachine source repository;
 - `mct-agent` and unrelated UUID stores under `~/.machtiani`;
-- installed backend tools such as Codex and Forgecode;
+- installed backend tools such as Codex and Forge;
 - project-local private files such as `.secrets` and `.scratch`;
 - Git rewrite, quarantine, and deprecated-repository backups; and
 - AgentMail inboxes, credentials, and allow-list entries, which are server-side
@@ -295,7 +295,7 @@ exercise have passed and the operator separately approves deletion.
    ```bash
    device-client setup-agents \
      --backend codex \
-     --backend forgecode
+     --backend forge
    ```
 
    The command displays detected tools and asks for confirmation before saving.

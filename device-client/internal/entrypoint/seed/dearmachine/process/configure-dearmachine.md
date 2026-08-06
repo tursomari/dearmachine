@@ -20,7 +20,7 @@ use the resulting configuration.
 
    ```toml
    version = 1
-   backends = ["codex", "forgecode"]
+   backends = ["codex", "forge"]
    ```
 
 4. Stop the running Device Client gracefully.

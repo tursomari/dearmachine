@@ -8,6 +8,8 @@ import (
 
 const EnvironmentVariable = "DEARMACHINE_BACKENDS"
 
+const legacyForgecodeID = "forgecode"
+
 type Backend struct {
 	ID          string
 	DisplayName string
@@ -23,10 +25,10 @@ var catalog = []Backend{
 		InstallHelp: "Install Codex CLI, then ensure codex is on PATH.",
 	},
 	{
-		ID:          "forgecode",
-		DisplayName: "Forgecode",
+		ID:          "forge",
+		DisplayName: "Forge",
 		Executable:  "forge",
-		InstallHelp: "Install Forgecode, then ensure forge is on PATH.",
+		InstallHelp: "Install Forge, then ensure forge is on PATH.",
 	},
 }
 
@@ -60,6 +62,18 @@ func ValidateIDs(ids []string, allowEmpty bool) error {
 	return nil
 }
 
+// CanonicalizeIDs translates identifiers written by older Device Client
+// versions. Callers must still validate the returned identifiers.
+func CanonicalizeIDs(ids []string) []string {
+	canonical := append([]string(nil), ids...)
+	for index, id := range canonical {
+		if id == legacyForgecodeID {
+			canonical[index] = "forge"
+		}
+	}
+	return canonical
+}
+
 func Encode(ids []string) (string, error) {
 	if err := ValidateIDs(ids, false); err != nil {
 		return "", err
@@ -79,6 +93,7 @@ func Decode(value string) ([]string, error) {
 	if err := json.Unmarshal([]byte(value), &ids); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", EnvironmentVariable, err)
 	}
+	ids = CanonicalizeIDs(ids)
 	if err := ValidateIDs(ids, false); err != nil {
 		return nil, fmt.Errorf("validate %s: %w", EnvironmentVariable, err)
 	}

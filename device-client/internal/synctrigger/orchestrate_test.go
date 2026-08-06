@@ -261,7 +261,7 @@ func TestAgentManagedCommandRunnerSetsConfiguredEnvironment(t *testing.T) {
 
 	runner, err := agentManagedCommandRunner(
 		"/configured/agent-manager",
-		[]string{"forgecode", "codex"},
+		[]string{"forge", "codex"},
 	)
 	if err != nil {
 		t.Fatalf("agentManagedCommandRunner: %v", err)
@@ -276,7 +276,7 @@ func TestAgentManagedCommandRunnerSetsConfiguredEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run command: %v: %s", err, output)
 	}
-	want := "/configured/agent-manager\n[\"forgecode\",\"codex\"]\nunset\nunset\n"
+	want := "/configured/agent-manager\n[\"forge\",\"codex\"]\nunset\nunset\n"
 	if string(output) != want {
 		t.Fatalf("managed environment = %q, want %q", output, want)
 	}

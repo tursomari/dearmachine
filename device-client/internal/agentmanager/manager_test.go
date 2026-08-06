@@ -72,8 +72,8 @@ func TestCodexAdapterAddsTicketDirectory(t *testing.T) {
 	}
 }
 
-func TestForgecodeAdapterInvokesForgeDirectly(t *testing.T) {
-	adapter := ForgecodeAdapter{newSessionID: func() (string, error) {
+func TestForgeAdapterInvokesForgeDirectly(t *testing.T) {
+	adapter := ForgeAdapter{newSessionID: func() (string, error) {
 		return "029a3702-f8fa-470f-8a28-190c0f53410e", nil
 	}}
 	launch, err := adapter.Prepare(context.Background(), "/project", "/tickets/ticket-1")
@@ -92,11 +92,11 @@ func TestForgecodeAdapterInvokesForgeDirectly(t *testing.T) {
 	}
 }
 
-func TestNewRegistersForgecodeAdapter(t *testing.T) {
+func TestNewRegistersForgeAdapter(t *testing.T) {
 	manager := New(t.TempDir())
-	adapter, ok := manager.Adapters["forgecode"]
-	if !ok || adapter.Name() != "forgecode" || adapter.Executable() != "forge" {
-		t.Fatalf("forgecode adapter = %#v, found = %v", adapter, ok)
+	adapter, ok := manager.Adapters["forge"]
+	if !ok || adapter.Name() != "forge" || adapter.Executable() != "forge" {
+		t.Fatalf("forge adapter = %#v, found = %v", adapter, ok)
 	}
 }
 
@@ -225,14 +225,14 @@ func TestTicketCancelAndCancelAll(t *testing.T) {
 	}
 }
 
-func TestForgecodeTicketLifecycleDrainsLargeOutput(t *testing.T) {
+func TestForgeTicketLifecycleDrainsLargeOutput(t *testing.T) {
 	manager := testForgeManager(t, `
 request=$(cat)
 close_path=$(printf '%s\n' "$request" | sed -n 's/^# Close-Path: //p')
 head -c 2097152 /dev/zero | tr '\000' x
 printf '%s\n' 'forge worker complete' > "$close_path"
 `)
-	id, err := manager.Send("forgecode", writeRequest(t), t.TempDir())
+	id, err := manager.Send("forge", writeRequest(t), t.TempDir())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -249,9 +249,9 @@ printf '%s\n' 'forge worker complete' > "$close_path"
 	}
 }
 
-func TestForgecodeTicketCrash(t *testing.T) {
+func TestForgeTicketCrash(t *testing.T) {
 	manager := testForgeManager(t, `cat >/dev/null; printf '%s' 'ordinary forge output'; exit 2`)
-	id, err := manager.Send("forgecode", writeRequest(t), t.TempDir())
+	id, err := manager.Send("forge", writeRequest(t), t.TempDir())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -261,9 +261,9 @@ func TestForgecodeTicketCrash(t *testing.T) {
 	}
 }
 
-func TestForgecodeTicketCancel(t *testing.T) {
+func TestForgeTicketCancel(t *testing.T) {
 	manager := testForgeManager(t, `cat >/dev/null; exec sleep 30`)
-	id, err := manager.Send("forgecode", writeRequest(t), t.TempDir())
+	id, err := manager.Send("forge", writeRequest(t), t.TempDir())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -277,10 +277,10 @@ func TestForgecodeTicketCancel(t *testing.T) {
 }
 
 func TestBackendHealthFileProbe(t *testing.T) {
-	for _, backend := range []string{"codex", "forgecode"} {
+	for _, backend := range []string{"codex", "forge"} {
 		t.Run(backend, func(t *testing.T) {
 			bin := t.TempDir()
-			executableName := map[string]string{"codex": "codex", "forgecode": "forge"}[backend]
+			executableName := map[string]string{"codex": "codex", "forge": "forge"}[backend]
 			executable := filepath.Join(bin, executableName)
 			script := `#!/bin/sh
 set -eu
@@ -355,7 +355,7 @@ func TestSendRejectsUnapprovedBackend(t *testing.T) {
 	if err := manager.SetApprovedBackends([]string{"codex"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Send("forgecode", writeRequest(t), t.TempDir()); err == nil || !strings.Contains(err.Error(), "not approved") {
+	if _, err := manager.Send("forge", writeRequest(t), t.TempDir()); err == nil || !strings.Contains(err.Error(), "not approved") {
 		t.Fatalf("Send error = %v", err)
 	}
 }
@@ -383,11 +383,11 @@ func testForgeManager(t *testing.T, script string) *Manager {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	manager := New(filepath.Join(t.TempDir(), "agent-manager"))
 	manager.Adapters = map[string]Adapter{
-		"forgecode": ForgecodeAdapter{newSessionID: func() (string, error) {
+		"forge": ForgeAdapter{newSessionID: func() (string, error) {
 			return "029a3702-f8fa-470f-8a28-190c0f53410e", nil
 		}},
 	}
-	manager.ApprovedBackends = []string{"forgecode"}
+	manager.ApprovedBackends = []string{"forge"}
 	manager.LaunchSupervisor = func(id string) error {
 		go func() { _ = manager.Supervise(context.Background(), id) }()
 		return nil

@@ -6,7 +6,7 @@ and delete an AgentMail inbox, use an authorized email transport, and inspect
 local mct-agent session data.
 
 Use this runbook for one isolated end-to-end email exercise. For the three-part
-Forgecode, Codex, and fallback protocol, use
+Forge, Codex, and fallback protocol, use
 [`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md) and apply this runbook's
 provisioning and teardown rules to each disposable instance.
 
@@ -116,7 +116,7 @@ a repository root as a recursive deletion target.
 
    ```toml
    version = 1
-   backends = ["forgecode", "codex"]
+   backends = ["forge", "codex"]
    ```
 
 5. Create the temporary inbox through the installed AgentMail SDK or its

@@ -16,7 +16,7 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		ids = append(ids, backend.ID)
 		executables = append(executables, backend.Executable)
 	}
-	if !reflect.DeepEqual(ids, []string{"codex", "forgecode"}) {
+	if !reflect.DeepEqual(ids, []string{"codex", "forge"}) {
 		t.Fatalf("backend IDs = %v", ids)
 	}
 	if !reflect.DeepEqual(executables, []string{"codex", "forge"}) {
@@ -47,7 +47,7 @@ func TestDeviceConfigRoundTripAndDefaultPath(t *testing.T) {
 	}
 	config := DeviceConfig{
 		Version:  DeviceConfigVersion,
-		Backends: []string{"codex", "forgecode"},
+		Backends: []string{"codex", "forge"},
 	}
 	if err := SaveDeviceConfig(path, config); err != nil {
 		t.Fatalf("SaveDeviceConfig: %v", err)
@@ -63,12 +63,31 @@ func TestDeviceConfigRoundTripAndDefaultPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if got := string(content); got != "version = 1\nbackends = [\"codex\",\"forgecode\"]\n" {
+	if got := string(content); got != "version = 1\nbackends = [\"codex\",\"forge\"]\n" {
 		t.Fatalf("config content = %q", got)
 	}
 	loaded, err := LoadDeviceConfig(path)
 	if err != nil || !reflect.DeepEqual(loaded, config) {
 		t.Fatalf("LoadDeviceConfig = %+v, %v", loaded, err)
+	}
+}
+
+func TestLoadDeviceConfigCanonicalizesLegacyForgecodeID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "device-client.toml")
+	content := []byte("version = 1\nbackends = [\"forgecode\",\"codex\"]\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	loaded, err := LoadDeviceConfig(path)
+	if err != nil || !reflect.DeepEqual(loaded.Backends, []string{"forge", "codex"}) {
+		t.Fatalf("LoadDeviceConfig legacy IDs = %+v, %v", loaded, err)
+	}
+	if err := SaveDeviceConfig(filepath.Join(t.TempDir(), "new.toml"), DeviceConfig{
+		Version:  DeviceConfigVersion,
+		Backends: []string{"forgecode"},
+	}); err == nil || !strings.Contains(err.Error(), `unknown backend "forgecode"`) {
+		t.Fatalf("SaveDeviceConfig accepted legacy ID: %v", err)
 	}
 }
 
@@ -112,13 +131,13 @@ func TestSetupAgentsConfirmsDetectedDefaultOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetupAgents: %v", err)
 	}
-	want := []string{"codex", "forgecode"}
+	want := []string{"codex", "forge"}
 	if !reflect.DeepEqual(config.Backends, want) {
 		t.Fatalf("configured backends = %v, want %v", config.Backends, want)
 	}
 	for _, text := range []string{
-		"found   forgecode",
-		"Default priority order: codex, forgecode",
+		"found   forge",
+		"Default priority order: codex, forge",
 		"Saved approved backend order",
 	} {
 		if !strings.Contains(output.String(), text) {
@@ -135,16 +154,16 @@ func TestSetupAgentsConfirmsCustomDetectedOrder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "device-client.toml")
 	var output strings.Builder
 	config, err := SetupAgents(
-		strings.NewReader("n\nforgecode, codex\ny\n"),
+		strings.NewReader("n\nforge, codex\ny\n"),
 		&output,
 		path,
 		nil,
 		fakeBackendLookup("codex", "forge"),
 	)
-	if err != nil || !reflect.DeepEqual(config.Backends, []string{"forgecode", "codex"}) {
+	if err != nil || !reflect.DeepEqual(config.Backends, []string{"forge", "codex"}) {
 		t.Fatalf("custom SetupAgents = %+v, %v", config, err)
 	}
-	if !strings.Contains(output.String(), "Use forgecode, codex? [y/N]") {
+	if !strings.Contains(output.String(), "Use forge, codex? [y/N]") {
 		t.Fatalf("custom confirmation missing:\n%s", output.String())
 	}
 }
@@ -165,7 +184,7 @@ func TestSetupAgentsPreferredOverrideStillRequiresConfirmation(t *testing.T) {
 		strings.NewReader("yes\n"),
 		ioDiscard{},
 		filepath.Join(t.TempDir(), "config.toml"),
-		[]string{"forgecode"},
+		[]string{"forge"},
 		fakeBackendLookup("codex"),
 	); err == nil || !strings.Contains(err.Error(), "was not detected") {
 		t.Fatalf("missing preferred backend error = %v", err)
@@ -185,7 +204,7 @@ func TestSetupAgentsOffersInstallHelpWhenNoneDetected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no supported coding agents") {
 		t.Fatalf("SetupAgents no agents error = %v", err)
 	}
-	for _, want := range []string{"Install help:", "Forgecode:", "Codex CLI:"} {
+	for _, want := range []string{"Install help:", "Forge:", "Codex CLI:"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("install help missing %q:\n%s", want, output.String())
 		}
@@ -198,7 +217,7 @@ func TestSetupAgentsOffersInstallHelpWhenNoneDetected(t *testing.T) {
 func TestSetupAgentsDoesNotSaveUnconfirmedSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "device-client.toml")
 	_, err := SetupAgents(
-		strings.NewReader("n\nforgecode\nn\n"),
+		strings.NewReader("n\nforge\nn\n"),
 		ioDiscard{},
 		path,
 		nil,

@@ -41,7 +41,7 @@ func TestNewMCTRunnerValidation(t *testing.T) {
 func TestMCTRunnerPassesApprovedBackendSnapshot(t *testing.T) {
 	fixture := newMCTTestFixture(t)
 	if err := fixture.runner.ConfigureAgentManaged(
-		[]string{"forgecode", "codex"},
+		[]string{"forge", "codex"},
 		"/test/agent-manager",
 	); err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestMCTRunnerPassesApprovedBackendSnapshot(t *testing.T) {
 	}
 	captureDir := os.Getenv("FAKE_MCT_CAPTURE")
 	backends, err := os.ReadFile(filepath.Join(captureDir, "backends-env-1"))
-	if err != nil || string(backends) != `["forgecode","codex"]` {
+	if err != nil || string(backends) != `["forge","codex"]` {
 		t.Fatalf("DEARMACHINE_BACKENDS = %q, %v", backends, err)
 	}
 	singular, err := os.ReadFile(filepath.Join(captureDir, "backend-env-1"))
@@ -68,7 +68,7 @@ func TestMCTRunnerPassesApprovedBackendSnapshot(t *testing.T) {
 
 func TestConfigureAgentManaged_BackendSliceImmutability(t *testing.T) {
 	fixture := newMCTTestFixture(t)
-	backends := []string{"codex", "forgecode"}
+	backends := []string{"codex", "forge"}
 	if err := fixture.runner.ConfigureAgentManaged(backends, "/test/agent-manager"); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestConfigureAgentManaged_BackendSliceImmutability(t *testing.T) {
 	}
 	captureDir := os.Getenv("FAKE_MCT_CAPTURE")
 	backendsEnv, err := os.ReadFile(filepath.Join(captureDir, "backends-env-1"))
-	if err != nil || string(backendsEnv) != `["codex","forgecode"]` {
+	if err != nil || string(backendsEnv) != `["codex","forge"]` {
 		t.Fatalf("DEARMACHINE_BACKENDS = %q, %v", backendsEnv, err)
 	}
 }

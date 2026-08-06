@@ -121,12 +121,12 @@ func TestBackendHealthHelpDoesNotRequireConfigurationOrRunProbe(t *testing.T) {
 
 func TestBackendListPrintsApprovedPriorityOrderOnly(t *testing.T) {
 	t.Setenv("DEARMACHINE_HOME", t.TempDir())
-	t.Setenv("DEARMACHINE_BACKENDS", `["forgecode","codex"]`)
+	t.Setenv("DEARMACHINE_BACKENDS", `["forge","codex"]`)
 	var output strings.Builder
 	if err := run([]string{"backend", "list"}, &output, io.Discard); err != nil {
 		t.Fatalf("run backend list: %v", err)
 	}
-	if got := output.String(); got != "forgecode\ncodex\n" {
+	if got := output.String(); got != "forge\ncodex\n" {
 		t.Fatalf("backend list output = %q", got)
 	}
 }
@@ -175,10 +175,10 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"p
 
 func TestBackendHealthReportsFailureAndReturnsError(t *testing.T) {
 	t.Setenv("DEARMACHINE_HOME", t.TempDir())
-	t.Setenv("DEARMACHINE_BACKENDS", `["forgecode"]`)
+	t.Setenv("DEARMACHINE_BACKENDS", `["forge"]`)
 	t.Setenv("PATH", t.TempDir())
 	var output strings.Builder
-	err := run([]string{"backend", "health", "forgecode"}, &output, io.Discard)
+	err := run([]string{"backend", "health", "forge"}, &output, io.Discard)
 	if err == nil || !strings.Contains(output.String(), "result=fail reason=unavailable") {
 		t.Fatalf("run error = %v, output = %q", err, output.String())
 	}
@@ -210,7 +210,7 @@ func TestTicketSendRequiresBackendFlagAndApproval(t *testing.T) {
 		},
 		{
 			name: "unapproved backend",
-			args: []string{"ticket", "send", "--backend", "forgecode", "--file", request, "--cwd", cwd},
+			args: []string{"ticket", "send", "--backend", "forge", "--file", request, "--cwd", cwd},
 			want: "not approved",
 		},
 	} {
