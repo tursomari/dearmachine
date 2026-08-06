@@ -280,19 +280,26 @@ health help never launches a probe.
 
 ## Verify
 
+For normal installed operation against the machine entry point, follow
+[`runbooks/operate-entrypoint-client.md`](./runbooks/operate-entrypoint-client.md).
+All normal-operation, maintenance, and isolated live-test procedures are
+indexed in [`runbooks/README.md`](./runbooks/README.md).
+
 For a recoverable local reset and a rebuild from the current default-branch
 HEAD, follow
-[`UNINSTALL_REINSTALL.md`](./UNINSTALL_REINSTALL.md). The runbook preserves the
+[`runbooks/uninstall-reinstall.md`](./runbooks/uninstall-reinstall.md). The runbook preserves the
 old installation until the fresh instance passes verification and does not
 automatically import remote history into a privacy-cleaned repository.
 
 Shared live-test provisioning and teardown are documented in
-[`TEMPORARY_INSTANCE.md`](./TEMPORARY_INSTANCE.md). The ordinary email and
+[`runbooks/testing/temporary-instance.md`](./runbooks/testing/temporary-instance.md).
+The ordinary email and
 skip/unskip smoke test is in
-[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md); ordered Forge, Codex, and
-fallback are in [`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md); and the
+[`runbooks/testing/disposable-instance.md`](./runbooks/testing/disposable-instance.md);
+ordered Forge, Codex, and fallback are in
+[`runbooks/testing/live-backends.md`](./runbooks/testing/live-backends.md); and the
 rolling checkpoint and internal-README update-sync evaluation is in
-[`LIVE_UPDATE_SYNC_TESTING.md`](./LIVE_UPDATE_SYNC_TESTING.md).
+[`runbooks/testing/update-sync.md`](./runbooks/testing/update-sync.md).
 
 ```bash
 go test ./...

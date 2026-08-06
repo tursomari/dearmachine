@@ -4,12 +4,12 @@ This document is a prompt for a capable local agent, not an executable test
 script. It exercises one isolated email-to-session-to-reply lifecycle or the
 optional local skip/unskip behavior.
 
-Use [`TEMPORARY_INSTANCE.md`](./TEMPORARY_INSTANCE.md) for provisioning,
+Use [`temporary-instance.md`](./temporary-instance.md) for provisioning,
 isolation, observation, evidence handling, and teardown. Those requirements are
 part of this protocol. For ordered backend selection, use
-[`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md). For session checkpoints
+[`live-backends.md`](./live-backends.md). For session checkpoints
 and internal-README maintenance, use
-[`LIVE_UPDATE_SYNC_TESTING.md`](./LIVE_UPDATE_SYNC_TESTING.md).
+[`update-sync.md`](./update-sync.md).
 
 ## Prompt to give the testing agent
 

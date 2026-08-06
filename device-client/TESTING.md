@@ -106,19 +106,22 @@ neutral skeleton test also prevents DearMachine-specific framing from entering
 the first sync.
 
 The shared provisioning, isolation, evidence, and teardown rules for live tests
-are in [`TEMPORARY_INSTANCE.md`](./TEMPORARY_INSTANCE.md). Give
-[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md) to a capable local agent
+are in
+[`runbooks/testing/temporary-instance.md`](./runbooks/testing/temporary-instance.md).
+Give
+[`runbooks/testing/disposable-instance.md`](./runbooks/testing/disposable-instance.md)
+to a capable local agent
 for the ordinary end-to-end email lifecycle or local skip/unskip exercise.
 
 For a live test of Forge, Codex, and ordered fallback through the complete
 email lifecycle, give
-[`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md) to a capable local
+[`runbooks/testing/live-backends.md`](./runbooks/testing/live-backends.md) to a capable local
 agent. It is a human-guided agent prompt, not an executable test script, and it
 includes the required Forge logout and login gates.
 
 For a live evaluation of the rolling one-session checkpoint, valid
 documentation no-ops, durable entry-point updates, and internal-README sync,
-give [`LIVE_UPDATE_SYNC_TESTING.md`](./LIVE_UPDATE_SYNC_TESTING.md) to a capable
+give [`runbooks/testing/update-sync.md`](./runbooks/testing/update-sync.md) to a capable
 local agent. Its priority natural-user prompts and optional explicit controls
 support sensitivity comparison across revisions without turning the live
 lifecycle into a brittle script.

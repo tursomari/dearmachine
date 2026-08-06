@@ -8,11 +8,11 @@ criteria.
 
 Current protocols include:
 
-- [`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md) for the ordinary email
+- [`disposable-instance.md`](./disposable-instance.md) for the ordinary email
   lifecycle and local skip/unskip exercise;
-- [`LIVE_BACKEND_TESTING.md`](./LIVE_BACKEND_TESTING.md) for Forge, Codex, and
+- [`live-backends.md`](./live-backends.md) for Forge, Codex, and
   ordered fallback; and
-- [`LIVE_UPDATE_SYNC_TESTING.md`](./LIVE_UPDATE_SYNC_TESTING.md) for rolling
+- [`update-sync.md`](./update-sync.md) for rolling
   session checkpoints and internal-README update sync.
 
 ## Instructions for the testing agent

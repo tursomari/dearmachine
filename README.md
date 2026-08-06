@@ -414,6 +414,8 @@ You already know how to use `Dear Machine,`.
 ## Development
 
 - [Device Client](device-client/README.md) describes the current Go alpha architecture and runtime.
+- [Device Client operations](device-client/runbooks/operate-entrypoint-client.md) covers launching, monitoring, and stopping the normal entry-point client.
+- [Runbooks](device-client/runbooks/README.md) indexes normal operations, maintenance, and isolated live-test procedures.
 - [Testing](device-client/TESTING.md) explains how to run and extend the automated suite.
 - [Roadmap](ROADMAP.md) outlines the next engineering tracks and alpha milestones.
 

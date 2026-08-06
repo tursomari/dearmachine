@@ -371,7 +371,7 @@ Verify all of the following:
   unchanged.
 
 For an isolated live email-to-reply verification, follow
-[`DISPOSABLE_INSTANCE.md`](./DISPOSABLE_INSTANCE.md). Do not use the normal
+[`testing/disposable-instance.md`](./testing/disposable-instance.md). Do not use the normal
 inbox for a disposable exercise. If validating the newly installed normal
 identity, obtain explicit authorization before sending mail or modifying an
 AgentMail allow list.

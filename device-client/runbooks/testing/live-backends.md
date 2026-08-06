@@ -10,7 +10,7 @@ agent-managed shell session, backend health checks, delegated ticket, and
 selected worker. It deliberately leaves timing and environment discovery to the
 agent so the test does not depend on brittle sleeps, paths, or identifiers.
 
-Use [`TEMPORARY_INSTANCE.md`](./TEMPORARY_INSTANCE.md) for the shared
+Use [`temporary-instance.md`](./temporary-instance.md) for the shared
 provisioning, isolation, observation, evidence, and teardown procedure. Apply
 it independently to each test below so every backend exercise has a dedicated
 inbox and fresh runtime state.

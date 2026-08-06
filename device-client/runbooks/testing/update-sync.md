@@ -5,7 +5,7 @@ script. It evaluates DearMachine's rolling session checkpoint, maintenance
 fork, documentation sensitivity, and internal-README update sync through real
 email threads and a disposable entry-point repository.
 
-Follow [`TEMPORARY_INSTANCE.md`](./TEMPORARY_INSTANCE.md) for all shared
+Follow [`temporary-instance.md`](./temporary-instance.md) for all shared
 provisioning, isolation, observation, evidence, and teardown requirements. Do
 not run this protocol against the normal inbox, entry point, database, or mct
 project store.
