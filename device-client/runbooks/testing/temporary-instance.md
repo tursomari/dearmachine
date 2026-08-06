@@ -37,17 +37,22 @@ Identify or ask the tester for:
 - one or more email accounts authorized to send the live messages;
 - the mct-agent executable or source revision; and
 - authorization to create and permanently delete a temporary AgentMail inbox
-  and to send the protocol's messages.
+  and to send the protocol's messages; and
+- authorization to create and delete exact temporary mail-list entries when an
+  active AgentMail allow-list would otherwise reject the test exchange.
 
 Prefer two temporary AgentMail inboxes, one sender and one receiver, when a
 fully isolated test requires both delivery and reply proof. A normal AgentMail
 inbox may already be polled by the normal Device Client, which could consume a
 test reply and invalidate the isolation claim. Confirm the sender is accepted
 by the temporary receiver before sending. Adding a sender after a rejected
-message does not recover that message. When two temporary inboxes communicate,
-verify send, receive, and reply permissions in both required directions; a
-receive entry does not necessarily satisfy the reply endpoint's send allow
-list.
+message does not recover that message. Before the first protocol message,
+inspect the applicable organization, pod, and inbox `send`, `receive`, and
+`reply` allow-lists. When an active organization-level allow-list governs two
+temporary inboxes, the complete exchange may require four run-created entries:
+both destination addresses on `send`, the sender on `receive`, and the receiver
+on `reply`. Record which entries the run created so teardown never removes a
+pre-existing policy entry.
 
 ### Isolation contract
 
@@ -155,6 +160,14 @@ Apply these boundaries throughout the exercise:
 
    Preserve arguments as an array or carefully quoted invocation. An empty
    entry-point value is intentional for protocols not testing maintenance.
+   For unattended runs, prefer a uniquely named transient user service whose
+   command loads the credential from its file after the service starts. Never
+   interpolate the key into the service command, environment properties,
+   process arguments, or retained trajectory. After launch returns, verify the
+   client is owned by the recorded service rather than by a wrapper shell stuck
+   waiting for a background child. A live client beneath a `bash` process in a
+   wait state means orchestration is blocked and must be corrected before mail
+   is sent.
 
 7. Confirm startup before sending mail:
 
@@ -180,6 +193,14 @@ Depending on the protocol, inspect:
 - source and artifact Git history, hashes, and status;
 - session-sync checkpoint contents and modification times; and
 - AgentMail thread membership and replies.
+
+A managed implementation worker may be able to write the project contents but
+not Git metadata in its sandbox, commonly surfacing as an inability to create
+`.git/index.lock`. If it produced the intended bounded change, keep observing
+the parent agent: it may verify the host checkout and delegate the commit to
+the next configured backend. Treat that active fallback as progress. Do not
+manually commit test output while the agent-guided workflow can still complete
+it, because doing so would invalidate the maintenance result.
 
 Record both sender-side and receiver-side thread identifiers. AgentMail may
 assign different thread IDs at the two inboxes even though they represent the
@@ -214,15 +235,17 @@ Treat teardown as part of every pass or failure:
 1. Stop the temporary Device Client gracefully. Confirm its PID and PID file
    are gone and no child mct-agent, Agent Manager, or backend process remains.
 2. Preserve the approved evidence before deleting runtime data.
-3. Retrieve and verify every temporary inbox's exact ID and disposable
+3. Delete only the exact mail-list entries created for the run, and confirm
+   each is absent without disturbing pre-existing entries.
+4. Retrieve and verify every temporary inbox's exact ID and disposable
    metadata, delete each through AgentMail, and confirm subsequent lookups
    report them absent. Inbox deletion is permanent.
-4. Resolve the disposable project's UUID-backed store with
+5. Resolve the disposable project's UUID-backed store with
    `mct-agent project show --json`. Delete that exact store only after proving
    its project root equals the disposable project and no process uses it.
-5. Validate that the runtime root is non-empty, owned by the current user, has
+6. Validate that the runtime root is non-empty, owned by the current user, has
    the expected test basename, and is not a symlink. Remove only that exact
    directory.
-6. Confirm the normal Device Client and the source repository's tracked and
+7. Confirm the normal Device Client and the source repository's tracked and
    untracked baseline remain unchanged, apart from changes explicitly under
    test. Never remove unrelated files.

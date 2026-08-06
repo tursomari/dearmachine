@@ -80,8 +80,10 @@ credentials.
 
 Use the natural-user set by default. It exercises the behavior DearMachine must
 handle in normal use: inferring durable value without test-specific wording.
-Use the explicit-control set only when a baseline with unambiguous retention
-instructions is specifically useful. Record the selected set.
+Use the todo-maintenance set when evaluating the seeded `todo/` workflow. Use
+the explicit-control set only when a baseline with unambiguous retention
+instructions is specifically useful. Record the selected set and its case
+versions.
 
 Send its cases as new email threads in exact A-B-C order, followed by the shared
 D tail. Do not mix sets in one run. Do not reply in a test thread: a
@@ -130,6 +132,55 @@ follow.
 Expected sensitivity: observational only. Either a justified update or a
 justified no-op is recorded, with attention to whether one naturally phrased
 preference is enough to establish a durable convention.
+
+#### Todo-maintenance set
+
+This set tests whether maintenance creates useful reminders and deferred-work
+entries while declining to retain a trivial fact. Use it when validating the
+seeded `todo/` directory and the `Maintain todo/` maintenance instruction.
+Because this protocol intentionally uses the entry point as both `--project`
+and `--entry-point-repo`, each initial source prompt explicitly forbids file
+and durable-state changes while answering. This isolates later maintenance
+from work the ordinary source agent could otherwise perform directly. If an
+initial source session changes or commits the entry point, classify the attempt
+as invalid, stop before the next case, and restart from a fresh instance.
+
+##### Case A: `explicit-reminder-v2`
+
+```text
+This is an initial read-only answer: do not modify files or durable machine
+state while answering this email. I need to renew my domain registration
+before the end of the month. Tell me the current date and confirm what should
+be remembered. A later entry-point maintenance review, not this initial
+answer, should retain the reminder for future sessions.
+```
+
+Expected sensitivity: when B releases A for review, maintenance adds a concise,
+actionable todo entry for renewing the domain before the end of the month.
+
+##### Case B: `deferred-decision-v2`
+
+```text
+This is an initial read-only answer: do not modify files or durable machine
+state while answering this email. I'm trying to choose between two backup
+strategies for my home directory: rsync to an external drive, or a managed
+cloud backup service. Outline the trade-offs; I'm not ready to decide yet. A
+later entry-point maintenance review, not this initial answer, should retain
+the open decision and its useful context for future sessions.
+```
+
+Expected sensitivity: when C releases B for review, maintenance preserves the
+open backup-strategy decision and its useful context as a second todo entry.
+
+##### Case C: `no-reminder-content-v2`
+
+```text
+This is an initial read-only answer: do not modify files or durable machine
+state while answering this email. What is the capital of Portugal?
+```
+
+Expected sensitivity: when D releases C for review, maintenance makes no todo
+or other durable entry for this resolved factual question.
 
 #### Optional control set: explicit boundary controls
 
@@ -196,10 +247,12 @@ Expected trigger behavior: D remains held and uncheckpointed at the end.
 - Confirm documentation sync succeeds and the checkpoint records A's exact
   session ID and `updated_at`.
 - Confirm B remains newer than the checkpoint and unreviewed.
-- Expected sensitivity for A: source and artifact Git heads and the internal
-  README remain unchanged, and Git status matches the recorded baselines. A
-  checkpoint advance with no documentation commit is a successful no-op, not a
-  failure.
+- For the natural-user and explicit-control sets, source and artifact Git heads
+  and the internal README remain unchanged. A checkpoint advance with no
+  documentation commit is a successful no-op, not a failure.
+- For the todo-maintenance set, confirm maintenance commits a domain-renewal
+  entry without modifying `todo/README.md`, documentation-aware sync creates a
+  corresponding artifact revision, and the internal README exposes the todo.
 
 #### After C completes
 
@@ -213,7 +266,9 @@ Expected trigger behavior: D remains held and uncheckpointed at the end.
   must convey a reusable way to attribute memory use to an application;
   separately classify any retained volatile process snapshot. For the optional
   explicit-control set, it must convey the evidence-versus-inference
-  convention.
+  convention. For the todo-maintenance set, the new source commit must add the
+  deferred backup-strategy entry while preserving the domain-renewal entry and
+  `todo/README.md`; the corresponding artifact revision must expose both.
 - Confirm the checkpoint now records B, even though the maintenance commit and
   artifact sync occurred after C's predecessor timestamps. This is the live
   regression proof that Git sync time did not hide B.
@@ -222,7 +277,9 @@ Expected trigger behavior: D remains held and uncheckpointed at the end.
 
 - Confirm maintenance selects C while holding D.
 - Record whether C produces a source commit and artifact update or a no-op. Do
-  not make the overall mechanical result depend on this borderline decision.
+  not make the natural-user or explicit-control mechanical result depend on
+  this borderline decision. For the todo-maintenance set, C must be a no-op and
+  must not add a Portugal-related entry anywhere in the entry point.
 - Confirm the checkpoint records C.
 - Observe at least one more successful poll without sending another thread.
 - Confirm no maintenance fork selects D, the checkpoint remains C, and D is
@@ -239,6 +296,8 @@ and thread identifiers make it difficult to read. Include:
 - maintenance classification: `not-run`, `no-op`, `update`, or `failed`;
 - checkpoint before and after;
 - source and artifact Git changes;
+- todo file names, hashes, and concise content descriptions when testing
+  todo-maintenance;
 - temporary-fork cleanup; and
 - email reply outcome.
 
@@ -246,12 +305,20 @@ Give separate verdicts:
 
 1. **Checkpoint mechanics:** pass only if A, B, and C are reviewed and
    checkpointed in that order while D remains held.
-2. **Update sync:** pass only if every reviewed case runs documentation sync,
-   A remains a no-op, and B produces a source commit plus a corresponding
-   internal-README artifact revision.
+2. **Update sync:** pass only if every reviewed case runs documentation sync.
+   For the natural-user and explicit-control sets, A remains a no-op and B
+   produces a source commit plus a corresponding internal-README artifact
+   revision. For the todo-maintenance set, A and B each produce a source commit
+   and corresponding artifact revision, while C completes sync as a no-op.
 3. **Sensitivity observation:** record C without forcing a pass/fail outcome.
 4. **Isolation and cleanup:** pass only if the normal installation and source
    worktree remain unchanged and shared teardown completes.
+5. **Todo maintenance:** when using the todo-maintenance set, pass only if A
+   records the domain-renewal reminder, B records the deferred backup decision,
+   C records nothing, both positive entries persist through the final boundary,
+   `todo/README.md` remains unchanged, and the agent-selected entry structure is
+   concise and internally consistent. Mark this verdict not applicable for the
+   other prompt sets.
 
 When a previous private report exists, compare the stable case outcomes and
 identify any shift toward over-eager or over-conservative documentation. Do not

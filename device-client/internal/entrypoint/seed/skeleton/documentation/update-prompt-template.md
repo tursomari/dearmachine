@@ -38,7 +38,19 @@ Instructions:
 - Place necessary non-plaintext material in assets/ and link it with a relative
   path from the document that uses it.
 
-6. Decide whether to commit
+6. Maintain todo/
+- Review the session for anything the User would want to remember: incomplete
+  work, decisions deferred, documentation flagged as stale, or explicit
+  "remind me" requests.
+- Add concise, actionable entries to `todo/` in whatever structure feels
+  clearest (a single file, per-topic files, dated entries, or another
+  internally consistent structure).
+- Remove or update entries that are no longer relevant.
+- Prefer a small number of high-signal items over exhaustiveness.
+- Do not duplicate content already captured in `process/` or `documentation/`;
+  cross-reference it with a short entry when appropriate.
+
+7. Decide whether to commit
 - Make no change when the session produced no durable machine-level value.
 - When an update is warranted, avoid duplication and over-categorization,
   verify the result, and commit it with one clear message.

@@ -98,7 +98,19 @@ func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
 
 	assertFileContains(t, filepath.Join(repo, "README.md"), "durable, machine-level entry point")
 	assertFileContains(t, filepath.Join(repo, "documentation", "dearmachine-architecture.md"), "one machine-level service")
+	updatePrompt := filepath.Join(repo, "documentation", "update-prompt-template.md")
+	assertFileContains(t, updatePrompt, "6. Maintain todo/")
+	assertFileContains(t, updatePrompt, "7. Decide whether to commit")
+	assertFileNotContains(t, updatePrompt, "**7. Maintain todo/**")
 	assertFileContains(t, filepath.Join(repo, "process", "configure-dearmachine.md"), "Configure DearMachine")
+	assertFileContains(t, filepath.Join(repo, "todo", "README.md"), "reminders, follow-ups, and flags")
+	todoEntries, err := os.ReadDir(filepath.Join(repo, "todo"))
+	if err != nil {
+		t.Fatalf("read seeded todo directory: %v", err)
+	}
+	if len(todoEntries) != 1 || todoEntries[0].Name() != "README.md" {
+		t.Fatalf("seeded todo entries = %v, want only README.md", todoEntries)
+	}
 	assertFileContains(t, filepath.Join(repo, ".gitignore"), "!state/README.md")
 	assertFileContains(t, filepath.Join(repo, ".git", "info", "exclude"), "/.scratch/")
 	assertFileContains(t, filepath.Join(repo, ".git", "info", "exclude"), "/.secrets/")
