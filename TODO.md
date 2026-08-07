@@ -1,0 +1,11 @@
+# mct TODO
+
+## 1. [investigation] DearMachine reply answered an earlier message instead of the latest one
+
+- **Identifying quote:** "You're right to be suspicious — that was my error, and thanks for catching it."
+- **Thread / session:** f916717c-834f-43d1-9911-554d972f318c / a322e355-a1b2-4113-9386-1b4ecd8536b6 (DearMachine device-client DB: `~/.dearmachine/state/device-client.db`).
+- **Symptom:** The final DearMachine reply on that thread did not answer the user's latest email. The user's last message (Sequence 11, received 2026-08-07T01:42:32Z) asked to redraft the forward-to-session-fork ticket and to include a proper plain-text email signature (DearMachine - <ref> + Magnifica Humanitas quote, suppressible by a flag). Instead, the reply sent on 2026-08-07T01:56:08Z opened with the "You're right to be suspicious" text and answered the much earlier Sequence 3 question ("Wait ... I never see that information in an email when using DearMachine ... Can't we hash the message so a forward maps to a fork session?"), a question that had already been answered earlier in the same session.
+- **Evidence:** Session transcript `~/.machtiani/1717b8e8-a6da-4010-94cf-33986604daaf/sessions/a322e355-a1b2-4113-9386-1b4ecd8536b6/artifacts/conversation.json` (project uuid 1717b8e8-a6da-4010-94cf-33986604daaf). Last user turn = Sequence 11 email; final assistant message replays the Sequence-3 answer. The actual Sequence-11 deliverable (redrafted ticket) exists only in intermediate assistant work results and never reached the final outbound reply.
+- **Archived evidence:** `/home/david/.dearmachine/archive/reinit-20260807T045113Z/MANIFEST.md` (unversioned, machine-local recovery archive; give this path directly to the investigating agent).
+- **Suspected cause:** The final "answer_the_user" / finalize step (planner op `finalize`, model deepseek-v4-flash) regenerated a stale answer to an earlier turn instead of answering the latest user turn — it appears to have replayed a previously rejected/duplicated completion rather than incorporating the latest work_result into the final reply.
+- **Suggested next steps:** Reproduce from the session transcript; audit how the finalize prompt selects/references the latest user turn; consider verifying the final reply addresses the latest user message before sending.
