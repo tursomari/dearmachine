@@ -60,6 +60,7 @@ func TestCodexAdapterAddsTicketDirectory(t *testing.T) {
 	want := []string{
 		"codex",
 		"exec",
+		"--skip-git-repo-check",
 		"--json",
 		"--sandbox",
 		"workspace-write",

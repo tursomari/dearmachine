@@ -64,6 +64,7 @@ func (CodexAdapter) Prepare(ctx context.Context, cwd, writableDir string) (Launc
 		ctx,
 		"codex",
 		"exec",
+		"--skip-git-repo-check",
 		"--json",
 		"--sandbox",
 		"workspace-write",
