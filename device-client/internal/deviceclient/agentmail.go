@@ -3,9 +3,10 @@ package deviceclient
 import (
 	"context"
 	"fmt"
-	"sort"
+	"io"
+	"net/http"
 	"strings"
-	"time"
+	"sync"
 
 	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/agentmail-to/agentmail-go/option"
@@ -13,21 +14,38 @@ import (
 
 const pageSize = 100
 
+var _ Transport = (*Mailbox)(nil)
+
 // Mailbox calls AgentMail REST endpoints directly through the Go SDK.
 type Mailbox struct {
-	client  agentmail.Client
-	inboxID string
+	client             agentmail.Client
+	inboxID            string
+	attachmentMu       sync.RWMutex
+	attachmentMessages map[string]string
 }
 
 func NewMailbox(client agentmail.Client, inboxID string) (*Mailbox, error) {
 	if strings.TrimSpace(inboxID) == "" {
 		return nil, fmt.Errorf("inbox ID is required")
 	}
-	return &Mailbox{client: client, inboxID: inboxID}, nil
+	return &Mailbox{
+		client:             client,
+		inboxID:            inboxID,
+		attachmentMessages: make(map[string]string),
+	}, nil
 }
 
-func (m *Mailbox) Poll(ctx context.Context) ([]agentmail.Message, error) {
-	var messages []agentmail.Message
+// NewAgentMailTransport constructs the production AgentMail adapter.
+func NewAgentMailTransport(inboxID string) (*Mailbox, error) {
+	return NewMailbox(agentmail.NewClient(), inboxID)
+}
+
+func (m *Mailbox) pollTarget() string {
+	return m.inboxID
+}
+
+func (m *Mailbox) Poll(ctx context.Context) ([]Message, error) {
+	var messages []Message
 	pageToken := ""
 
 	for {
@@ -54,7 +72,7 @@ func (m *Mailbox) Poll(ctx context.Context) ([]agentmail.Message, error) {
 			if err != nil {
 				return nil, fmt.Errorf("get AgentMail message %s: %w", summary.MessageID, err)
 			}
-			messages = append(messages, *message)
+			messages = append(messages, m.normalize(*message))
 		}
 
 		pageToken = page.NextPageToken
@@ -63,13 +81,11 @@ func (m *Mailbox) Poll(ctx context.Context) ([]agentmail.Message, error) {
 		}
 	}
 
-	sort.SliceStable(messages, func(i, j int) bool {
-		return messageTime(messages[i]).Before(messageTime(messages[j]))
-	})
+	sortMessages(messages)
 	return messages, nil
 }
 
-func (m *Mailbox) Thread(ctx context.Context, threadID string) ([]agentmail.Message, error) {
+func (m *Mailbox) Thread(ctx context.Context, threadID string) ([]Message, error) {
 	thread, err := m.client.Inboxes.Threads.Get(
 		ctx,
 		threadID,
@@ -78,23 +94,27 @@ func (m *Mailbox) Thread(ctx context.Context, threadID string) ([]agentmail.Mess
 	if err != nil {
 		return nil, fmt.Errorf("get AgentMail thread %s: %w", threadID, err)
 	}
-	return thread.Messages, nil
+	messages := make([]Message, 0, len(thread.Messages))
+	for _, message := range thread.Messages {
+		messages = append(messages, m.normalize(message))
+	}
+	return messages, nil
 }
 
-func (m *Mailbox) Message(ctx context.Context, messageID string) (agentmail.Message, error) {
+func (m *Mailbox) Message(ctx context.Context, messageID string) (Message, error) {
 	message, err := m.client.Inboxes.Messages.Get(
 		ctx,
 		messageID,
 		agentmail.InboxMessageGetParams{InboxID: m.inboxID},
 	)
 	if err != nil {
-		return agentmail.Message{}, fmt.Errorf(
+		return Message{}, fmt.Errorf(
 			"get AgentMail message %s: %w",
 			messageID,
 			err,
 		)
 	}
-	return *message, nil
+	return m.normalize(*message), nil
 }
 
 func (m *Mailbox) Reply(
@@ -123,7 +143,7 @@ func (m *Mailbox) Reply(
 
 func (m *Mailbox) ReplyReceipt(
 	ctx context.Context,
-	message agentmail.Message,
+	message Message,
 ) (string, bool, error) {
 	messages, err := m.Thread(ctx, message.ThreadID)
 	if err != nil {
@@ -140,6 +160,48 @@ func (m *Mailbox) ReplyReceipt(
 		}
 	}
 	return "", false, nil
+}
+
+func (m *Mailbox) FetchAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	m.attachmentMu.RLock()
+	messageID, ok := m.attachmentMessages[attachmentID]
+	m.attachmentMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("fetch AgentMail attachment %s: message ID is unavailable", attachmentID)
+	}
+
+	attachment, err := m.client.Inboxes.Messages.GetAttachment(
+		ctx,
+		attachmentID,
+		agentmail.InboxMessageGetAttachmentParams{
+			InboxID:   m.inboxID,
+			MessageID: messageID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get AgentMail attachment %s: %w", attachmentID, err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, attachment.DownloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("prepare AgentMail attachment %s download: %w", attachmentID, err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("download AgentMail attachment %s: %w", attachmentID, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf(
+			"download AgentMail attachment %s: unexpected status %s",
+			attachmentID,
+			response.Status,
+		)
+	}
+	contents, err := io.ReadAll(response.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read AgentMail attachment %s: %w", attachmentID, err)
+	}
+	return contents, nil
 }
 
 func (m *Mailbox) MarkProcessed(ctx context.Context, messageID string) error {
@@ -164,28 +226,43 @@ func (m *Mailbox) MarkProcessed(ctx context.Context, messageID string) error {
 	return nil
 }
 
-func messageTime(message agentmail.Message) time.Time {
-	if !message.Timestamp.IsZero() {
-		return message.Timestamp
+func (m *Mailbox) normalize(message agentmail.Message) Message {
+	body := message.ExtractedText
+	if body == "" {
+		body = message.Text
 	}
-	return message.CreatedAt
-}
-
-func messageBody(message agentmail.Message) string {
-	if message.ExtractedText != "" {
-		return message.ExtractedText
+	if body == "" {
+		body = message.Preview
 	}
-	if message.Text != "" {
-		return message.Text
+	attachments := make([]AttachmentRef, 0, len(message.Attachments))
+	for _, attachment := range message.Attachments {
+		attachments = append(attachments, AttachmentRef{
+			AttachmentID: attachment.AttachmentID,
+			Filename:     attachment.Filename,
+			ContentType:  attachment.ContentType,
+			SizeBytes:    attachment.Size,
+		})
 	}
-	return message.Preview
-}
-
-func containsFold(values []string, target string) bool {
-	for _, value := range values {
-		if strings.EqualFold(value, target) {
-			return true
+	normalized := Message{
+		MessageID:   message.MessageID,
+		ThreadID:    message.ThreadID,
+		From:        message.From,
+		To:          append([]string(nil), message.To...),
+		Timestamp:   message.Timestamp,
+		CreatedAt:   message.CreatedAt,
+		Subject:     message.Subject,
+		Body:        body,
+		InReplyTo:   message.InReplyTo,
+		References:  append([]string(nil), message.References...),
+		Labels:      append([]string(nil), message.Labels...),
+		Attachments: attachments,
+	}
+	if len(attachments) > 0 {
+		m.attachmentMu.Lock()
+		for _, attachment := range attachments {
+			m.attachmentMessages[attachment.AttachmentID] = message.MessageID
 		}
+		m.attachmentMu.Unlock()
 	}
-	return false
+	return normalized
 }

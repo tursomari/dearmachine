@@ -11,12 +11,11 @@ import (
 	"strings"
 	"time"
 
-	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
 type App struct {
-	mailbox          *Mailbox
+	transport        Transport
 	store            *Store
 	runner           *MCTRunner
 	syncOrchestrator *synctrigger.Orchestrator
@@ -29,7 +28,7 @@ type App struct {
 }
 
 func New(
-	mailbox *Mailbox,
+	transport Transport,
 	store *Store,
 	runner *MCTRunner,
 	syncOrchestrator *synctrigger.Orchestrator,
@@ -38,8 +37,8 @@ func New(
 	verbose bool,
 	pidfile string,
 ) (*App, error) {
-	if mailbox == nil {
-		return nil, fmt.Errorf("mailbox is required")
+	if transport == nil {
+		return nil, fmt.Errorf("transport is required")
 	}
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
@@ -54,7 +53,7 @@ func New(
 		return nil, fmt.Errorf("logger is required")
 	}
 	return &App{
-		mailbox:          mailbox,
+		transport:        transport,
 		store:            store,
 		runner:           runner,
 		syncOrchestrator: syncOrchestrator,
@@ -76,7 +75,7 @@ func (a *App) Run(ctx context.Context) (runErr error) {
 	}()
 	a.logger.Printf(
 		"Device Client started. Polling %s every %s. Project: %s.",
-		a.mailbox.inboxID,
+		a.pollTarget(),
 		a.pollInterval,
 		a.runner.projectDir,
 	)
@@ -135,7 +134,7 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 		return err
 	}
 
-	messages, err := a.mailbox.Poll(ctx)
+	messages, err := a.transport.Poll(ctx)
 	if err != nil {
 		return err
 	}
@@ -162,7 +161,7 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 			return err
 		}
 		if seen {
-			if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
+			if err := a.transport.MarkProcessed(ctx, message.MessageID); err != nil {
 				return err
 			}
 			continue
@@ -180,7 +179,7 @@ func (a *App) recoverPending(ctx context.Context) error {
 		return err
 	}
 	for _, pending := range pendingMessages {
-		message, err := a.mailbox.Message(ctx, pending.MessageID)
+		message, err := a.transport.Message(ctx, pending.MessageID)
 		if err != nil {
 			return err
 		}
@@ -191,7 +190,7 @@ func (a *App) recoverPending(ctx context.Context) error {
 	return nil
 }
 
-func (a *App) processMessage(ctx context.Context, message agentmail.Message) error {
+func (a *App) processMessage(ctx context.Context, message Message) error {
 	pending, existed, err := a.store.BeginMessage(message.MessageID, message.ThreadID)
 	if err != nil {
 		return err
@@ -201,12 +200,12 @@ func (a *App) processMessage(ctx context.Context, message agentmail.Message) err
 
 func (a *App) processPending(
 	ctx context.Context,
-	message agentmail.Message,
+	message Message,
 	pending PendingMessage,
 	recovering bool,
 ) error {
 	if recovering {
-		outboundMessageID, found, err := a.mailbox.ReplyReceipt(ctx, message)
+		outboundMessageID, found, err := a.transport.ReplyReceipt(ctx, message)
 		if err != nil {
 			return err
 		}
@@ -219,7 +218,7 @@ func (a *App) processPending(
 				return err
 			}
 			a.recordProcessed(message.ThreadID)
-			if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
+			if err := a.transport.MarkProcessed(ctx, message.MessageID); err != nil {
 				return err
 			}
 			a.logger.Printf(
@@ -294,7 +293,7 @@ func (a *App) processPending(
 	}
 
 	key := idempotencyKey(pending.Session.SessionID, message.MessageID)
-	outboundMessageID, err := a.mailbox.Reply(
+	outboundMessageID, err := a.transport.Reply(
 		ctx,
 		message.MessageID,
 		result.Text,
@@ -315,7 +314,7 @@ func (a *App) processPending(
 	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove durable mct result: %w", err)
 	}
-	if err := a.mailbox.MarkProcessed(ctx, message.MessageID); err != nil {
+	if err := a.transport.MarkProcessed(ctx, message.MessageID); err != nil {
 		return err
 	}
 	if pending.CheckpointSessionID != "" {
@@ -369,7 +368,7 @@ func recoveryResultPath(sessionID, messageID string) string {
 }
 
 func formatPrompt(
-	message agentmail.Message,
+	message Message,
 	session Session,
 ) string {
 	var prompt strings.Builder
@@ -391,6 +390,13 @@ func formatPrompt(
 	prompt.WriteString(messageBody(message))
 	prompt.WriteString("\n\n[End of email]")
 	return prompt.String()
+}
+
+func (a *App) pollTarget() string {
+	if target, ok := a.transport.(interface{ pollTarget() string }); ok {
+		return target.pollTarget()
+	}
+	return "email"
 }
 
 func idempotencyKey(sessionID, messageID string) string {

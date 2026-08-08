@@ -2,6 +2,8 @@ package deviceclient
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -38,4 +40,30 @@ type Transport interface {
 	ReplyReceipt(ctx context.Context, message Message) (string, bool, error)
 	MarkProcessed(ctx context.Context, messageID string) error
 	FetchAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+}
+
+func sortMessages(messages []Message) {
+	sort.SliceStable(messages, func(i, j int) bool {
+		return messageTime(messages[i]).Before(messageTime(messages[j]))
+	})
+}
+
+func messageTime(message Message) time.Time {
+	if !message.Timestamp.IsZero() {
+		return message.Timestamp
+	}
+	return message.CreatedAt
+}
+
+func messageBody(message Message) string {
+	return message.Body
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
 }

@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/dearmachine/dearmachine/internal/deviceclient"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
@@ -203,16 +202,16 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 					store, err = deviceclient.OpenStore(filepath.Join(t.TempDir(), "state.db"))
 					return store, err
 				},
-				newMailbox: func(_ agentmail.Client, got string) (*deviceclient.Mailbox, error) {
+				newTransport: func(got string) (deviceclient.Transport, error) {
 					inboxID = got
-					return deviceclient.NewMailbox(agentmail.NewClient(), got)
+					return deviceclient.NewAgentMailTransport(got)
 				},
 				newRunner: func(gotBinary, gotProject, gotModel string) (*deviceclient.MCTRunner, error) {
 					binary, projectDir, model = gotBinary, gotProject, gotModel
 					return deviceclient.NewMCTRunner(gotBinary, gotProject, gotModel)
 				},
 				newApp: func(
-					_ *deviceclient.Mailbox,
+					_ deviceclient.Transport,
 					_ *deviceclient.Store,
 					_ *deviceclient.MCTRunner,
 					gotOrchestrator *synctrigger.Orchestrator,
@@ -225,7 +224,6 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 					pollInterval, verbose, pidfile = gotInterval, gotVerbose, gotPIDFile
 					return app, nil
 				},
-				newClient: func() agentmail.Client { return agentmail.NewClient() },
 				newLogger: func() *log.Logger { return log.New(io.Discard, "", 0) },
 				notifyContext: func(_ context.Context, got ...os.Signal) (context.Context, context.CancelFunc) {
 					signals = slices.Clone(got)
@@ -299,7 +297,7 @@ func TestRunReportsDependencyConstructionFailures(t *testing.T) {
 			case "store":
 				deps.openStore = func(string) (*deviceclient.Store, error) { return nil, want }
 			case "mailbox":
-				deps.newMailbox = func(agentmail.Client, string) (*deviceclient.Mailbox, error) {
+				deps.newTransport = func(string) (deviceclient.Transport, error) {
 					return nil, want
 				}
 			case "runner":
@@ -308,7 +306,7 @@ func TestRunReportsDependencyConstructionFailures(t *testing.T) {
 				}
 			case "application":
 				deps.newApp = func(
-					*deviceclient.Mailbox,
+					deviceclient.Transport,
 					*deviceclient.Store,
 					*deviceclient.MCTRunner,
 					*synctrigger.Orchestrator,
@@ -455,12 +453,12 @@ func testDependencies(t *testing.T, app application) dependencies {
 		openStore: func(string) (*deviceclient.Store, error) {
 			return deviceclient.OpenStore(filepath.Join(t.TempDir(), "state.db"))
 		},
-		newMailbox: func(client agentmail.Client, inboxID string) (*deviceclient.Mailbox, error) {
-			return deviceclient.NewMailbox(client, inboxID)
+		newTransport: func(inboxID string) (deviceclient.Transport, error) {
+			return deviceclient.NewAgentMailTransport(inboxID)
 		},
 		newRunner: deviceclient.NewMCTRunner,
 		newApp: func(
-			*deviceclient.Mailbox,
+			deviceclient.Transport,
 			*deviceclient.Store,
 			*deviceclient.MCTRunner,
 			*synctrigger.Orchestrator,
@@ -471,7 +469,6 @@ func testDependencies(t *testing.T, app application) dependencies {
 		) (application, error) {
 			return app, nil
 		},
-		newClient: func() agentmail.Client { return agentmail.NewClient() },
 		newLogger: func() *log.Logger { return log.New(io.Discard, "", 0) },
 		notifyContext: func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
 			return context.WithCancel(parent)

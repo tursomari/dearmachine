@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/dearmachine/dearmachine/internal/deviceclient"
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
@@ -52,11 +51,11 @@ type application interface {
 }
 
 type dependencies struct {
-	openStore  func(string) (*deviceclient.Store, error)
-	newMailbox func(agentmail.Client, string) (*deviceclient.Mailbox, error)
-	newRunner  func(string, string, string) (*deviceclient.MCTRunner, error)
-	newApp     func(
-		*deviceclient.Mailbox,
+	openStore    func(string) (*deviceclient.Store, error)
+	newTransport func(string) (deviceclient.Transport, error)
+	newRunner    func(string, string, string) (*deviceclient.MCTRunner, error)
+	newApp       func(
+		deviceclient.Transport,
 		*deviceclient.Store,
 		*deviceclient.MCTRunner,
 		*synctrigger.Orchestrator,
@@ -65,7 +64,6 @@ type dependencies struct {
 		bool,
 		string,
 	) (application, error)
-	newClient     func() agentmail.Client
 	newLogger     func() *log.Logger
 	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
 	flagOutput    io.Writer
@@ -77,11 +75,13 @@ type dependencies struct {
 
 func defaultDependencies() dependencies {
 	return dependencies{
-		openStore:  deviceclient.OpenStore,
-		newMailbox: deviceclient.NewMailbox,
-		newRunner:  deviceclient.NewMCTRunner,
+		openStore: deviceclient.OpenStore,
+		newTransport: func(inboxID string) (deviceclient.Transport, error) {
+			return deviceclient.NewAgentMailTransport(inboxID)
+		},
+		newRunner: deviceclient.NewMCTRunner,
 		newApp: func(
-			mailbox *deviceclient.Mailbox,
+			transport deviceclient.Transport,
 			store *deviceclient.Store,
 			runner *deviceclient.MCTRunner,
 			syncOrchestrator *synctrigger.Orchestrator,
@@ -91,7 +91,7 @@ func defaultDependencies() dependencies {
 			pidfile string,
 		) (application, error) {
 			return deviceclient.New(
-				mailbox,
+				transport,
 				store,
 				runner,
 				syncOrchestrator,
@@ -101,7 +101,6 @@ func defaultDependencies() dependencies {
 				pidfile,
 			)
 		},
-		newClient: func() agentmail.Client { return agentmail.NewClient() },
 		newLogger: func() *log.Logger {
 			return log.New(os.Stderr, "device-client: ", log.LstdFlags)
 		},
@@ -227,7 +226,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	}
 	defer store.Close()
 
-	mailbox, err := deps.newMailbox(deps.newClient(), cfg.inboxID)
+	transport, err := deps.newTransport(cfg.inboxID)
 	if err != nil {
 		return err
 	}
@@ -244,7 +243,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return err
 	}
 	app, err := deps.newApp(
-		mailbox,
+		transport,
 		store,
 		runner,
 		orchestrator,

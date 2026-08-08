@@ -99,14 +99,14 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 		return err
 	}
 
-	mailbox, err := deps.newMailbox(deps.newClient(), strings.TrimSpace(*inboxID))
+	transport, err := deps.newTransport(strings.TrimSpace(*inboxID))
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
 	var refs []deviceclient.MessageRef
 	if *current {
-		messages, err := mailbox.Poll(ctx)
+		messages, err := transport.Poll(ctx)
 		if err != nil {
 			return err
 		}
@@ -122,7 +122,7 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 		}
 	} else {
 		for _, messageID := range messageIDs {
-			message, err := mailbox.Message(ctx, messageID)
+			message, err := transport.Message(ctx, messageID)
 			if err != nil {
 				return err
 			}

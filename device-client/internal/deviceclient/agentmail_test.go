@@ -229,7 +229,8 @@ func TestMessageBodyPrefersExtractedText(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := messageBody(test.message); got != test.want {
+			mailbox := &Mailbox{attachmentMessages: make(map[string]string)}
+			if got := messageBody(mailbox.normalize(test.message)); got != test.want {
 				t.Fatalf("messageBody() = %q, want %q", got, test.want)
 			}
 		})

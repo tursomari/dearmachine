@@ -326,7 +326,7 @@ func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 	if session := rig.session(message.ThreadID); session.Sequence != 1 {
 		t.Fatalf("committed sequence before reply = %d, want 1", session.Sequence)
 	}
-	prompt := formatPrompt(message, pending.Session)
+	prompt := formatPrompt(rig.app.transport.(*Mailbox).normalize(message), pending.Session)
 	if err := rig.store.MarkRunning(message.MessageID, prompt); err != nil {
 		t.Fatalf("MarkRunning: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestRestartRecoversAcceptedMCTResultWithoutDuplicatePrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginMessage: %v", err)
 	}
-	prompt := formatPrompt(message, pending.Session)
+	prompt := formatPrompt(rig.app.transport.(*Mailbox).normalize(message), pending.Session)
 	if err := rig.store.MarkRunning(message.MessageID, prompt); err != nil {
 		t.Fatalf("MarkRunning: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestRestartRecordsExistingOutboundReceiptWithoutRerun(t *testing.T) {
 	if err := rig.store.StoreResult(message.MessageID, result); err != nil {
 		t.Fatalf("StoreResult: %v", err)
 	}
-	if _, err := rig.app.mailbox.Reply(
+	if _, err := rig.app.transport.Reply(
 		context.Background(),
 		message.MessageID,
 		result.Text,
