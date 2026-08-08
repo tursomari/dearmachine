@@ -104,6 +104,14 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("open SQLite store: %w", err)
 	}
 	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable SQLite WAL: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout=5000`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("configure SQLite busy timeout: %w", err)
+	}
 
 	store := &Store{db: db}
 	if err := store.migrate(); err != nil {
@@ -692,18 +700,37 @@ func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, 
 		},
 		State: messageReceived,
 	}
-	if _, err := tx.Exec(
+	claim, err := tx.Exec(
 		`INSERT INTO pending_messages
 		     (message_id, thread_id, sequence, state, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(message_id) DO NOTHING`,
 		pending.MessageID,
 		pending.ThreadID,
 		pending.Session.Sequence,
 		pending.State,
 		now,
 		now,
-	); err != nil {
+	)
+	if err != nil {
 		return PendingMessage{}, false, fmt.Errorf("persist inbound message: %w", err)
+	}
+	claimed, err := claim.RowsAffected()
+	if err != nil {
+		return PendingMessage{}, false, fmt.Errorf("check inbound message claim: %w", err)
+	}
+	if claimed == 0 {
+		if err := tx.Rollback(); err != nil {
+			return PendingMessage{}, false, fmt.Errorf("release duplicate inbound message claim: %w", err)
+		}
+		existing, err := scanPending(s.db.QueryRow(
+			pendingMessageQuery+` WHERE p.message_id = ?`,
+			messageID,
+		))
+		if err != nil {
+			return PendingMessage{}, false, fmt.Errorf("query pending message after claim conflict: %w", err)
+		}
+		return existing, true, nil
 	}
 	if err := tx.Commit(); err != nil {
 		return PendingMessage{}, false, fmt.Errorf("commit inbound message: %w", err)

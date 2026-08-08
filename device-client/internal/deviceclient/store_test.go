@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -170,6 +171,48 @@ func TestStoreReturnsExistingPendingMessageForDuplicate(t *testing.T) {
 	}
 	if pending, err := store.Pending(); err != nil || len(pending) != 1 {
 		t.Fatalf("Pending after duplicate = %+v, %v", pending, err)
+	}
+}
+
+func TestStoreBeginMessageAtomicallyClaimsDuplicate(t *testing.T) {
+	store := openTestStore(t)
+	start := make(chan struct{})
+	type result struct {
+		pending PendingMessage
+		existed bool
+		err     error
+	}
+	results := make(chan result, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for range 2 {
+		go func() {
+			ready.Done()
+			<-start
+			pending, existed, err := store.BeginMessage("message-1", "thread-1")
+			results <- result{pending: pending, existed: existed, err: err}
+		}()
+	}
+	ready.Wait()
+	close(start)
+
+	var created, existing result
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("BeginMessage: %v", got.err)
+		}
+		if got.existed {
+			existing = got
+		} else {
+			created = got
+		}
+	}
+	if created.pending.MessageID == "" || existing.pending.MessageID == "" {
+		t.Fatalf("claims = created %+v, existing %+v", created, existing)
+	}
+	if created.pending != existing.pending {
+		t.Fatalf("claims differ: created %+v, existing %+v", created.pending, existing.pending)
 	}
 }
 
