@@ -31,6 +31,7 @@ type MCTRunner struct {
 	model      string
 	backends   []string
 	manager    string
+	invoke     func(*exec.Cmd) error
 }
 
 func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string) error {
@@ -76,7 +77,7 @@ func (r *MCTRunner) Sync(ctx context.Context) error {
 	var output bytes.Buffer
 	command.Stdout = &output
 	command.Stderr = &output
-	if err := command.Run(); err != nil {
+	if err := r.runCommand(command); err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -146,7 +147,7 @@ func (r *MCTRunner) Run(
 	var runOutput bytes.Buffer
 	command.Stdout = &runOutput
 	command.Stderr = &runOutput
-	if err := command.Run(); err != nil {
+	if err := r.runCommand(command); err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -210,7 +211,7 @@ func (r *MCTRunner) DeleteSession(ctx context.Context, sessionID string) error {
 	var output bytes.Buffer
 	command.Stdout = &output
 	command.Stderr = &output
-	if err := command.Run(); err != nil {
+	if err := r.runCommand(command); err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -241,7 +242,7 @@ func (r *MCTRunner) ForkSession(ctx context.Context, sessionID string) (string, 
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	if err := r.runCommand(command); err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -317,7 +318,7 @@ func (r *MCTRunner) showSession(ctx context.Context, sessionID string) (sessionS
 	var stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
+	if err := r.runCommand(command); err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
@@ -333,6 +334,13 @@ func (r *MCTRunner) showSession(ctx context.Context, sessionID string) (sessionS
 		return sessionState{}, fmt.Errorf("parse mct-agent session status: %w", err)
 	}
 	return state, nil
+}
+
+func (r *MCTRunner) runCommand(command *exec.Cmd) error {
+	if r.invoke != nil {
+		return r.invoke(command)
+	}
+	return command.Run()
 }
 
 func clarificationText(question, context string) string {
