@@ -1,0 +1,326 @@
+# DearMachine Email Transport Alternatives
+
+- **Revision date:** 2026-08-08
+- **Status:** Living document; re-verify capabilities, terms, availability, and pricing before adopting any option.
+
+## Purpose
+
+This document informs a future transport-agnostic abstraction for DearMachine's
+`device-client`. It records potential drop-in alternatives to AgentMail as the
+email transport, compares them against the operations DearMachine currently
+needs, and outlines how a transport could eventually be selected during client
+initialization. It is a technical survey, not an adoption decision.
+
+## Current transport
+
+DearMachine currently uses AgentMail through `agentmail-go` v0.16.0. The client
+depends on a small but stateful mailbox surface:
+
+- Poll unread inbound messages, including pagination and deterministic timestamp
+  ordering.
+- Fetch each full message with its thread ID, sender, timestamp, and usable text
+  body. Current body extraction prefers extracted text, then text, then preview.
+- Fetch thread history and individual messages.
+- Send a reply to a specific message with an idempotency key and retain the
+  outbound message ID.
+- Detect a prior reply receipt by finding an outbound thread message whose
+  `In-Reply-To` points to the inbound message.
+- Mark a message processed by moving it from `unread` to `read` state.
+- Authenticate with an API credential and address a configured inbox ID.
+
+The default application loop polls every 60 seconds. For each accepted message,
+it completes orchestration and reply handling before marking the message as
+processed. A replacement therefore needs equivalent observable behavior, even
+when the provider names or implements these operations differently.
+
+ROADMAP section 5 plans to separate transport from orchestration. Polling,
+thread history, send/reply, idempotent reply-receipt detection, and processed or
+label state should sit behind an adapter so provider-specific REST behavior does
+not alter the application state machine.
+
+## Alternative providers
+
+These ratings measure likely adapter fit, not overall product quality. **High**
+means the published summary exposes most required primitives; **Medium** means
+the mailbox is plausible but important semantics need verification; **Low**
+means a larger behavior gap is likely; and **Build-yourself** means DearMachine
+would own material mailbox or workflow infrastructure. None implies byte-level
+compatibility with the current AgentMail SDK.
+
+### Summary
+
+| Alternative | Category | Drop-in fit | One-line description |
+|---|---|---:|---|
+| [OpenMail](https://openmail.sh/) | Closest | High | Agent-focused provisioned inboxes with send/receive, threads, real-time events, and custom domains. |
+| [Dead Simple Email](https://deadsimple.email/) | Closest | High | Dedicated agent inboxes with send/receive, webhooks, a dashboard, and MCP. |
+| [AGmail](https://agmail.ai/) | Closest | High | Agent inboxes with send, read, reply, search, custom domains, APIs, and skills. |
+| [AgenticEmail](https://agenticemail.dev/) | Closest | High | Runtime-created inboxes with REST, threads, webhooks, WebSockets, SDKs, and hosted MCP. |
+| [Lumbox](https://lumbox.co/) | Closest | Medium | Agent inboxes oriented around replies, OTPs, login, verification, and MCP workflows. |
+| [Sendmux](https://sendmux.ai/) | Closest | High | Agent mailbox API with send/receive, threads, attachments, webhook/SSE events, and outbound-provider choices. |
+| [Xobni.ai](https://www.xobni.ai/) | Closest | High | Agent inboxes with MCP, REST, webhooks, attachments, semantic search, storage, and calendar features. |
+| [AgenticMailbox](https://agenticmailbox.com/) | Closest | Medium | Agent addresses exposed by API, webhooks, and MCP with inbound AI analysis. |
+| [agentsbase](https://agentsbase.net/) | Closest | Medium | API-created mailboxes with send/receive, attachments, search, OTP extraction, webhooks, and MCP. |
+| [EmailAgent.dev](https://emailagent.dev/) | Closest | Medium | Provisioned inbox identities with send/receive, custom domains, scoped keys, and TypeScript/Python SDKs. |
+| [EmailForAgent](https://emailforagent.com/) | Closest | Medium | Dedicated agent addresses with API-driven send/receive and a human dashboard. |
+| [DevInbox](https://devinbox.io/) | Direct variant | Medium | Persistent REST/MCP inboxes aimed especially at OTP, browser-agent, and automated-test workflows. |
+| [Mailgent](https://mailgent.dev/) | Direct variant | Low | A real mailbox combined with credential, TOTP, calendar, decentralized-identity, and wallet services. |
+| [Daimon.email](https://daimon.email/) | Direct variant | Medium | Agent inboxes with API integrations, webhooks, spam controls, and paid custom domains. |
+| [ActionLayer](https://www.actionlayer.dev/) | Direct variant | Medium | Business agent inboxes with API/MCP, threading, a unified inbox, and human approvals. |
+| [AgenticMail.com](https://agenticmail.com/) | Direct variant | High | Dedicated inboxes with send/reply/forward APIs, webhooks, CLI, SDKs, and MCP. |
+| [Crustacean Email](https://crustacean.email/) | Direct variant | Medium | API-only dedicated mailboxes that intentionally do not expose IMAP/SMTP credentials. |
+| [agentinbox](https://agentinbox.site/) | Direct variant | High | Hosted or self-hosted inboxes with send/receive, threads, webhooks, OTP extraction, and a dashboard. |
+| [AI-Agent.email](https://www.ai-agent.email/) | Direct variant | Medium | Controlled mailboxes with API-readable inbound mail and policy-gated replies. |
+| [Mail4AI](https://www.castelis.com/en/insights-ressources/ai-email-agent/) | Direct variant | Medium | French-hosted per-agent mailboxes with MCP/API and inbound/outbound allowlists. |
+| [Nylas Agent Accounts](https://www.nylas.com/products/agent-accounts/) | Larger vendor | High | Hosted agent accounts with addresses, inboxes, threads, folders, drafts, attachments, IMAP/SMTP, and calendar. |
+| [Hostinger Agentic Mail](https://www.hostinger.com/agentic-mail) | Larger vendor | Medium | Isolated agent inboxes with send/receive API, webhooks, MCP, policies, and custom-domain support. |
+| [Bavimail](https://bavimail.com/) | Hybrid | Medium | Per-agent two-way inboxes within a broader transactional and marketing email platform. |
+| [Inbound](https://inbound.new/) | Hybrid | Medium | Send/receive/reply APIs with automatic threading and webhook routing for many domain addresses. |
+| [Cloudflare Email Service / Workers](https://cli.nylas.com/guides/agentmail-vs-nylas-vs-cloudflare-email) | Build it yourself | Build-yourself | Email primitives that can underpin agent mail when paired with custom storage, state, threading, and workflows. |
+| [Open-source AgenticMail](https://github.com/agenticmail/agenticmail) | Self-hosted | Build-yourself | A Stalwart-based project providing isolated mailboxes, REST, and MCP under operator control. |
+
+### Closest hosted alternatives
+
+#### OpenMail — High
+
+OpenMail offers provisioned, agent-focused inboxes with send/receive, threads, webhooks, WebSockets, and custom domains. Its explicit threads and both pull and push interfaces cover much of the adapter, but label mutation, idempotent send, reply-receipt fidelity, and Go support still need verification.
+
+#### Dead Simple Email — High
+
+Dead Simple Email provides dedicated agent inboxes, send/receive, webhooks, MCP, and a management dashboard. The core mailbox and event primitives look close to DearMachine's needs, while polling, thread lookup, read state, idempotency, and Go client details remain to be confirmed.
+
+#### AGmail — High
+
+AGmail exposes agent inbox operations including send, read, reply, and search, plus custom domains, API access, and skills. Read/reply operations suggest a small adapter, but exact unread filtering, thread metadata, idempotency, receipt detection, and SDK maturity require an integration spike.
+
+#### AgenticEmail — High
+
+AgenticEmail supports runtime-created inboxes, REST, threading, webhooks, WebSockets, scoped keys, SDKs, and hosted MCP. It maps well to polling, thread history, and replies, subject to verifying message-state mutation, idempotency, `In-Reply-To` fidelity, and whether an appropriate Go SDK exists.
+
+#### Lumbox — Medium
+
+Lumbox provides agent inboxes for waiting on replies, extracting OTPs, and handling login or verification workflows through MCP. Its workflow orientation is useful, but the available summary does not establish general REST polling, thread history, labels, idempotent sends, or Go support.
+
+#### Sendmux — High
+
+Sendmux supplies send/receive, threads, attachments, webhook/SSE events, and managed or bring-your-own outbound delivery. Threads and event delivery cover major requirements, while a pull-polling adapter, read state, idempotency, reply-receipt fields, and outbound authorization behavior need validation.
+
+#### Xobni.ai — High
+
+Xobni.ai gives agents dedicated inboxes with REST, MCP, webhooks, attachments, semantic search, and adjacent storage/calendar features. REST and webhooks offer good integration paths, but exact threading, unread labels, idempotent replies, receipt fields, and Go SDK support are not confirmed by the source summary.
+
+#### AgenticMailbox — Medium
+
+AgenticMailbox combines agent email addresses with API, webhooks, MCP, and built-in analysis of incoming messages. Send/receive automation appears viable, but the summary does not confirm polling pagination, threads, message labels, idempotency, reply receipts, or language-specific SDKs.
+
+#### agentsbase — Medium
+
+agentsbase creates mailboxes by API and supports send/receive, attachments, search, OTP extraction, webhooks, and MCP. The main primitives are present, but thread identity, read/unread state, idempotent send, `In-Reply-To` fidelity, and Go support need to be checked.
+
+#### EmailAgent.dev — Medium
+
+EmailAgent.dev offers provisioned identities, send/receive, custom domains, scoped keys, and TypeScript/Python SDKs. Its known SDKs do not include Go, and the source does not establish polling, threading, labels, idempotency, or reply receipt semantics.
+
+#### EmailForAgent — Medium
+
+EmailForAgent provides a dedicated email address per agent, API-driven send/receive, and a human dashboard. This satisfies the basic transport shape, but thread history, unread processing, idempotency, reply correlation, event delivery, and SDK availability are unspecified.
+
+### Direct variants
+
+#### DevInbox — Medium
+
+DevInbox offers persistent programmable inboxes with send/receive over REST and MCP, with an emphasis on OTPs, browser agents, and testing. Persistent mailboxes fit the identity model, but production threading, labels, idempotency, reply receipts, authorization, and SDK maturity need verification.
+
+#### Mailgent — Low
+
+Mailgent pairs a real mailbox with credential vaulting, TOTP, calendar, decentralized identity, and wallet capabilities. The mailbox may be adaptable, but the source does not confirm the specific polling, threading, reply, idempotency, processed-state, or SDK contracts DearMachine requires.
+
+#### Daimon.email — Medium
+
+Daimon.email supplies agent inboxes, API integrations, webhooks, outbound-spam controls, and custom domains on paid plans. API and webhooks support message flow, while polling, threads, labels, idempotency, reply receipts, and policy effects on automated sending need confirmation.
+
+#### ActionLayer — Medium
+
+ActionLayer provides business inbox identities with API/MCP, threading, a unified inbox, and strong human-in-the-loop approvals. Threading maps directly, but mandatory approval policies and unknown polling, label, idempotency, receipt, and Go SDK semantics could require more than a thin adapter.
+
+#### AgenticMail.com — High
+
+AgenticMail.com exposes dedicated addresses plus send, reply, and forward APIs, webhooks, CLI tooling, SDKs, and MCP. Explicit reply support makes it promising, although poll/list behavior, thread history, unread state, idempotency, receipt correlation, and Go SDK availability must be re-verified.
+
+#### Crustacean Email — Medium
+
+Crustacean Email offers API-only dedicated mailboxes and deliberately withholds IMAP/SMTP credentials. API-only access is compatible with an adapter, but the source does not establish threads, polling filters, processed state, idempotency, reply receipts, or SDK maturity.
+
+#### agentinbox — High
+
+agentinbox includes send/receive, threads, webhooks, OTP extraction, a dashboard, and hosted or self-hosted deployment. The thread model and deployment choice are strong fits; label semantics, polling, idempotent sends, receipt fidelity, and the maintenance burden of self-hosting still need evaluation.
+
+#### AI-Agent.email — Medium
+
+AI-Agent.email exposes inbound messages through an API and allows policy-gated replies from controlled agent mailboxes. Its governance may benefit deployment, but policy gates plus unspecified polling, threads, state labels, idempotency, receipt correlation, and SDKs can change drop-in behavior.
+
+#### Mail4AI — Medium
+
+Mail4AI provides a dedicated mailbox per agent or process, MCP/API access, inbound/outbound allowlists, and French hosting. It has the right mailbox shape, but allowlists and unverified polling, threading, labels, idempotency, receipt, and Go SDK behavior need an adapter proof of concept.
+
+### Larger-vendor alternatives
+
+#### Nylas Agent Accounts — High
+
+Nylas Agent Accounts provisions hosted agent email addresses with inboxes, threading, folders, drafts, attachments, IMAP/SMTP, and calendar support. Its rich mailbox model covers most data needs, but API polling, unread transitions, idempotency, reply receipt fidelity, credential scope, and Go support must be tested against the current contract.
+
+#### Hostinger Agentic Mail — Medium
+
+Hostinger Agentic Mail offers isolated inboxes, send/receive API, webhooks, MCP, allow/block policies, and custom-domain mailboxes. Core delivery is available, while thread history, pull polling, labels, idempotency, reply receipts, SDKs, and policy interactions are not confirmed by the source.
+
+### Hybrid alternatives
+
+#### Bavimail — Medium
+
+Bavimail supports per-agent inboxes and two-way email inside a broader transactional and marketing platform. It may cover basic send/receive, but the mailbox-object model, polling, threads, read state, idempotency, receipts, and SDK availability require confirmation.
+
+#### Inbound — Medium
+
+Inbound supports send/receive/reply APIs, automatic threading, and many addresses on a domain, with inbound delivery oriented around webhook routing. Threading and reply primitives fit, but DearMachine may need its own durable queue/state layer to turn push events into polling and processed acknowledgments.
+
+### Build-it-yourself and self-hosted alternatives
+
+#### Cloudflare Email Service / Workers — Build-yourself
+
+Cloudflare email tooling can be assembled into programmable agent-owned email infrastructure. DearMachine would need to implement or operate mailbox storage, polling queues, threading, read state, idempotency, reply correlation, and likely outbound authorization rather than only writing a provider adapter.
+
+#### Open-source AgenticMail — Build-yourself
+
+The open-source AgenticMail project uses Stalwart to provide isolated mailboxes, REST, and MCP for self-hosted agent email. Its primitives could support the interface, but DearMachine would assume deployment, upgrades, availability, security, storage, delivery reputation, and contract-verification work.
+
+## Suitability of an agnostic email transport
+
+### Required abstraction surface
+
+A narrow production interface can preserve the current state machine:
+
+```go
+type Transport interface {
+	Poll(ctx context.Context) ([]Message, error)
+	Thread(ctx context.Context, threadID string) ([]Message, error)
+	Message(ctx context.Context, messageID string) (Message, error)
+	Reply(ctx context.Context, messageID, text, idempotencyKey string) (string, error)
+	ReplyReceipt(ctx context.Context, message Message) (Receipt, error)
+	MarkProcessed(ctx context.Context, messageID string) error
+}
+```
+
+The normalized `Message` must retain provider IDs, thread ID, sender, timestamp,
+body text, direction, and reply-reference metadata. Adapter construction also
+needs provider-specific credential and inbox-ID configuration. The concrete Go
+signatures may evolve; the behavioral contract is the important boundary.
+
+### Key risks and provider deltas
+
+- **Processed state:** `read`, `unread`, `sent`, folders, labels, flags, and
+  acknowledgment tokens are not interchangeable. Some push-first services may
+  require DearMachine-owned checkpoints instead of remote label mutation.
+- **Idempotency:** providers may accept an idempotency header, a request key, a
+  client message ID, or nothing. Where native support is absent, the adapter
+  needs durable deduplication and safe retry rules.
+- **Push versus pull:** webhooks, WebSockets, and SSE reduce polling latency but
+  do not automatically implement paginated unread polling. A durable event
+  buffer can translate push delivery into the current pull contract.
+- **Threading and reply fidelity:** thread identifiers may be provider-local,
+  reconstructed from RFC headers, or absent. `Message-ID`, `In-Reply-To`, and
+  `References` must survive normalization for reliable reply-receipt detection.
+- **Body extraction:** providers expose different parsed-text, plain-text, HTML,
+  preview, MIME, and attachment fields. Every adapter needs a documented
+  extraction order and timestamp fallback.
+- **Address authorization:** provisioning, custom-domain verification, allowed
+  senders/recipients, approval gates, spam controls, and outbound reputation can
+  alter whether an automated reply is permitted.
+- **SDK maturity:** many alternatives advertise REST, MCP, or TypeScript/Python
+  SDKs but do not establish a maintained Go SDK. A generated or hand-written
+  REST client may be necessary, with provider error and pagination mapping.
+- **Operational stability:** availability, retention, rate limits, terms of
+  service, pricing, preview status, and product maturity can change quickly.
+  Re-verify all of them before adoption.
+
+### Finding
+
+Yes: a behavioral drop-in replacement is feasible once transport operations sit
+behind the interface above. No surveyed alternative is byte-compatible with the
+current AgentMail client today, but several expose equivalent primitives through
+REST plus webhooks or MCP, including threads and labels or read state. Idempotent
+sends must be confirmed provider by provider or supplied through adapter-owned
+durable deduplication. A contract test suite should decide fit: list and order
+unread messages, fetch full bodies, preserve thread/reply headers, retry a send
+without duplication, find its receipt after restart, and mark work complete.
+
+## Selecting a transport at device-client initialization
+
+This is a proposal for future work; it is not implemented.
+
+The transport selection can mirror the existing backend registration pattern:
+
+1. Add a versioned `transport = "agentmail"` key to a future
+   `~/.dearmachine/config/device-client.toml`; version 2 is a reasonable schema
+   target because it changes initialization data.
+2. Add a `setup-transport`-style initialization step, or accept `--transport`
+   during the existing initialization flow. It should validate the selection,
+   required configuration, and credential presence without storing secrets.
+3. Define a static transport catalog analogous to `internal/backends/catalog.go`.
+   Suggested metadata is `ID`, `DisplayName`, `SDKOrEndpoint`, `InstallHint`, and
+   `ConfigKeys`; the catalog should not construct clients or contain credentials.
+4. Resolve a registered adapter factory from the canonical transport ID, then
+   inject the resulting interface into the existing application dependencies.
+5. Keep credentials in per-transport environment variables. AgentMail uses
+   `AGENTMAIL_API_KEY` today; each alternative should declare its documented
+   provider-specific variable only after the provider documentation is verified.
+
+An illustrative configuration, with placeholders rather than real identifiers:
+
+```toml
+version = 2
+backends = ["codex", "forge"]
+transport = "agentmail"
+
+[transport_options]
+inbox_id = "<configured-inbox-id>"
+credential_env = "AGENTMAIL_API_KEY"
+```
+
+The config should name a credential environment variable, not store the secret.
+Provider-specific options such as endpoint, region, domain, webhook mode, or
+self-hosted base URL should remain scoped under transport options and be rejected
+when they are invalid for the selected catalog entry.
+
+## Sources
+
+The survey source was `/home/david/Downloads/agentmail_competitor_landscape.md`,
+titled “AgentMail-Style Competitor Landscape,” prepared 2026-08-06. Its product
+claims are a point-in-time summary and should be checked against the following
+provider pages before an implementation or purchasing decision:
+
+- OpenMail: <https://openmail.sh/>
+- Dead Simple Email: <https://deadsimple.email/>
+- AGmail: <https://agmail.ai/>
+- AgenticEmail: <https://agenticemail.dev/>
+- Lumbox: <https://lumbox.co/>
+- Sendmux: <https://sendmux.ai/>
+- Xobni.ai: <https://www.xobni.ai/>
+- AgenticMailbox: <https://agenticmailbox.com/>
+- agentsbase: <https://agentsbase.net/>
+- EmailAgent.dev: <https://emailagent.dev/>
+- EmailForAgent: <https://emailforagent.com/>
+- DevInbox: <https://devinbox.io/>
+- Mailgent: <https://mailgent.dev/>
+- Daimon.email: <https://daimon.email/>
+- ActionLayer: <https://www.actionlayer.dev/>
+- AgenticMail.com: <https://agenticmail.com/>
+- Crustacean Email: <https://crustacean.email/>
+- agentinbox: <https://agentinbox.site/>
+- AI-Agent.email: <https://www.ai-agent.email/>
+- Mail4AI: <https://www.castelis.com/en/insights-ressources/ai-email-agent/>
+- Nylas Agent Accounts: <https://www.nylas.com/products/agent-accounts/>
+- Hostinger Agentic Mail: <https://www.hostinger.com/agentic-mail>
+- Bavimail: <https://bavimail.com/>
+- Inbound: <https://inbound.new/>
+- Cloudflare Email Service / Workers reference:
+  <https://cli.nylas.com/guides/agentmail-vs-nylas-vs-cloudflare-email>
+- Open-source AgenticMail: <https://github.com/agenticmail/agenticmail>
