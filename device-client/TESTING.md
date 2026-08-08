@@ -10,8 +10,8 @@ go test ./...
 ```
 
 The module requires Go 1.23, CGO, and a C compiler because tests use the real
-SQLite driver. The AgentMail SDK is currently resolved from
-`../.state/agentmail-go` by the replacement in `go.mod`.
+SQLite driver. The AgentMail SDK is resolved at the version declared in
+`go.mod`; the module has no local replacement directive.
 
 ## Useful commands
 

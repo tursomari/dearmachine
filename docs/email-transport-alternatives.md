@@ -204,15 +204,21 @@ type Transport interface {
 	Thread(ctx context.Context, threadID string) ([]Message, error)
 	Message(ctx context.Context, messageID string) (Message, error)
 	Reply(ctx context.Context, messageID, text, idempotencyKey string) (string, error)
-	ReplyReceipt(ctx context.Context, message Message) (Receipt, error)
+	ReplyReceipt(ctx context.Context, message Message) (string, bool, error)
 	MarkProcessed(ctx context.Context, messageID string) error
+	FetchAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 }
 ```
 
 The normalized `Message` must retain provider IDs, thread ID, sender, timestamp,
-body text, direction, and reply-reference metadata. Adapter construction also
-needs provider-specific credential and inbox-ID configuration. The concrete Go
-signatures may evolve; the behavioral contract is the important boundary.
+body text, labels or direction, reply-reference metadata, and attachment
+references. `FetchAttachment` is inbound-only; outbound reply attachments are
+deferred to the attachments milestone. Adapter construction also needs
+provider-specific credential and inbox-ID configuration.
+
+The broader scratch section 9 relay surface—transport capabilities,
+checkpoint/page-token polling, `observe_send`, `finalize_inbound`, and delivery
+state—is deferred to relay work and is intentionally outside this interface.
 
 ### Key risks and provider deltas
 
