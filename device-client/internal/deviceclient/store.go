@@ -71,6 +71,8 @@ const (
 	messageResultReady = "result_ready"
 )
 
+var errMessageSkipped = errors.New("message is locally skipped")
+
 func OpenStore(path string) (*Store, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -643,6 +645,18 @@ func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, 
 	}
 	defer tx.Rollback()
 
+	var skipped int
+	err = tx.QueryRow(
+		`SELECT 1 FROM skipped_messages WHERE message_id = ?`,
+		messageID,
+	).Scan(&skipped)
+	if err == nil {
+		return PendingMessage{}, false, errMessageSkipped
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return PendingMessage{}, false, fmt.Errorf("query skipped inbound message: %w", err)
+	}
+
 	pending, err := scanPending(tx.QueryRow(
 		pendingMessageQuery+` WHERE p.message_id = ?`,
 		messageID,
@@ -688,13 +702,22 @@ func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, 
 		return PendingMessage{}, false, fmt.Errorf("prepare thread session: %w", err)
 	}
 
+	latestSequence := session.Sequence
+	if err := tx.QueryRow(
+		`SELECT COALESCE(MAX(sequence), ?) FROM pending_messages WHERE thread_id = ?`,
+		session.Sequence,
+		threadID,
+	).Scan(&latestSequence); err != nil {
+		return PendingMessage{}, false, fmt.Errorf("query pending thread sequence: %w", err)
+	}
+
 	pending = PendingMessage{
 		MessageID: messageID,
 		ThreadID:  threadID,
 		Session: Session{
 			ThreadID:  threadID,
 			SessionID: session.SessionID,
-			Sequence:  session.Sequence + 1,
+			Sequence:  latestSequence + 1,
 			Status:    session.Status,
 			IsNew:     session.Sequence == 0,
 		},
@@ -736,6 +759,20 @@ func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, 
 		return PendingMessage{}, false, fmt.Errorf("commit inbound message: %w", err)
 	}
 	return pending, false, nil
+}
+
+func (s *Store) PendingByID(messageID string) (PendingMessage, bool, error) {
+	pending, err := scanPending(s.db.QueryRow(
+		pendingMessageQuery+` WHERE p.message_id = ?`,
+		messageID,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return PendingMessage{}, false, nil
+	}
+	if err != nil {
+		return PendingMessage{}, false, fmt.Errorf("query pending message: %w", err)
+	}
+	return pending, true, nil
 }
 
 func (s *Store) MarkRunning(messageID, prompt string) error {
