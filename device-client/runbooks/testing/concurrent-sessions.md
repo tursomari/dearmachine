@@ -72,15 +72,22 @@ and reply proof without retaining credentials or unnecessary message content.
    Confirm all three are unread before startup.
 2. Launch the same isolated client with `--concurrency 3` and otherwise identical
    explicit configuration.
-3. While work is active, sample the client-owned process tree and database state
-   using bounded polling. Record the maximum number of simultaneous email-session
-   mct-agent children; classify transient sync/run children by their arguments.
+3. While work is active, poll `SELECT COUNT(*) FROM pending_messages WHERE
+   state = 'running'` against the phase database about every two seconds as the
+   primary worker-slot measure. Record the maximum simultaneous `running` row
+   count. At the same samples, cross-check it with a full recursive walk of all
+   descendants in `/proc` from the Device Client PID, counting descendants whose
+   command line is `mct-agent ... run`; do not cap the walk at a fixed generation
+   depth. Classify transient sync/run children by their arguments.
 4. Repeat every sequential-phase assertion for the three new thread/message IDs:
    exactly three new sessions, one mapping and ordered sequence advancement per
    thread, exactly-once processing and reply, all three sender-visible replies,
    and zero pending rows at shutdown.
 5. Additionally assert that the observed active email worker count never exceeds
-   three. Concurrent completion order across the three threads is unconstrained.
+   three: the maximum SQLite `state = 'running'` row count is at most three, and
+   the full descendant-process-walk `mct-agent ... run` maximum is also at most
+   three as a cross-check. Concurrent completion order across the three threads
+   is unconstrained.
 
 The phase fails if the pool exceeds three active threads, one session has two
 active mct-agent children, any message or reply is duplicated, a sequence has a
