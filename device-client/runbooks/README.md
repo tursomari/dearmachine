@@ -20,6 +20,8 @@ Go test suite.
   standalone test.
 - [`testing/disposable-instance.md`](./testing/disposable-instance.md) tests
   the ordinary email lifecycle and local skip/unskip behavior.
+- [`testing/concurrent-sessions.md`](./testing/concurrent-sessions.md) compares
+  sequential and three-worker processing across simultaneous email threads.
 - [`testing/live-backends.md`](./testing/live-backends.md) tests Forge, Codex,
   and ordered backend fallback.
 - [`testing/update-sync.md`](./testing/update-sync.md) tests rolling session

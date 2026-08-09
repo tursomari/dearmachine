@@ -10,7 +10,8 @@ This module proves the Device Client alpha happy path:
 5. Send either the final answer or an AskUser clarification as an AgentMail
    reply.
 
-The Device Client is intentionally single-threaded. It does not implement retries,
+The Device Client processes independent email threads concurrently while
+preserving FIFO order within each thread. It does not implement retries,
 preemption, attachments, sandbox policy, or the production transport
 abstraction.
 
@@ -93,7 +94,11 @@ conversation context, so Device Client does not replay the email thread.
 
 The first poll runs immediately. Later polls start 60 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single
-poll.
+poll. Each poll claims messages before dispatching them to a worker pool. The
+`--concurrency` flag limits the pool to three active email threads by default;
+set `--concurrency 1` for sequential processing. The value must be at least one.
+Messages from one thread always run one at a time and in sequence, so one
+mct-agent session never has multiple active children.
 
 ## Locally skip inbox messages
 

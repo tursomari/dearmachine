@@ -43,8 +43,9 @@ after failure, but it is not enabled across logout or reboot. Because it uses
   its PID file, and log a graceful shutdown.
 - Preserve the complete service `PATH`. The Device Client, mct-agent,
   shell-agent, and managed workers inherit it.
-- Treat a quiet log during an active mct-agent or maintenance run as expected;
-  the current client processes globally and does not poll concurrently.
+- Treat a quiet log during active mct-agent or maintenance runs as expected.
+  Email workers may process independent threads concurrently, but the next
+  poll waits for the current batch and maintenance work to finish.
 
 ## Preflight
 
@@ -380,5 +381,5 @@ Skipping is a separate inbox decision that requires explicit intent.
 - the service becomes a persistent installed unit;
 - binary, credential, config, state, entry-point, or log paths change;
 - the backend list or required toolchain changes;
-- polling becomes concurrent or gains a durable scheduler; or
+- polling overlaps an active batch or the scheduler semantics change; or
 - the client gains a first-class health/status command.

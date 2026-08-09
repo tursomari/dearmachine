@@ -10,6 +10,8 @@ Current protocols include:
 
 - [`disposable-instance.md`](./disposable-instance.md) for the ordinary email
   lifecycle and local skip/unskip exercise;
+- [`concurrent-sessions.md`](./concurrent-sessions.md) for sequential and
+  concurrent processing of simultaneous email threads;
 - [`live-backends.md`](./live-backends.md) for Forge, Codex, and
   ordered fallback; and
 - [`update-sync.md`](./update-sync.md) for rolling
