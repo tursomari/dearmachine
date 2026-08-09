@@ -755,6 +755,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		store,
 		runner,
 		nil,
+		3,
 		time.Minute,
 		log.New(io.Discard, "", 0),
 		false,

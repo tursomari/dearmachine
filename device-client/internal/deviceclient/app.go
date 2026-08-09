@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
@@ -19,10 +21,12 @@ type App struct {
 	store            *Store
 	runner           *MCTRunner
 	syncOrchestrator *synctrigger.Orchestrator
+	concurrency      int
 	pollInterval     time.Duration
 	logger           *log.Logger
 	verbose          bool
 	pidfile          string
+	statsMu          sync.Mutex
 	processed        int
 	threads          map[string]struct{}
 }
@@ -32,6 +36,7 @@ func New(
 	store *Store,
 	runner *MCTRunner,
 	syncOrchestrator *synctrigger.Orchestrator,
+	concurrency int,
 	pollInterval time.Duration,
 	logger *log.Logger,
 	verbose bool,
@@ -46,6 +51,9 @@ func New(
 	if runner == nil {
 		return nil, fmt.Errorf("mct runner is required")
 	}
+	if concurrency < 1 {
+		return nil, fmt.Errorf("concurrency must be at least 1")
+	}
 	if pollInterval <= 0 {
 		return nil, fmt.Errorf("poll interval must be positive")
 	}
@@ -57,6 +65,7 @@ func New(
 		store:            store,
 		runner:           runner,
 		syncOrchestrator: syncOrchestrator,
+		concurrency:      concurrency,
 		pollInterval:     pollInterval,
 		logger:           logger,
 		verbose:          verbose,
@@ -130,7 +139,8 @@ func (a *App) start(ctx context.Context) (func() error, error) {
 }
 
 func (a *App) ProcessOnce(ctx context.Context) error {
-	if err := a.recoverPending(ctx); err != nil {
+	work := newThreadWorkQueue()
+	if err := a.recoverPending(ctx, work); err != nil {
 		return err
 	}
 
@@ -166,36 +176,80 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := a.processMessage(ctx, message); err != nil {
-			return fmt.Errorf("process message %s: %w", message.MessageID, err)
+		pending, existed, err := a.store.BeginMessage(message.MessageID, message.ThreadID)
+		if errors.Is(err, errMessageSkipped) {
+			if a.verbose {
+				a.logger.Printf(
+					"poll: locally skipped message=%s thread=%s during claim",
+					message.MessageID,
+					message.ThreadID,
+				)
+			}
+			continue
 		}
+		if err != nil {
+			return fmt.Errorf("claim message %s: %w", message.MessageID, err)
+		}
+		work.enqueue(messageWork{message: message, pending: pending, recovering: existed})
 	}
-	return nil
+	return a.dispatch(ctx, work)
 }
 
-func (a *App) recoverPending(ctx context.Context) error {
+func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {
 	pendingMessages, err := a.store.Pending()
 	if err != nil {
 		return err
 	}
+	grouped := make(map[string][]PendingMessage)
 	for _, pending := range pendingMessages {
+		grouped[pending.ThreadID] = append(grouped[pending.ThreadID], pending)
+	}
+	for threadID := range grouped {
+		sort.SliceStable(grouped[threadID], func(left, right int) bool {
+			return grouped[threadID][left].Session.Sequence <
+				grouped[threadID][right].Session.Sequence
+		})
+	}
+	groupIndexes := make(map[string]int, len(grouped))
+	// Preserve the store's global recovery order while replacing each thread's
+	// slots with its sequence-sorted items. The dispatcher admits only the first
+	// eligible item from any one of these thread groups at a time.
+	for _, slot := range pendingMessages {
+		index := groupIndexes[slot.ThreadID]
+		pending := grouped[slot.ThreadID][index]
+		groupIndexes[slot.ThreadID] = index + 1
 		message, err := a.transport.Message(ctx, pending.MessageID)
 		if err != nil {
 			return err
 		}
-		if err := a.processPending(ctx, message, pending, true); err != nil {
-			return fmt.Errorf("recover message %s: %w", pending.MessageID, err)
-		}
+		work.enqueue(messageWork{message: message, pending: pending, recovering: true})
 	}
 	return nil
 }
 
-func (a *App) processMessage(ctx context.Context, message Message) error {
-	pending, existed, err := a.store.BeginMessage(message.MessageID, message.ThreadID)
+func (a *App) processWork(ctx context.Context, work messageWork) error {
+	pending, found, err := a.store.PendingByID(work.pending.MessageID)
 	if err != nil {
 		return err
 	}
-	return a.processPending(ctx, message, pending, existed)
+	if !found {
+		skipped, err := a.store.IsSkipped(work.pending.MessageID)
+		if err != nil {
+			return err
+		}
+		if skipped {
+			return nil
+		}
+		seen, err := a.store.Seen(work.pending.MessageID)
+		if err != nil {
+			return err
+		}
+		if seen {
+			return a.transport.MarkProcessed(ctx, work.pending.MessageID)
+		}
+		return fmt.Errorf("pending message disappeared before dispatch")
+	}
+	return a.processPending(ctx, work.message, pending, work.recovering)
 }
 
 func (a *App) processPending(
@@ -340,15 +394,21 @@ func (a *App) processPending(
 }
 
 func (a *App) recordProcessed(threadID string) {
+	a.statsMu.Lock()
+	defer a.statsMu.Unlock()
 	a.processed++
 	a.threads[threadID] = struct{}{}
 }
 
 func (a *App) logShutdown() {
+	a.statsMu.Lock()
+	processed := a.processed
+	threads := len(a.threads)
+	a.statsMu.Unlock()
 	a.logger.Printf(
 		"Device Client shutting down. Processed %d messages across %d threads.",
-		a.processed,
-		len(a.threads),
+		processed,
+		threads,
 	)
 }
 

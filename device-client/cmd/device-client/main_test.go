@@ -43,7 +43,8 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		t.Fatalf("parse defaults: %v", err)
 	}
 	if defaults.dbPath != "" || defaults.projectDir != "." ||
-		defaults.mctBinary != "mct-agent" || defaults.pollInterval != time.Minute ||
+		defaults.mctBinary != "mct-agent" || defaults.concurrency != 3 ||
+		defaults.pollInterval != time.Minute ||
 		defaults.entryPointRepo != "~/.dearmachine/entrypoint/main" ||
 		defaults.entryPointPrompt != "~/.dearmachine/entrypoint/main/documentation/update-prompt-template.md" {
 		t.Fatalf("unexpected defaults: %+v", defaults)
@@ -61,6 +62,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		"--mct-agent", "/tmp/mct-agent",
 		"--entry-point-repo", "/tmp/entrypoint",
 		"--entry-point-prompt", "/tmp/entrypoint/documentation/update.md",
+		"--concurrency", "5",
 		"--poll-interval", "250ms",
 		"--pidfile", "/tmp/device-client.pid",
 		"--once",
@@ -74,6 +76,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		cfg.projectDir != "/tmp/project" || cfg.model != "fast-model" ||
 		cfg.mctBinary != "/tmp/mct-agent" || cfg.entryPointRepo != "/tmp/entrypoint" ||
 		cfg.entryPointPrompt != "/tmp/entrypoint/documentation/update.md" ||
+		cfg.concurrency != 5 ||
 		cfg.pollInterval != 250*time.Millisecond ||
 		cfg.pidfile != "/tmp/device-client.pid" || !cfg.once || !cfg.verbose {
 		t.Fatalf("unexpected parsed config: %+v", cfg)
@@ -112,6 +115,8 @@ func TestParseConfigRejectsInvalidInput(t *testing.T) {
 	}{
 		{name: "unknown flag", args: []string{"--unknown"}},
 		{name: "invalid duration", args: []string{"--poll-interval", "later"}},
+		{name: "zero concurrency", args: []string{"--concurrency", "0"}},
+		{name: "negative concurrency", args: []string{"--concurrency", "-1"}},
 		{name: "positional argument", args: []string{"unexpected"}},
 	}
 	for _, test := range tests {
@@ -123,13 +128,20 @@ func TestParseConfigRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestParseConfigReportsInvalidConcurrency(t *testing.T) {
+	_, err := parseConfig([]string{"--concurrency", "0"}, io.Discard)
+	if err == nil || err.Error() != "--concurrency must be at least 1" {
+		t.Fatalf("parseConfig error = %v", err)
+	}
+}
+
 func TestParseConfigHelp(t *testing.T) {
 	var output strings.Builder
 	_, err := parseConfig([]string{"--help"}, &output)
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseConfig help error = %v", err)
 	}
-	for _, want := range []string{"Usage of device-client:", "-inbox-id", "-once"} {
+	for _, want := range []string{"Usage of device-client:", "-concurrency", "-inbox-id", "-once"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help output missing %q:\n%s", want, output.String())
 		}
@@ -187,6 +199,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				binary       string
 				projectDir   string
 				model        string
+				concurrency  int
 				pollInterval time.Duration
 				verbose      bool
 				pidfile      string
@@ -215,12 +228,14 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 					_ *deviceclient.Store,
 					_ *deviceclient.MCTRunner,
 					gotOrchestrator *synctrigger.Orchestrator,
+					gotConcurrency int,
 					gotInterval time.Duration,
 					_ *log.Logger,
 					gotVerbose bool,
 					gotPIDFile string,
 				) (application, error) {
 					orchestrator = gotOrchestrator
+					concurrency = gotConcurrency
 					pollInterval, verbose, pidfile = gotInterval, gotVerbose, gotPIDFile
 					return app, nil
 				},
@@ -238,6 +253,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				"--project", "/project",
 				"--model", "model-123",
 				"--mct-agent", "/bin/mct-agent",
+				"--concurrency", "7",
 				"--poll-interval", "3s",
 				"--pidfile", "/run/device-client.pid",
 				"--verbose",
@@ -255,9 +271,11 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 			}
 			if storePath != "configured.db" || inboxID != "inbox-123" ||
 				binary != "/bin/mct-agent" || projectDir != "/project" || model != "model-123" ||
-				pollInterval != 3*time.Second || !verbose || pidfile != "/run/device-client.pid" {
-				t.Fatalf("unexpected construction: db=%q inbox=%q runner=%q,%q,%q app=%s,%v,%q",
-					storePath, inboxID, binary, projectDir, model, pollInterval, verbose, pidfile)
+				concurrency != 7 || pollInterval != 3*time.Second || !verbose ||
+				pidfile != "/run/device-client.pid" {
+				t.Fatalf("unexpected construction: db=%q inbox=%q runner=%q,%q,%q app=%d,%s,%v,%q",
+					storePath, inboxID, binary, projectDir, model, concurrency,
+					pollInterval, verbose, pidfile)
 			}
 			if orchestrator != nil {
 				t.Fatal("expected orchestrator to be nil when entry-point repo is missing")
@@ -310,6 +328,7 @@ func TestRunReportsDependencyConstructionFailures(t *testing.T) {
 					*deviceclient.Store,
 					*deviceclient.MCTRunner,
 					*synctrigger.Orchestrator,
+					int,
 					time.Duration,
 					*log.Logger,
 					bool,
@@ -462,6 +481,7 @@ func testDependencies(t *testing.T, app application) dependencies {
 			*deviceclient.Store,
 			*deviceclient.MCTRunner,
 			*synctrigger.Orchestrator,
+			int,
 			time.Duration,
 			*log.Logger,
 			bool,

@@ -39,6 +39,7 @@ type config struct {
 	managerPath      string
 	entryPointRepo   string
 	entryPointPrompt string
+	concurrency      int
 	pollInterval     time.Duration
 	pidfile          string
 	once             bool
@@ -59,6 +60,7 @@ type dependencies struct {
 		*deviceclient.Store,
 		*deviceclient.MCTRunner,
 		*synctrigger.Orchestrator,
+		int,
 		time.Duration,
 		*log.Logger,
 		bool,
@@ -85,6 +87,7 @@ func defaultDependencies() dependencies {
 			store *deviceclient.Store,
 			runner *deviceclient.MCTRunner,
 			syncOrchestrator *synctrigger.Orchestrator,
+			concurrency int,
 			pollInterval time.Duration,
 			logger *log.Logger,
 			verbose bool,
@@ -95,6 +98,7 @@ func defaultDependencies() dependencies {
 				store,
 				runner,
 				syncOrchestrator,
+				concurrency,
 				pollInterval,
 				logger,
 				verbose,
@@ -172,6 +176,12 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		60*time.Second,
 		"delay after each completed AgentMail poll",
 	)
+	flags.IntVar(
+		&cfg.concurrency,
+		"concurrency",
+		3,
+		"maximum number of email threads processed concurrently",
+	)
 	flags.StringVar(&cfg.pidfile, "pidfile", "", "path to write the Device Client process ID")
 	flags.BoolVar(&cfg.once, "once", false, "poll once, process available messages, and exit")
 	flags.BoolVar(&cfg.verbose, "verbose", false, "log every AgentMail poll cycle")
@@ -180,6 +190,9 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	}
 	if flags.NArg() != 0 {
 		return config{}, fmt.Errorf("unexpected arguments: %v", flags.Args())
+	}
+	if cfg.concurrency < 1 {
+		return config{}, fmt.Errorf("--concurrency must be at least 1")
 	}
 	return cfg, nil
 }
@@ -247,6 +260,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		store,
 		runner,
 		orchestrator,
+		cfg.concurrency,
 		cfg.pollInterval,
 		logger,
 		cfg.verbose,
