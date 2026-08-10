@@ -166,12 +166,25 @@ Use two new receiver-side threads, A and B, with safe versioned case IDs and no 
    durable B row appears, B's session becomes running, and B's sender-visible
    reply arrives, all before A's reply. A reply alone or a later B reply is not
    sufficient. B must not wait for A.
-5. To exercise same-thread FIFO, send one continuation A2 in A's existing
-   sender-side thread while A1 is still running. Confirm A2 is durably claimed
-   at the next in-batch poll but does not start a second A run before A1
-   completes. After A1 completes, A2 must advance the same mapping from
-   sequence one to sequence two without a gap. B must independently advance
-   from sequence zero to one and must not be serialized behind A.
+5. **Same-thread continuation delivery:** With a fully isolated AgentMail
+   sender/receiver pair, reply-type messages (Drafts API `InReplyTo`, raw-send
+   `In-Reply-To`/`References` headers, or reply-natural derivation) thread
+   correctly on the sender side but are not delivered to the receiver inbox.
+   Fresh drafts are delivered, but receive a new sender-side thread ID and
+   therefore create a new receiver thread. This makes live same-thread FIFO
+   observation inconclusive through AgentMail alone. Attempt one reply-natural
+   continuation A2 while A1 is still running, then verify delivery by listing
+   the receiver inbox. If A2 is not delivered after about 60 seconds, classify
+   the FIFO assertion as `INCONCLUSIVE`, not as a product failure; record both
+   sender-side thread IDs and the non-delivered message ID in the evidence, and
+   rely on `TestProcessOnceLimitsConcurrentThreadsAndPreservesThreadFIFO` and
+   the `concurrency_test.go` suite for the FIFO verdict. Do not retry with fresh
+   drafts while claiming they are continuations: a fresh draft is a new thread
+   by definition. If A2 is delivered, confirm it is durably claimed at the next
+   in-batch poll but does not start a second A run before A1 completes. After A1
+   completes, A2 must advance the same mapping from sequence one to sequence
+   two without a gap. B must independently advance from sequence zero to one
+   and must not be serialized behind A.
 6. Across every sample, assert that both the SQLite `running` count and the
    recursive-process count are no greater than the recorded `--concurrency`.
    Explain any short-lived mismatch by timestamp and process arguments; do not
@@ -323,6 +336,10 @@ Give four separate verdicts:
 3. **FIFO and concurrency-limit preservation:** pass only if A1 precedes A2
    without a gap or overlap, B is not cross-thread serialized, no thread has
    two active runs, and neither active-count measure exceeds `--concurrency`.
+   If AgentMail reply delivery cannot be observed with the isolated pair,
+   classify the live FIFO portion as inconclusive per Phase 1 step 5 and base
+   the verdict on the unit-level FIFO suite together with any observed
+   cross-thread concurrency.
 4. **Isolation and cleanup:** pass only if normal inboxes, allow-lists, runtime
    state, mct stores, source worktree, and unrelated processes are unchanged,
    and every run-created live resource is removed.
@@ -343,6 +360,10 @@ Maintenance and ordinary agent work can involve several model calls. Treat a
 live process, advancing trajectory, new durable row, changing session state,
 or bounded Git transition as progress rather than relying on an exact response
 time.
+
+The isolated sender/receiver pair cannot reliably deliver reply-type messages;
+treat Phase 1 continuation delivery failure as an AgentMail API limitation, not
+as evidence about the product.
 
 After the exercise, update this runbook only for durable operational lessons:
 missing observations, misleading assertions, unsafe cleanup assumptions, or
