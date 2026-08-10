@@ -44,6 +44,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 	}
 	if defaults.dbPath != "" || defaults.projectDir != "." ||
 		defaults.mctBinary != "mct-agent" || defaults.concurrency != 3 ||
+		defaults.maintenanceMinTurns != 20 ||
 		defaults.pollInterval != time.Minute ||
 		defaults.entryPointRepo != "~/.dearmachine/entrypoint/main" ||
 		defaults.entryPointPrompt != "~/.dearmachine/entrypoint/main/documentation/update-prompt-template.md" {
@@ -63,6 +64,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		"--entry-point-repo", "/tmp/entrypoint",
 		"--entry-point-prompt", "/tmp/entrypoint/documentation/update.md",
 		"--concurrency", "5",
+		"--maintenance-min-turns", "8",
 		"--poll-interval", "250ms",
 		"--pidfile", "/tmp/device-client.pid",
 		"--once",
@@ -76,7 +78,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		cfg.projectDir != "/tmp/project" || cfg.model != "fast-model" ||
 		cfg.mctBinary != "/tmp/mct-agent" || cfg.entryPointRepo != "/tmp/entrypoint" ||
 		cfg.entryPointPrompt != "/tmp/entrypoint/documentation/update.md" ||
-		cfg.concurrency != 5 ||
+		cfg.concurrency != 5 || cfg.maintenanceMinTurns != 8 ||
 		cfg.pollInterval != 250*time.Millisecond ||
 		cfg.pidfile != "/tmp/device-client.pid" || !cfg.once || !cfg.verbose {
 		t.Fatalf("unexpected parsed config: %+v", cfg)
@@ -117,6 +119,7 @@ func TestParseConfigRejectsInvalidInput(t *testing.T) {
 		{name: "invalid duration", args: []string{"--poll-interval", "later"}},
 		{name: "zero concurrency", args: []string{"--concurrency", "0"}},
 		{name: "negative concurrency", args: []string{"--concurrency", "-1"}},
+		{name: "negative maintenance turns", args: []string{"--maintenance-min-turns", "-1"}},
 		{name: "positional argument", args: []string{"unexpected"}},
 	}
 	for _, test := range tests {
@@ -135,13 +138,20 @@ func TestParseConfigReportsInvalidConcurrency(t *testing.T) {
 	}
 }
 
+func TestParseConfigReportsInvalidMaintenanceMinTurns(t *testing.T) {
+	_, err := parseConfig([]string{"--maintenance-min-turns", "-1"}, io.Discard)
+	if err == nil || err.Error() != "--maintenance-min-turns must not be negative" {
+		t.Fatalf("parseConfig error = %v", err)
+	}
+}
+
 func TestParseConfigHelp(t *testing.T) {
 	var output strings.Builder
 	_, err := parseConfig([]string{"--help"}, &output)
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseConfig help error = %v", err)
 	}
-	for _, want := range []string{"Usage of device-client:", "-concurrency", "-inbox-id", "-once"} {
+	for _, want := range []string{"Usage of device-client:", "-concurrency", "-inbox-id", "-maintenance-min-turns", "-once"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help output missing %q:\n%s", want, output.String())
 		}

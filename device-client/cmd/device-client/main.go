@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,20 +31,22 @@ func main() {
 }
 
 type config struct {
-	inboxID          string
-	dbPath           string
-	projectDir       string
-	model            string
-	mctBinary        string
-	deviceConfig     string
-	managerPath      string
-	entryPointRepo   string
-	entryPointPrompt string
-	concurrency      int
-	pollInterval     time.Duration
-	pidfile          string
-	once             bool
-	verbose          bool
+	inboxID                string
+	dbPath                 string
+	projectDir             string
+	model                  string
+	mctBinary              string
+	deviceConfig           string
+	managerPath            string
+	entryPointRepo         string
+	entryPointPrompt       string
+	concurrency            int
+	maintenanceMinTurns    int
+	maintenanceMinTurnsSet bool
+	pollInterval           time.Duration
+	pidfile                string
+	once                   bool
+	verbose                bool
 }
 
 type application interface {
@@ -182,17 +185,31 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		3,
 		"maximum number of email threads processed concurrently",
 	)
+	flags.IntVar(
+		&cfg.maintenanceMinTurns,
+		"maintenance-min-turns",
+		20,
+		"completed turns required before entry-point maintenance (0 disables the gate)",
+	)
 	flags.StringVar(&cfg.pidfile, "pidfile", "", "path to write the Device Client process ID")
 	flags.BoolVar(&cfg.once, "once", false, "poll once, process available messages, and exit")
 	flags.BoolVar(&cfg.verbose, "verbose", false, "log every AgentMail poll cycle")
 	if err := flags.Parse(args); err != nil {
 		return config{}, err
 	}
+	flags.Visit(func(setFlag *flag.Flag) {
+		if setFlag.Name == "maintenance-min-turns" {
+			cfg.maintenanceMinTurnsSet = true
+		}
+	})
 	if flags.NArg() != 0 {
 		return config{}, fmt.Errorf("unexpected arguments: %v", flags.Args())
 	}
 	if cfg.concurrency < 1 {
 		return config{}, fmt.Errorf("--concurrency must be at least 1")
+	}
+	if cfg.maintenanceMinTurns < 0 {
+		return config{}, fmt.Errorf("--maintenance-min-turns must not be negative")
 	}
 	return cfg, nil
 }
@@ -254,6 +271,22 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	orchestrator, err := buildOrchestrator(cfg, deps, logger, backends, managerPath)
 	if err != nil {
 		return err
+	}
+	if orchestrator != nil && !cfg.maintenanceMinTurnsSet {
+		environmentValue := strings.TrimSpace(getenv("DEARMACHINE_MAINTENANCE_MIN_TURNS"))
+		if environmentValue != "" {
+			cfg.maintenanceMinTurns, err = strconv.Atoi(environmentValue)
+			if err != nil {
+				return fmt.Errorf("DEARMACHINE_MAINTENANCE_MIN_TURNS must be an integer: %w", err)
+			}
+			if cfg.maintenanceMinTurns < 0 {
+				return fmt.Errorf("--maintenance-min-turns must not be negative")
+			}
+			orchestrator.MaintenanceMinTurns = cfg.maintenanceMinTurns
+		}
+	}
+	if orchestrator != nil && orchestrator.MaintenanceMinTurns > 0 {
+		orchestrator.TurnCounter = store.CountProcessedSince
 	}
 	app, err := deps.newApp(
 		transport,
@@ -402,12 +435,13 @@ func buildOrchestrator(
 		return nil, err
 	}
 	return &synctrigger.Orchestrator{
-		RepoPath:           resolvedRepo,
-		MCTBinary:          cfg.mctBinary,
-		AgentManagerPath:   managerPath,
-		Backends:           append([]string(nil), backends...),
-		PromptTemplatePath: resolvedPrompt,
-		Logger:             logger,
+		RepoPath:            resolvedRepo,
+		MCTBinary:           cfg.mctBinary,
+		AgentManagerPath:    managerPath,
+		Backends:            append([]string(nil), backends...),
+		PromptTemplatePath:  resolvedPrompt,
+		MaintenanceMinTurns: cfg.maintenanceMinTurns,
+		Logger:              logger,
 	}, nil
 }
 

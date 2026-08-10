@@ -72,6 +72,7 @@ go run ./cmd/device-client \
   --inbox-id your-inbox-id \
   --project ~/.dearmachine/entrypoint/main \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
+  --maintenance-min-turns 20 \
   --pidfile ~/.dearmachine/run/device-client.pid
 ```
 
@@ -251,6 +252,13 @@ When `~/.dearmachine/entrypoint/main` exists, Device Client evaluates its
 mct-agent sessions after every successful poll. Override the paths with
 `--entry-point-repo` and `--entry-point-prompt`, or pass an empty
 `--entry-point-repo` to disable the trigger.
+
+Entry-point maintenance is gated on 20 completed email turns by default. Set
+`--maintenance-min-turns` or `DEARMACHINE_MAINTENANCE_MIN_TURNS` to change the
+threshold; an explicit command-line flag takes precedence over the environment.
+Set the threshold to `0` to disable the turn gate and retain the legacy cadence.
+Passing the turn gate still requires at least two eligible sessions: one to
+review and one newest session to hold.
 
 For email sessions themselves to count toward the trigger, launch Device
 Client with `--project` set to the entry-point repository. Distinct new threads
