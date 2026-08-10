@@ -143,7 +143,13 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 	if err := a.recoverPending(ctx, work); err != nil {
 		return err
 	}
+	if err := a.pollAndClaim(ctx, work); err != nil {
+		return err
+	}
+	return a.dispatch(ctx, work)
+}
 
+func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 	messages, err := a.transport.Poll(ctx)
 	if err != nil {
 		return err
@@ -192,7 +198,7 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 		}
 		work.enqueue(messageWork{message: message, pending: pending, recovering: existed})
 	}
-	return a.dispatch(ctx, work)
+	return nil
 }
 
 func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {

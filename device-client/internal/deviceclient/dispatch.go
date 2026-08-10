@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type messageWork struct {
@@ -17,12 +18,14 @@ type threadWorkQueue struct {
 	items     []messageWork
 	inFlight  map[string]struct{}
 	messageID map[string]struct{}
+	added     chan struct{}
 }
 
 func newThreadWorkQueue() *threadWorkQueue {
 	return &threadWorkQueue{
 		inFlight:  make(map[string]struct{}),
 		messageID: make(map[string]struct{}),
+		added:     make(chan struct{}, 1),
 	}
 }
 
@@ -34,6 +37,10 @@ func (q *threadWorkQueue) enqueue(work messageWork) {
 	}
 	q.messageID[work.pending.MessageID] = struct{}{}
 	q.items = append(q.items, work)
+	select {
+	case q.added <- struct{}{}:
+	default:
+	}
 }
 
 func (q *threadWorkQueue) take() (messageWork, bool) {
@@ -78,6 +85,32 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 		}()
 	}
 
+	stopClaims := make(chan struct{})
+	var claimLoop sync.WaitGroup
+	var claimErrMu sync.Mutex
+	var claimErr error
+	claimLoop.Add(1)
+	go func() {
+		defer claimLoop.Done()
+		ticker := time.NewTicker(a.pollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopClaims:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := a.pollAndClaim(ctx, work); err != nil {
+					claimErrMu.Lock()
+					claimErr = err
+					claimErrMu.Unlock()
+					return
+				}
+			}
+		}
+	}()
+
 	active := 0
 	var firstErr error
 	for {
@@ -93,22 +126,33 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 			break
 		}
 
-		result := <-results
-		active--
-		work.finish(result.work.pending.ThreadID)
-		if result.err != nil && firstErr == nil {
-			operation := "process"
-			if result.work.recovering {
-				operation = "recover"
+		select {
+		case result := <-results:
+			active--
+			work.finish(result.work.pending.ThreadID)
+			if result.err != nil && firstErr == nil {
+				operation := "process"
+				if result.work.recovering {
+					operation = "recover"
+				}
+				firstErr = fmt.Errorf(
+					"%s message %s: %w",
+					operation,
+					result.work.pending.MessageID,
+					result.err,
+				)
 			}
-			firstErr = fmt.Errorf(
-				"%s message %s: %w",
-				operation,
-				result.work.pending.MessageID,
-				result.err,
-			)
+		case <-work.added:
 		}
 	}
+
+	close(stopClaims)
+	claimLoop.Wait()
+	claimErrMu.Lock()
+	if claimErr != nil && firstErr == nil {
+		firstErr = claimErr
+	}
+	claimErrMu.Unlock()
 
 	close(jobs)
 	workers.Wait()
