@@ -131,7 +131,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		return fmt.Errorf("load sync-trigger checkpoint: %w", err)
 	}
 	effectiveTurns := checkpoint.TurnsAccumulated
-	if o.MaintenanceMinTurns > 0 && o.TurnCounter != nil && !checkpoint.UpdatedAt.IsZero() {
+	if o.MaintenanceMinTurns > 0 && o.TurnCounter != nil {
 		countedTurns, err := o.TurnCounter(checkpoint.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("count accumulated turns: %w", err)
