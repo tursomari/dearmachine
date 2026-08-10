@@ -518,6 +518,103 @@ func TestOrchestrateGateCountsTurnsFromStartWithoutCheckpoint(t *testing.T) {
 	if !strings.Contains(string(data), `"turns_accumulated": 0`) {
 		t.Fatalf("checkpoint after successful run must reset turns_accumulated to 0, got:\n%s", data)
 	}
+	if !strings.Contains(string(data), `"counted_through"`) {
+		t.Fatalf("checkpoint after successful run must contain counted_through, got:\n%s", data)
+	}
+}
+
+func TestOrchestrateGateNeverRecountsTurnAfterCrossing(t *testing.T) {
+	t.Parallel()
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	checkpointJSON := `{"session_id":"session-a","updated_at":"2026-08-05T13:00:00Z","turns_accumulated":0}` + "\n"
+	if err := os.WriteFile(statePath, []byte(checkpointJSON), 0o600); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+
+	var logs bytes.Buffer
+	var listerCalls int
+	var countedSince []time.Time
+	runner := &mockRunner{}
+	o := &Orchestrator{
+		RepoPath:            "/repo",
+		MCTBinary:           "mct-agent",
+		PromptTemplatePath:  "/prompt.md",
+		StatePath:           statePath,
+		MaintenanceMinTurns: 3,
+		Logger:              log.New(&logs, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			listerCalls++
+			return []SessionInfo{
+				{SessionID: "session-b", UpdatedAt: time.Date(2026, 8, 5, 14, 0, 0, 0, time.UTC)},
+				{SessionID: "session-c", UpdatedAt: time.Date(2026, 8, 5, 15, 0, 0, 0, time.UTC)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return time.Time{}, nil },
+		TurnCounter: func(since time.Time) (int, error) {
+			countedSince = append(countedSince, since)
+			if since.Before(time.Date(2026, 8, 5, 15, 0, 0, 0, time.UTC)) {
+				return 3, nil
+			}
+			return 0, nil
+		},
+		RunCommand: runner.Run,
+	}
+
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("first OrchestrateSync: %v", err)
+	}
+	if listerCalls != 1 {
+		t.Fatalf("session lister invoked %d time(s) after first crossing, want 1", listerCalls)
+	}
+	if len(runner.entries) != 4 {
+		t.Fatalf("command count after first crossing = %d, want 4", len(runner.entries))
+	}
+	if got := strings.Join(runner.entries[0].args, " "); got != "session fork session-b" {
+		t.Fatalf("first command args = %q, want %q", got, "session fork session-b")
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	if !strings.Contains(string(data), `"counted_through"`) {
+		t.Errorf("checkpoint after first crossing must contain counted_through, got:\n%s", data)
+	}
+	checkpoint, err := loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("load checkpoint: %v", err)
+	}
+	if checkpoint.CountedThrough.IsZero() {
+		t.Fatalf("checkpoint after first crossing has zero counted_through: %+v", checkpoint)
+	}
+
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("second OrchestrateSync: %v", err)
+	}
+	if listerCalls != 1 {
+		t.Fatalf("session lister invoked %d time(s) total, want 1", listerCalls)
+	}
+	if len(runner.entries) != 4 {
+		t.Fatalf("command count after second call = %d, want 4", len(runner.entries))
+	}
+	if len(countedSince) != 2 {
+		t.Fatalf("turn counter invoked %d time(s), want 2", len(countedSince))
+	}
+	wantLegacySince := time.Date(2026, 8, 5, 13, 0, 0, 0, time.UTC)
+	if !countedSince[0].Equal(wantLegacySince) {
+		t.Fatalf("first turn counter since = %s, want %s", countedSince[0], wantLegacySince)
+	}
+	if !countedSince[1].After(time.Date(2026, 8, 5, 15, 0, 0, 0, time.UTC)) {
+		t.Fatalf("second turn counter since = %s, want after session-c update", countedSince[1])
+	}
+	for _, wantLog := range []string{"below threshold 3", "0 accumulated turn(s)"} {
+		if !strings.Contains(logs.String(), wantLog) {
+			t.Fatalf("logs missing %q:\n%s", wantLog, logs.String())
+		}
+	}
+	t.Logf("turn counter since values: %s, %s", countedSince[0].Format(time.RFC3339Nano), countedSince[1].Format(time.RFC3339Nano))
 }
 
 func TestOrchestrateGateSkipsBelowThresholdWithoutCheckpoint(t *testing.T) {
