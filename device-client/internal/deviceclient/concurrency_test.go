@@ -21,6 +21,20 @@ type gatedRun struct {
 	sequence int
 }
 
+type observedPollTransport struct {
+	Transport
+	polls chan []Message
+}
+
+func (t *observedPollTransport) Poll(ctx context.Context) ([]Message, error) {
+	messages, err := t.Transport.Poll(ctx)
+	select {
+	case t.polls <- messages:
+	default:
+	}
+	return messages, err
+}
+
 var promptSessionLine = regexp.MustCompile(
 	`\[Thread: ([^ ]+) \| Session: [^ ]+ \| Sequence: ([0-9]+)\]`,
 )
@@ -136,6 +150,219 @@ func TestProcessOnceLimitsConcurrentThreadsAndPreservesThreadFIFO(t *testing.T) 
 	processed := append([]string(nil), transport.processed...)
 	transport.mu.Unlock()
 	assertMessageIDsExactlyOnce(t, messages, replies, processed)
+}
+
+func TestProcessOnceClaimsMidRunArrivalWhileWorkerBusy(t *testing.T) {
+	messageA := Message{
+		MessageID: "message-a",
+		ThreadID:  "thread-a",
+		From:      "sender@example.com",
+		Body:      "long-running request",
+	}
+	messageB := Message{
+		MessageID: "message-b",
+		ThreadID:  "thread-b",
+		From:      "sender@example.com",
+		Body:      "mid-run request",
+	}
+	transport := newFakeTransport()
+	transport.setPoll([]Message{messageA})
+	started := make(chan gatedRun, 2)
+	release := make(chan struct{})
+	app, store := newInMemoryApp(t, transport, 2, gatedRunInvoker(started, release))
+	app.pollInterval = 10 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() {
+		done <- app.ProcessOnce(context.Background())
+	}()
+	first := awaitGatedRun(t, started)
+	if first.threadID != messageA.ThreadID {
+		close(release)
+		<-done
+		t.Fatalf("first run = %+v, want thread A", first)
+	}
+
+	transport.setPoll([]Message{messageB})
+	claimed := false
+	startedB := false
+	var claimErr error
+	deadline := time.NewTimer(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+observe:
+	for !claimed || !startedB {
+		if !claimed {
+			_, claimed, claimErr = store.PendingByID(messageB.MessageID)
+			if claimErr != nil {
+				break
+			}
+		}
+		select {
+		case invocation := <-started:
+			if invocation.threadID == messageB.ThreadID {
+				startedB = true
+			} else {
+				t.Errorf("unexpected run while awaiting thread B: %+v", invocation)
+			}
+		case <-ticker.C:
+		case <-deadline.C:
+			break observe
+		}
+	}
+	ticker.Stop()
+	if !deadline.Stop() {
+		select {
+		case <-deadline.C:
+		default:
+		}
+	}
+	if !claimed {
+		_, claimed, claimErr = store.PendingByID(messageB.MessageID)
+	}
+	if !startedB {
+		select {
+		case invocation := <-started:
+			startedB = invocation.threadID == messageB.ThreadID
+		default:
+		}
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ProcessOnce: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ProcessOnce did not finish after releasing workers")
+	}
+	if claimErr != nil {
+		t.Fatalf("PendingByID(%s): %v", messageB.MessageID, claimErr)
+	}
+	if !claimed {
+		t.Errorf("thread B was not durably claimed while thread A was running")
+	}
+	if !startedB {
+		t.Errorf("thread B's mct-agent run did not start before thread A was released")
+	}
+}
+
+func TestRunPollsWhileDispatchActive(t *testing.T) {
+	messageA := Message{
+		MessageID: "run-message-a",
+		ThreadID:  "run-thread-a",
+		From:      "sender@example.com",
+		Body:      "long-running request",
+	}
+	messageB := Message{
+		MessageID: "run-message-b",
+		ThreadID:  "run-thread-b",
+		From:      "sender@example.com",
+		Body:      "request arriving during dispatch",
+	}
+	transport := newFakeTransport()
+	transport.setPoll([]Message{messageA})
+	started := make(chan gatedRun, 2)
+	release := make(chan struct{})
+	app, store := newInMemoryApp(t, transport, 2, gatedRunInvoker(started, release))
+	app.pollInterval = 10 * time.Millisecond
+	polls := make(chan []Message, 16)
+	app.transport = &observedPollTransport{Transport: transport, polls: polls}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- app.Run(ctx)
+	}()
+	first := awaitGatedRun(t, started)
+	if first.threadID != messageA.ThreadID {
+		cancel()
+		close(release)
+		<-done
+		t.Fatalf("first run = %+v, want thread A", first)
+	}
+	for {
+		select {
+		case <-polls:
+		default:
+			goto inject
+		}
+	}
+
+inject:
+	transport.setPoll([]Message{messageB})
+	polledB := false
+	claimedB := false
+	startedB := false
+	var claimErr error
+	deadline := time.NewTimer(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+observe:
+	for !polledB || !claimedB || !startedB {
+		if !claimedB {
+			_, claimedB, claimErr = store.PendingByID(messageB.MessageID)
+			if claimErr != nil {
+				break
+			}
+		}
+		select {
+		case messages := <-polls:
+			for _, message := range messages {
+				if message.MessageID == messageB.MessageID {
+					polledB = true
+				}
+			}
+		case invocation := <-started:
+			if invocation.threadID == messageB.ThreadID {
+				startedB = true
+			} else {
+				t.Errorf("unexpected run while awaiting thread B: %+v", invocation)
+			}
+		case <-ticker.C:
+		case <-deadline.C:
+			break observe
+		}
+	}
+	ticker.Stop()
+	if !deadline.Stop() {
+		select {
+		case <-deadline.C:
+		default:
+		}
+	}
+	if !claimedB {
+		_, claimedB, claimErr = store.PendingByID(messageB.MessageID)
+	}
+	if !startedB {
+		select {
+		case invocation := <-started:
+			startedB = invocation.threadID == messageB.ThreadID
+		default:
+		}
+	}
+
+	cancel()
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not stop after cancellation and worker release")
+	}
+	if claimErr != nil {
+		t.Fatalf("PendingByID(%s): %v", messageB.MessageID, claimErr)
+	}
+	if !polledB {
+		t.Errorf("second poll did not observe thread B while thread A was running")
+	}
+	if !claimedB {
+		t.Errorf("thread B was not durably claimed while thread A was running")
+	}
+	if !startedB {
+		t.Errorf("thread B's mct-agent run did not start before thread A was released")
+	}
 }
 
 func TestConcurrentDuplicateClaimCreatesOnceAndRereads(t *testing.T) {
@@ -286,6 +513,37 @@ func newInMemoryApp(
 		t.Fatalf("New: %v", err)
 	}
 	return app, store
+}
+
+func gatedRunInvoker(started chan<- gatedRun, release <-chan struct{}) func(*exec.Cmd) error {
+	return func(command *exec.Cmd) error {
+		switch {
+		case slices.Equal(command.Args[1:], []string{"sync"}):
+			return nil
+		case len(command.Args) > 1 && command.Args[1] == "run":
+			invocation, err := parseGatedRun(command.Args)
+			if err != nil {
+				return err
+			}
+			started <- invocation
+			<-release
+			return os.WriteFile(
+				commandArgument(command.Args, "--final-file"),
+				[]byte("done"),
+				0o600,
+			)
+		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "show":
+			_, err := io.WriteString(command.Stdout, `{"status":"success"}`)
+			return err
+		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "fork":
+			_, err := fmt.Fprintf(command.Stdout, "checkpoint-%s\n", command.Args[3])
+			return err
+		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "delete":
+			return nil
+		default:
+			return fmt.Errorf("unexpected mct-agent invocation: %v", command.Args)
+		}
+	}
 }
 
 func parseGatedRun(args []string) (gatedRun, error) {
