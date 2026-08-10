@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -447,5 +448,129 @@ func TestOrchestrateDeleteFails(t *testing.T) {
 	}
 	if len(runner.entries) != 3 {
 		t.Fatalf("command count = %d, want 3", len(runner.entries))
+	}
+}
+
+func TestOrchestrateSkippedBelowTurnThreshold(t *testing.T) {
+	t.Parallel()
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	checkpointJSON := `{"session_id":"session-a","updated_at":"2026-08-05T13:00:00Z","turns_accumulated":5}` + "\n"
+	if err := os.WriteFile(statePath, []byte(checkpointJSON), 0o600); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+	var listerCalls int
+	runner := &mockRunner{}
+	o := &Orchestrator{
+		RepoPath:           "/repo",
+		MCTBinary:          "mct-agent",
+		PromptTemplatePath: "/prompt.md",
+		StatePath:          statePath,
+		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			listerCalls++
+			return []SessionInfo{
+				{SessionID: "session-b", UpdatedAt: time.Date(2026, 8, 5, 14, 0, 0, 0, time.UTC)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) {
+			t.Fatal("GitLastCommitTime must not be called below turn threshold")
+			return time.Time{}, nil
+		},
+		RunCommand: runner.Run,
+	}
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("OrchestrateSync: %v", err)
+	}
+	if listerCalls != 0 {
+		t.Fatalf("session lister invoked %d time(s), want 0 below turn threshold", listerCalls)
+	}
+	if len(runner.entries) != 0 {
+		t.Fatalf("command count = %d, want 0 below turn threshold", len(runner.entries))
+	}
+}
+
+func TestOrchestrateRunsAtTurnThreshold(t *testing.T) {
+	t.Parallel()
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	checkpointJSON := `{"session_id":"session-a","updated_at":"2026-08-05T13:00:00Z","turns_accumulated":20}` + "\n"
+	if err := os.WriteFile(statePath, []byte(checkpointJSON), 0o600); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+	runner := &mockRunner{}
+	o := &Orchestrator{
+		RepoPath:           "/repo",
+		MCTBinary:          "mct-agent",
+		PromptTemplatePath: "/prompt.md",
+		StatePath:          statePath,
+		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			base := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+			return []SessionInfo{
+				{SessionID: "session-b", UpdatedAt: base.Add(2 * time.Hour)},
+				{SessionID: "session-c", UpdatedAt: base.Add(4 * time.Hour)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return time.Time{}, nil },
+		RunCommand:        runner.Run,
+	}
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("OrchestrateSync: %v", err)
+	}
+	want := [][]string{
+		{"mct-agent", "session", "fork", "session-b"},
+		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"mct-agent", "session", "delete", "forked-123"},
+		{"mct-agent", "sync", "--include-docs"},
+	}
+	if len(runner.entries) != len(want) {
+		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))
+	}
+	for i, wantCall := range want {
+		got := append([]string{runner.entries[i].name}, runner.entries[i].args...)
+		if strings.Join(got, " ") != strings.Join(wantCall, " ") {
+			t.Fatalf("command %d = %q, want %q", i, strings.Join(got, " "), strings.Join(wantCall, " "))
+		}
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	if !strings.Contains(string(data), `"turns_accumulated": 0`) {
+		t.Fatalf("checkpoint after successful run must reset turns_accumulated to 0, got:\n%s", data)
+	}
+}
+
+func TestOrchestrateCheckpointPersistsAndResetsTurns(t *testing.T) {
+	t.Parallel()
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	checkpointJSON := `{"session_id":"session-a","updated_at":"2026-08-05T13:00:00Z","turns_accumulated":17}` + "\n"
+	if err := os.WriteFile(statePath, []byte(checkpointJSON), 0o600); err != nil {
+		t.Fatalf("write checkpoint: %v", err)
+	}
+	loaded, err := loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("loadReviewCheckpoint: %v", err)
+	}
+	if err := saveReviewCheckpoint(statePath, reviewCheckpoint{
+		SessionID: loaded.SessionID,
+		UpdatedAt: loaded.UpdatedAt,
+	}); err != nil {
+		t.Fatalf("saveReviewCheckpoint: %v", err)
+	}
+	saved, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	if !strings.Contains(string(saved), `"turns_accumulated": 0`) {
+		t.Fatalf("checkpoint format must persist turns_accumulated (reset to 0 on save), got:\n%s", saved)
 	}
 }
