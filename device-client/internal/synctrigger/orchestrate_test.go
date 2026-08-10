@@ -451,6 +451,125 @@ func TestOrchestrateDeleteFails(t *testing.T) {
 	}
 }
 
+func TestOrchestrateGateCountsTurnsFromStartWithoutCheckpoint(t *testing.T) {
+	t.Parallel()
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	var listerCalls int
+	var turnCounterCalls int
+	var countedSince time.Time
+	runner := &mockRunner{}
+	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	o := &Orchestrator{
+		RepoPath:            "/repo",
+		MCTBinary:           "mct-agent",
+		PromptTemplatePath:  "/prompt.md",
+		StatePath:           statePath,
+		MaintenanceMinTurns: 3,
+		Logger:              log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			listerCalls++
+			return []SessionInfo{
+				{SessionID: "newer", UpdatedAt: baseTime.Add(time.Hour)},
+				{SessionID: "oldest", UpdatedAt: baseTime},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return time.Time{}, nil },
+		TurnCounter: func(since time.Time) (int, error) {
+			turnCounterCalls++
+			countedSince = since
+			return 5, nil
+		},
+		RunCommand: runner.Run,
+	}
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("OrchestrateSync: %v", err)
+	}
+	if listerCalls != 1 {
+		t.Fatalf("session lister invoked %d time(s), want 1", listerCalls)
+	}
+	if turnCounterCalls != 1 {
+		t.Fatalf("turn counter invoked %d time(s), want 1", turnCounterCalls)
+	}
+	if !countedSince.IsZero() {
+		t.Fatalf("turn counter since = %s, want zero time", countedSince)
+	}
+	want := [][]string{
+		{"mct-agent", "session", "fork", "oldest"},
+		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"mct-agent", "session", "delete", "forked-123"},
+		{"mct-agent", "sync", "--include-docs"},
+	}
+	if len(runner.entries) != len(want) {
+		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))
+	}
+	for i, wantCall := range want {
+		got := append([]string{runner.entries[i].name}, runner.entries[i].args...)
+		if strings.Join(got, " ") != strings.Join(wantCall, " ") {
+			t.Fatalf("command %d = %q, want %q", i, strings.Join(got, " "), strings.Join(wantCall, " "))
+		}
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+	if !strings.Contains(string(data), `"turns_accumulated": 0`) {
+		t.Fatalf("checkpoint after successful run must reset turns_accumulated to 0, got:\n%s", data)
+	}
+}
+
+func TestOrchestrateGateSkipsBelowThresholdWithoutCheckpoint(t *testing.T) {
+	t.Parallel()
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	var logs bytes.Buffer
+	var listerCalls int
+	var turnCounterCalls int
+	var countedSince time.Time
+	runner := &mockRunner{}
+	o := &Orchestrator{
+		RepoPath:            "/repo",
+		MCTBinary:           "mct-agent",
+		PromptTemplatePath:  "/prompt.md",
+		StatePath:           statePath,
+		MaintenanceMinTurns: 3,
+		Logger:              log.New(&logs, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			listerCalls++
+			return nil, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return time.Time{}, nil },
+		TurnCounter: func(since time.Time) (int, error) {
+			turnCounterCalls++
+			countedSince = since
+			return 2, nil
+		},
+		RunCommand: runner.Run,
+	}
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("OrchestrateSync: %v", err)
+	}
+	if turnCounterCalls != 1 {
+		t.Fatalf("turn counter invoked %d time(s), want 1", turnCounterCalls)
+	}
+	if !countedSince.IsZero() {
+		t.Fatalf("turn counter since = %s, want zero time", countedSince)
+	}
+	if listerCalls != 0 {
+		t.Fatalf("session lister invoked %d time(s), want 0 below turn threshold", listerCalls)
+	}
+	if len(runner.entries) != 0 {
+		t.Fatalf("command count = %d, want 0 below turn threshold", len(runner.entries))
+	}
+	if !strings.Contains(logs.String(), "below threshold 3") {
+		t.Fatalf("logs missing %q:\n%s", "below threshold 3", logs.String())
+	}
+}
+
 func TestOrchestrateSkippedBelowTurnThreshold(t *testing.T) {
 	t.Parallel()
 	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
