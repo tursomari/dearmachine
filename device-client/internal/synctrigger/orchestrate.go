@@ -95,6 +95,7 @@ type reviewCheckpoint struct {
 	SessionID        string    `json:"session_id"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	TurnsAccumulated int       `json:"turns_accumulated"`
+	CountedThrough   time.Time `json:"counted_through"`
 }
 
 // OrchestrateSync executes the session fork/run/delete/sync pipeline for
@@ -132,7 +133,11 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	}
 	effectiveTurns := checkpoint.TurnsAccumulated
 	if o.MaintenanceMinTurns > 0 && o.TurnCounter != nil {
-		countedTurns, err := o.TurnCounter(checkpoint.UpdatedAt)
+		since := checkpoint.CountedThrough
+		if since.IsZero() {
+			since = checkpoint.UpdatedAt
+		}
+		countedTurns, err := o.TurnCounter(since)
 		if err != nil {
 			return fmt.Errorf("count accumulated turns: %w", err)
 		}
@@ -245,6 +250,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		SessionID:        reviewed.SessionID,
 		UpdatedAt:        reviewed.UpdatedAt,
 		TurnsAccumulated: 0,
+		CountedThrough:   time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("save sync-trigger checkpoint: %w", err)
 	}
