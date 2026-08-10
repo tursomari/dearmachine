@@ -464,11 +464,12 @@ func TestOrchestrateSkippedBelowTurnThreshold(t *testing.T) {
 	var listerCalls int
 	runner := &mockRunner{}
 	o := &Orchestrator{
-		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
-		PromptTemplatePath: "/prompt.md",
-		StatePath:          statePath,
-		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		RepoPath:            "/repo",
+		MCTBinary:           "mct-agent",
+		PromptTemplatePath:  "/prompt.md",
+		StatePath:           statePath,
+		MaintenanceMinTurns: 20,
+		Logger:              log.New(&bytes.Buffer{}, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
 			listerCalls++
 			return []SessionInfo{
@@ -504,11 +505,12 @@ func TestOrchestrateRunsAtTurnThreshold(t *testing.T) {
 	}
 	runner := &mockRunner{}
 	o := &Orchestrator{
-		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
-		PromptTemplatePath: "/prompt.md",
-		StatePath:          statePath,
-		Logger:             log.New(&bytes.Buffer{}, "", 0),
+		RepoPath:            "/repo",
+		MCTBinary:           "mct-agent",
+		PromptTemplatePath:  "/prompt.md",
+		StatePath:           statePath,
+		MaintenanceMinTurns: 20,
+		Logger:              log.New(&bytes.Buffer{}, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
 			base := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 			return []SessionInfo{

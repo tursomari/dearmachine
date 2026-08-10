@@ -77,21 +77,24 @@ func managedEnvironment(environment []string, managerPath, encodedBackends strin
 
 // Orchestrator coordinates sync-trigger session orchestration.
 type Orchestrator struct {
-	RepoPath           string
-	MCTBinary          string
-	AgentManagerPath   string
-	Backends           []string
-	PromptTemplatePath string
-	StatePath          string
-	Lister             SessionLister
-	GitLastCommitTime  GitLastCommitTime
-	RunCommand         CommandRunner
-	Logger             *log.Logger
+	RepoPath            string
+	MCTBinary           string
+	AgentManagerPath    string
+	Backends            []string
+	PromptTemplatePath  string
+	StatePath           string
+	MaintenanceMinTurns int
+	Lister              SessionLister
+	GitLastCommitTime   GitLastCommitTime
+	TurnCounter         func(since time.Time) (int, error)
+	RunCommand          CommandRunner
+	Logger              *log.Logger
 }
 
 type reviewCheckpoint struct {
-	SessionID string    `json:"session_id"`
-	UpdatedAt time.Time `json:"updated_at"`
+	SessionID        string    `json:"session_id"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	TurnsAccumulated int       `json:"turns_accumulated"`
 }
 
 // OrchestrateSync executes the session fork/run/delete/sync pipeline for
@@ -126,6 +129,24 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	checkpoint, err := loadReviewCheckpoint(checkpointPath)
 	if err != nil {
 		return fmt.Errorf("load sync-trigger checkpoint: %w", err)
+	}
+	effectiveTurns := checkpoint.TurnsAccumulated
+	if o.MaintenanceMinTurns > 0 && o.TurnCounter != nil && !checkpoint.UpdatedAt.IsZero() {
+		countedTurns, err := o.TurnCounter(checkpoint.UpdatedAt)
+		if err != nil {
+			return fmt.Errorf("count accumulated turns: %w", err)
+		}
+		effectiveTurns += countedTurns
+	}
+	if o.MaintenanceMinTurns > 0 && effectiveTurns < o.MaintenanceMinTurns {
+		if o.Logger != nil {
+			o.Logger.Printf(
+				"sync trigger: %d accumulated turn(s) below threshold %d; skipping maintenance",
+				effectiveTurns,
+				o.MaintenanceMinTurns,
+			)
+		}
+		return nil
 	}
 	var detected *DetectionResult
 	if checkpoint.UpdatedAt.IsZero() {
@@ -221,8 +242,9 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	}
 	reviewed := detected.NewSessions[0]
 	if err := saveReviewCheckpoint(checkpointPath, reviewCheckpoint{
-		SessionID: reviewed.SessionID,
-		UpdatedAt: reviewed.UpdatedAt,
+		SessionID:        reviewed.SessionID,
+		UpdatedAt:        reviewed.UpdatedAt,
+		TurnsAccumulated: 0,
 	}); err != nil {
 		return fmt.Errorf("save sync-trigger checkpoint: %w", err)
 	}

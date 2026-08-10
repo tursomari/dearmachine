@@ -638,6 +638,17 @@ func (s *Store) Seen(messageID string) (bool, error) {
 	return true, nil
 }
 
+func (s *Store) CountProcessedSince(since time.Time) (int, error) {
+	var count int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM processed_messages WHERE processed_at > ?`,
+		since.UTC().Format(time.RFC3339Nano),
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count processed messages: %w", err)
+	}
+	return count, nil
+}
+
 func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

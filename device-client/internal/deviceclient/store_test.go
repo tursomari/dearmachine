@@ -8,7 +8,42 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+func TestStoreCountProcessedSince(t *testing.T) {
+	store := openTestStore(t)
+	since := time.Date(2026, 8, 5, 13, 0, 0, 0, time.UTC)
+	for _, row := range []struct {
+		messageID   string
+		processedAt time.Time
+	}{
+		{messageID: "before", processedAt: since.Add(-time.Second)},
+		{messageID: "boundary", processedAt: since},
+		{messageID: "after-1", processedAt: since.Add(time.Second)},
+		{messageID: "after-2", processedAt: since.Add(time.Hour)},
+	} {
+		if _, err := store.db.Exec(
+			`INSERT INTO processed_messages
+			     (message_id, thread_id, outbound_message_id, processed_at)
+			 VALUES (?, ?, ?, ?)`,
+			row.messageID,
+			"thread-"+row.messageID,
+			"",
+			row.processedAt.Format(time.RFC3339Nano),
+		); err != nil {
+			t.Fatalf("insert processed message %s: %v", row.messageID, err)
+		}
+	}
+
+	count, err := store.CountProcessedSince(since)
+	if err != nil {
+		t.Fatalf("CountProcessedSince: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("CountProcessedSince = %d, want 2", count)
+	}
+}
 
 func TestOpenStoreCreatesPrivateStateAndTightensExistingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "state.db")
