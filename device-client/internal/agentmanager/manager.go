@@ -123,6 +123,10 @@ func (a ForgeAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error
 	}
 	command := exec.CommandContext(ctx, "forge", "--conversation-id", sessionID)
 	command.Dir = cwd
+	command.Env = append(os.Environ(),
+		"FORGE_UPDATES__FREQUENCY=never",
+		"FORGE_UPDATES__AUTO_UPDATE=false",
+	)
 	return Launch{Command: command, NativeSession: sessionID}, nil
 }
 
