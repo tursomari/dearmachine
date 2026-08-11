@@ -191,7 +191,7 @@ func runBackend(manager *agentmanager.Manager, args []string, output io.Writer) 
 }
 
 func configureApprovedBackends(manager *agentmanager.Manager) error {
-	approved, err := backendcatalog.Decode(os.Getenv(backendcatalog.EnvironmentVariable))
+	approved, err := manager.DecodeApprovedBackends(os.Getenv(backendcatalog.EnvironmentVariable))
 	if err != nil {
 		return err
 	}

@@ -129,3 +129,21 @@ func Decode(value string) ([]string, error) {
 	}
 	return ids, nil
 }
+
+// DecodeWithCustom decodes the backend list from its JSON representation
+// and validates every ID against the hardcoded catalog plus the custom
+// backends slice.
+func DecodeWithCustom(value string, custom []Backend) ([]string, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, fmt.Errorf("%s is required", EnvironmentVariable)
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(value), &ids); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", EnvironmentVariable, err)
+	}
+	ids = CanonicalizeIDs(ids)
+	if err := ValidateIDsWithCustom(ids, custom, false); err != nil {
+		return nil, fmt.Errorf("validate %s: %w", EnvironmentVariable, err)
+	}
+	return ids, nil
+}

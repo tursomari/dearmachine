@@ -35,7 +35,8 @@ type MCTRunner struct {
 }
 
 func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string) error {
-	if err := backendcatalog.ValidateIDs(backends, false); err != nil {
+	customCatalog := customBackendCatalog(managerPath)
+	if err := backendcatalog.ValidateIDsWithCustom(backends, customCatalog, false); err != nil {
 		return fmt.Errorf("validate agent backends: %w", err)
 	}
 	if strings.TrimSpace(managerPath) == "" || !filepath.IsAbs(managerPath) {

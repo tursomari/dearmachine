@@ -3,6 +3,7 @@ package deviceclient
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 
@@ -78,4 +79,24 @@ func LoadCustomBackends(path string) ([]CustomBackend, error) {
 		})
 	}
 	return result, nil
+}
+
+// customBackendCatalog derives a custom-backend TOML path from the
+// agent-manager binary path and returns catalog-compatible Backend
+// values suitable for ValidateIDsWithCustom.
+func customBackendCatalog(managerPath string) []backendcatalog.Backend {
+	configPath := filepath.Join(
+		filepath.Dir(filepath.Dir(managerPath)),
+		"config",
+		"custom-backends.toml",
+	)
+	custom, err := LoadCustomBackends(configPath)
+	if err != nil {
+		return nil
+	}
+	backends := make([]backendcatalog.Backend, 0, len(custom))
+	for _, cb := range custom {
+		backends = append(backends, cb.Backend)
+	}
+	return backends
 }

@@ -230,6 +230,13 @@ func (m *Manager) SetApprovedBackends(ids []string) error {
 	return nil
 }
 
+// DecodeApprovedBackends decodes the backend list from its JSON
+// representation and validates every ID against the hardcoded catalog
+// plus custom backends loaded from TOML configuration.
+func (m *Manager) DecodeApprovedBackends(value string) ([]string, error) {
+	return backendcatalog.DecodeWithCustom(value, m.customBackends)
+}
+
 func (m *Manager) BackendList() []string {
 	return append([]string(nil), m.ApprovedBackends...)
 }
