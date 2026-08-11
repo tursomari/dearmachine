@@ -18,6 +18,7 @@ import (
 	"time"
 
 	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
+	"github.com/dearmachine/dearmachine/internal/deviceclient"
 )
 
 const (
@@ -174,6 +175,7 @@ type Manager struct {
 	Root             string
 	Adapters         map[string]Adapter
 	ApprovedBackends []string
+	customBackends   []backendcatalog.Backend
 	ExecutablePath   func() (string, error)
 	LaunchSupervisor func(string) error
 	Now              func() time.Time
@@ -198,6 +200,7 @@ func New(root string) *Manager {
 		Now:            time.Now,
 	}
 	m.LaunchSupervisor = m.launchSupervisor
+	m.customBackends = loadCustomAdapters(m, root)
 	return m
 }
 
@@ -215,7 +218,7 @@ func DefaultRoot() (string, error) {
 func (m *Manager) TicketDir(id string) string { return filepath.Join(m.Root, "tickets", id) }
 
 func (m *Manager) SetApprovedBackends(ids []string) error {
-	if err := backendcatalog.ValidateIDs(ids, false); err != nil {
+	if err := backendcatalog.ValidateIDsWithCustom(ids, m.customBackends, false); err != nil {
 		return err
 	}
 	for _, id := range ids {
@@ -594,4 +597,45 @@ func (m *Manager) finish(meta Meta, status string) error {
 
 func processAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
+}
+
+// loadCustomAdapters reads custom-backend definitions from the TOML
+// config file and creates ConfigurableAdapter instances.  Returns the
+// catalog-compatible Backend list for validation.  Errors are logged
+// to stderr; a nil slice indicates no custom backends are available.
+func loadCustomAdapters(m *Manager, root string) []backendcatalog.Backend {
+	configDir := filepath.Join(filepath.Dir(root), "config")
+	configPath := filepath.Join(configDir, "custom-backends.toml")
+	custom, err := deviceclient.LoadCustomBackends(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-manager: skip custom backends: %v\n", err)
+		return nil
+	}
+	if len(custom) == 0 {
+		return nil
+	}
+	catalogBackends := make([]backendcatalog.Backend, 0, len(custom))
+	for _, cb := range custom {
+		catalogBackends = append(catalogBackends, cb.Backend)
+		if _, exists := m.Adapters[cb.ID]; exists {
+			continue
+		}
+		adapter := NewConfigurableAdapter(
+			cb.ID,
+			cb.Executable,
+			cb.OutputFormat,
+			cb.Arguments,
+			envSlice(cb.Environment),
+		)
+		m.Adapters[cb.ID] = adapter
+	}
+	return catalogBackends
+}
+
+func envSlice(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	return out
 }
