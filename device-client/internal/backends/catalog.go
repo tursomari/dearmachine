@@ -45,6 +45,36 @@ func Lookup(id string) (Backend, bool) {
 	return Backend{}, false
 }
 
+// ValidateIDsWithCustom validates that every id exists in the hardcoded
+// catalog or in the custom backends slice.  allowEmpty and duplicate
+// checks work the same as ValidateIDs.
+func ValidateIDsWithCustom(ids []string, custom []Backend, allowEmpty bool) error {
+	if len(ids) == 0 && !allowEmpty {
+		return fmt.Errorf("at least one backend is required")
+	}
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if _, ok := Lookup(id); !ok {
+			// Also check custom backends
+			found := false
+			for _, cb := range custom {
+				if cb.ID == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("unknown backend %q", id)
+			}
+		}
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("duplicate backend %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
+}
+
 func ValidateIDs(ids []string, allowEmpty bool) error {
 	if len(ids) == 0 && !allowEmpty {
 		return fmt.Errorf("at least one backend is required")
