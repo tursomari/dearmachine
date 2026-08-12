@@ -43,6 +43,7 @@ func TestMCTRunnerPassesApprovedBackendSnapshot(t *testing.T) {
 	if err := fixture.runner.ConfigureAgentManaged(
 		[]string{"forge", "codex"},
 		"/test/agent-manager",
+		nil,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestMCTRunnerPassesApprovedBackendSnapshot(t *testing.T) {
 func TestConfigureAgentManaged_BackendSliceImmutability(t *testing.T) {
 	fixture := newMCTTestFixture(t)
 	backends := []string{"codex", "forge"}
-	if err := fixture.runner.ConfigureAgentManaged(backends, "/test/agent-manager"); err != nil {
+	if err := fixture.runner.ConfigureAgentManaged(backends, "/test/agent-manager", nil); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
 	backends[0] = "evil-backend"
@@ -358,7 +359,7 @@ func newMCTTestFixture(t *testing.T) *mctTestFixture {
 	if err != nil {
 		t.Fatalf("NewMCTRunner: %v", err)
 	}
-	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager"); err != nil {
+	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager", nil); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
 	return &mctTestFixture{

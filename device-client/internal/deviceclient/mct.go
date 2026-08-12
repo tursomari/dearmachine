@@ -35,8 +35,7 @@ type MCTRunner struct {
 	invoke         func(*exec.Cmd) error
 }
 
-func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string) error {
-	customCatalog := customBackendCatalog(managerPath)
+func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string, customCatalog []backendcatalog.Backend) error {
 	if err := backendcatalog.ValidateIDsWithCustom(backends, customCatalog, false); err != nil {
 		return fmt.Errorf("validate agent backends: %w", err)
 	}

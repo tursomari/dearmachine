@@ -266,7 +266,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
-	if err := runner.ConfigureAgentManaged(backends, managerPath); err != nil {
+	if err := runner.ConfigureAgentManaged(backends, managerPath, customBackends); err != nil {
 		return err
 	}
 	logger := deps.newLogger()
@@ -407,7 +407,7 @@ func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, []
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("resolve agent-manager path: %w", err)
 	}
-	customBackendCatalog, err := deviceclient.LoadCustomBackendsFromManager(managerPath)
+	customBackendCatalog, err := deviceclient.LoadCustomBackendsFromManager(configPath)
 	if err != nil {
 		return nil, "", nil, err
 	}

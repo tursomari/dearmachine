@@ -494,7 +494,7 @@ func newInMemoryApp(
 	if err != nil {
 		t.Fatalf("NewMCTRunner: %v", err)
 	}
-	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager"); err != nil {
+	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager", nil); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
 	runner.invoke = invoke
