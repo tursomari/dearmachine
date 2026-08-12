@@ -174,3 +174,51 @@ session lock. The client fails with an error matching
 - **Design document** (architecture details): `~/projects/pm/docs/custom-backend-design.md`
 - **PM ticket** (feature track & feedback): `7fe89894` (in `~/projects/pm/.issues`)
 - **Runbook** with deepcode example and troubleshooting: `~/projects/mct/docs/registering-a-custom-backend.md`
+
+## DeepCode CLI example (using the `deepcode` CLI directly)
+
+DeepCode is a terminal TUI tool by default, but supports headless operation
+via `-x`/`--exec`. To use it as a DearMachine backend, a thin wrapper script
+handles the agent-manager's stdin protocol.
+
+### 1. Install deepcode
+
+```bash
+cd ~/projects/deepcode-cli
+npm install && npm run build
+# Ensure Node 23+ is on PATH; deepcode uses regex features from Node 23+
+```
+
+### 2. Create the wrapper
+
+Save the wrapper script (see `scripts/deepcode-wrapper.sh` in the DearMachine
+repository) to a location on your machine, e.g.
+`~/projects/DearMachine/scripts/deepcode-wrapper.sh`. The wrapper:
+
+- Recognises health-check probes and writes the probe file
+- Extracts the `Close-Path` from ticket-open.md headers
+- Invokes `deepcode -x -p "<work_request>"` in headless mode
+- Writes the reply to the Close-Path file and prints it to stdout
+
+### 3. Register
+
+```toml
+[deepcode]
+name = "DeepCode (Deepseek v4 Flash)"
+executable = "/home/david/projects/DearMachine/scripts/deepcode-wrapper.sh"
+output_format = "plain"
+install_help = "cd ~/projects/deepcode-cli && npm install && npm run build"
+```
+
+### 4. How the Close-Path protocol works
+
+The agent-manager feeds the full `ticket-open.md` to stdin. The header
+contains metadata lines including:
+
+```
+# Close-Path: /absolute/path/to/ticket-close.md
+```
+
+Your executable must **write its reply to that file**. The agent-manager
+reads `ticket-close.md` to determine the ticket result. If your tool does not
+natively understand this protocol, you need a wrapper like the one above.
