@@ -23,8 +23,12 @@ curl -fsSL https://dearmachine.to/install.sh | bash
 ### 2. Bring your computer online
 
 ```bash
-machinemail up --email <your>@gmail.com
+dearmachine up --email <your>@gmail.com
 ```
+
+`dearmachine` supersedes the obsolete `machinemail` command. Migrate any
+legacy `~/.config/machinemail` configuration into `~/.dearmachine/config`;
+new installations must not create or use the old path.
 
 `Dear Machine,` will:
 
@@ -64,7 +68,7 @@ That is the entire setup.
 Provide the authorized user's public key when bringing the device online:
 
 ```bash
-machinemail up \
+dearmachine up \
   --email <your>@proton.me \
   --pgp ~/<your>-public-key.asc
 ```
@@ -97,7 +101,7 @@ Device OpenPGP fingerprint:
 
 Device public key:
 
-    ~/.config/machinemail/device-public.asc
+    ~/.dearmachine/config/device-public.asc
 ```
 
 Import the device public key into the email client used to contact the computer. Proton Mail and other OpenPGP-capable clients can then encrypt messages to the device address, preferably using PGP/MIME.
@@ -169,10 +173,10 @@ Encrypted messages should include signed protocol metadata such as a thread iden
 Useful OpenPGP commands may include:
 
 ```bash
-machinemail openpgp fingerprint
-machinemail openpgp export-public
-machinemail openpgp rotate
-machinemail openpgp revoke
+dearmachine openpgp fingerprint
+dearmachine openpgp export-public
+dearmachine openpgp rotate
+dearmachine openpgp revoke
 ```
 
 ---
@@ -185,7 +189,7 @@ Send an email to your `Dear Machine,` address.
 To: my-laptop-k7vx9m@dearmachine.to
 Subject: Check my project
 
-Tell me what branch I am on in ~/projects/machinemail and whether there
+Tell me what branch I am on in ~/projects/dearmachine and whether there
 are any uncommitted changes.
 ```
 
@@ -208,7 +212,7 @@ Replies continue the same conversation and local agent session.
 ```text
 Subject: Fix reconnect bug
 
-Use ~/projects/machinemail.
+Use ~/projects/dearmachine.
 
 Find the reconnect bug, fix it, run the relevant tests, and show me what
 changed. Do not commit.
@@ -321,12 +325,12 @@ The hosted `Dear Machine,` service is billed per device email address.
 When you first run:
 
 ```bash
-machinemail up --email <your>@gmail.com
+dearmachine up --email <your>@gmail.com
 ```
 
-`Dear Machine,` pairs that email address with the device and prints and emails a unique subscription link. After setup, `machinemail up` simply starts the daemon.
+`Dear Machine,` pairs that email address with the device and prints and emails a unique subscription link. After setup, `dearmachine up` simply starts the daemon.
 
-Until the subscription is active, running `machinemail` will show that link again.
+Until the subscription is active, running `dearmachine` will show that link again.
 
 Self-hosting the open-source router does not require a hosted `Dear Machine,` subscription.
 
@@ -337,49 +341,49 @@ Self-hosting the open-source router does not require a hosted `Dear Machine,` su
 Check the local service:
 
 ```bash
-machinemail status
+dearmachine status
 ```
 
 Start the local service:
 
 ```bash
-machinemail up
+dearmachine up
 ```
 
 On first run, `Dear Machine,` opens setup and asks which email address to pair. You can also provide it directly:
 
 ```bash
-machinemail up --email <your>@gmail.com
+dearmachine up --email <your>@gmail.com
 ```
 
 Enable OpenPGP using the authorized user's public key:
 
 ```bash
-machinemail up --email <your>@proton.me --pgp ~/<your>-public-key.asc
+dearmachine up --email <your>@proton.me --pgp ~/<your>-public-key.asc
 ```
 
 Stop the local service:
 
 ```bash
-machinemail down
+dearmachine down
 ```
 
 Show the device address:
 
 ```bash
-machinemail address
+dearmachine address
 ```
 
 Inspect discovered agents:
 
 ```bash
-machinemail agents
+dearmachine agents
 ```
 
 Get help:
 
 ```bash
-machinemail help
+dearmachine help
 ```
 
 ---
@@ -413,10 +417,10 @@ You already know how to use `Dear Machine,`.
 
 ## Development
 
-- [Device Client](device-client/README.md) describes the current Go alpha architecture and runtime.
-- [Device Client operations](device-client/runbooks/operate-entrypoint-client.md) covers launching, monitoring, and stopping the normal entry-point client.
-- [Runbooks](device-client/runbooks/README.md) indexes normal operations, maintenance, and isolated live-test procedures.
-- [Testing](device-client/TESTING.md) explains how to run and extend the automated suite.
+- [DearMachine Client](dearmachine/README.md) describes the current Go alpha architecture and runtime.
+- [DearMachine Client operations](dearmachine/runbooks/operate-entrypoint-client.md) covers launching, monitoring, and stopping the normal entry-point client.
+- [Runbooks](dearmachine/runbooks/README.md) indexes normal operations, maintenance, and isolated live-test procedures.
+- [Testing](dearmachine/TESTING.md) explains how to run and extend the automated suite.
 - [Roadmap](ROADMAP.md) outlines the next engineering tracks and alpha milestones.
 - [Custom Backend Guide](docs/custom-backend-guide.md) explains how to register your own backend agent.
 
@@ -443,13 +447,13 @@ The hosted service is the easiest way to get started. The protocol remains open.
 
 ```bash
 curl -fsSL https://dearmachine.to/install.sh | bash
-machinemail up --email <your>@gmail.com
+dearmachine up --email <your>@gmail.com
 ```
 
 Or enable end-to-end encryption:
 
 ```bash
-machinemail up --email <your>@proton.me --pgp ~/<your>-public-key.asc
+dearmachine up --email <your>@proton.me --pgp ~/<your>-public-key.asc
 ```
 
 Your computer gets an address.

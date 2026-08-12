@@ -1,19 +1,19 @@
-# DearMachine Email Transport Alternatives
+# Dear Machine, Email Transport Alternatives
 
 - **Revision date:** 2026-08-08
 - **Status:** Living document; re-verify capabilities, terms, availability, and pricing before adopting any option.
 
 ## Purpose
 
-This document informs a future transport-agnostic abstraction for DearMachine's
-`device-client`. It records potential drop-in alternatives to AgentMail as the
-email transport, compares them against the operations DearMachine currently
+This document informs a future transport-agnostic abstraction for the
+DearMachine Client. It records potential drop-in alternatives to AgentMail as
+the email transport, compares them against the operations the client currently
 needs, and outlines how a transport could eventually be selected during client
 initialization. It is a technical survey, not an adoption decision.
 
 ## Current transport
 
-DearMachine currently uses AgentMail through `agentmail-go` v0.16.0. The client
+The DearMachine Client currently uses AgentMail through `agentmail-go` v0.16.0. The client
 depends on a small but stateful mailbox surface:
 
 - Poll unread inbound messages, including pagination and deterministic timestamp
@@ -43,7 +43,7 @@ not alter the application state machine.
 These ratings measure likely adapter fit, not overall product quality. **High**
 means the published summary exposes most required primitives; **Medium** means
 the mailbox is plausible but important semantics need verification; **Low**
-means a larger behavior gap is likely; and **Build-yourself** means DearMachine
+means a larger behavior gap is likely; and **Build-yourself** means the project
 would own material mailbox or workflow infrastructure. None implies byte-level
 compatibility with the current AgentMail SDK.
 
@@ -86,7 +86,7 @@ OpenMail offers provisioned, agent-focused inboxes with send/receive, threads, w
 
 #### Dead Simple Email — High
 
-Dead Simple Email provides dedicated agent inboxes, send/receive, webhooks, MCP, and a management dashboard. The core mailbox and event primitives look close to DearMachine's needs, while polling, thread lookup, read state, idempotency, and Go client details remain to be confirmed.
+Dead Simple Email provides dedicated agent inboxes, send/receive, webhooks, MCP, and a management dashboard. The core mailbox and event primitives look close to the DearMachine Client's needs, while polling, thread lookup, read state, idempotency, and Go client details remain to be confirmed.
 
 #### AGmail — High
 
@@ -132,7 +132,7 @@ DevInbox offers persistent programmable inboxes with send/receive over REST and 
 
 #### Mailgent — Low
 
-Mailgent pairs a real mailbox with credential vaulting, TOTP, calendar, decentralized identity, and wallet capabilities. The mailbox may be adaptable, but the source does not confirm the specific polling, threading, reply, idempotency, processed-state, or SDK contracts DearMachine requires.
+Mailgent pairs a real mailbox with credential vaulting, TOTP, calendar, decentralized identity, and wallet capabilities. The mailbox may be adaptable, but the source does not confirm the specific polling, threading, reply, idempotency, processed-state, or SDK contracts the DearMachine Client requires.
 
 #### Daimon.email — Medium
 
@@ -180,17 +180,17 @@ Bavimail supports per-agent inboxes and two-way email inside a broader transacti
 
 #### Inbound — Medium
 
-Inbound supports send/receive/reply APIs, automatic threading, and many addresses on a domain, with inbound delivery oriented around webhook routing. Threading and reply primitives fit, but DearMachine may need its own durable queue/state layer to turn push events into polling and processed acknowledgments.
+Inbound supports send/receive/reply APIs, automatic threading, and many addresses on a domain, with inbound delivery oriented around webhook routing. Threading and reply primitives fit, but the DearMachine Client may need its own durable queue/state layer to turn push events into polling and processed acknowledgments.
 
 ### Build-it-yourself and self-hosted alternatives
 
 #### Cloudflare Email Service / Workers — Build-yourself
 
-Cloudflare email tooling can be assembled into programmable agent-owned email infrastructure. DearMachine would need to implement or operate mailbox storage, polling queues, threading, read state, idempotency, reply correlation, and likely outbound authorization rather than only writing a provider adapter.
+Cloudflare email tooling can be assembled into programmable agent-owned email infrastructure. The DearMachine Client would need to implement or operate mailbox storage, polling queues, threading, read state, idempotency, reply correlation, and likely outbound authorization rather than only writing a provider adapter.
 
 #### Open-source AgenticMail — Build-yourself
 
-The open-source AgenticMail project uses Stalwart to provide isolated mailboxes, REST, and MCP for self-hosted agent email. Its primitives could support the interface, but DearMachine would assume deployment, upgrades, availability, security, storage, delivery reputation, and contract-verification work.
+The open-source AgenticMail project uses Stalwart to provide isolated mailboxes, REST, and MCP for self-hosted agent email. Its primitives could support the interface, but the DearMachine Client project would assume deployment, upgrades, availability, security, storage, delivery reputation, and contract-verification work.
 
 ## Suitability of an agnostic email transport
 
@@ -224,7 +224,7 @@ state—is deferred to relay work and is intentionally outside this interface.
 
 - **Processed state:** `read`, `unread`, `sent`, folders, labels, flags, and
   acknowledgment tokens are not interchangeable. Some push-first services may
-  require DearMachine-owned checkpoints instead of remote label mutation.
+  require client-owned checkpoints instead of remote label mutation.
 - **Idempotency:** providers may accept an idempotency header, a request key, a
   client message ID, or nothing. Where native support is absent, the adapter
   needs durable deduplication and safe retry rules.
@@ -258,14 +258,14 @@ durable deduplication. A contract test suite should decide fit: list and order
 unread messages, fetch full bodies, preserve thread/reply headers, retry a send
 without duplication, find its receipt after restart, and mark work complete.
 
-## Selecting a transport at device-client initialization
+## Selecting a transport at dearmachine initialization
 
 This is a proposal for future work; it is not implemented.
 
 The transport selection can mirror the existing backend registration pattern:
 
 1. Add a versioned `transport = "agentmail"` key to a future
-   `~/.dearmachine/config/device-client.toml`; version 2 is a reasonable schema
+   `~/.dearmachine/config/dearmachine.toml`; version 2 is a reasonable schema
    target because it changes initialization data.
 2. Add a `setup-transport`-style initialization step, or accept `--transport`
    during the existing initialization flow. It should validate the selection,

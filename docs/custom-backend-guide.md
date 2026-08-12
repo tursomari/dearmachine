@@ -1,6 +1,6 @@
-# Register Your Own Backend Agent in DearMachine
+# Register Your Own Backend Agent in the DearMachine Client
 
-DearMachine now supports custom backend agents — you can bring any program that speaks stdin/stdout and have it handle work tickets just like the built-in `codex` and `forge` backends.  You don't need to edit Go source or recompile anything; you just write a short TOML snippet and approve the backend's ID.  Here's how, step by step.
+The DearMachine Client supports custom backend agents—you can bring any program that speaks stdin/stdout and have it handle work tickets just like the built-in `codex` and `forge` backends. You don't need to edit Go source or recompile anything; you just write a short TOML snippet and approve the backend's ID. Here's how, step by step.
 
 ## 1. Create the custom-backends configuration file
 
@@ -44,14 +44,14 @@ CLOSE <absolute-path>
 ```
 
 Everything before that line is the work request (ticket description).  
-Your program **must** write its reply to that exact file.  DearMachine then picks it up automatically.
+Your program **must** write its reply to that exact file. The DearMachine Client then picks it up automatically.
 
-That's the whole interface — if your program can read a request, decide what to do, and write a response to a file whose path it learns from stdin, it can be a DearMachine backend.
+That's the whole interface—if your program can read a request, decide what to do, and write a response to a file whose path it learns from stdin, it can be a DearMachine Client backend.
 
 ## 3. Approve the backend
 
-DearMachine only dispatches work to backends you explicitly list.  
-Edit `~/.dearmachine/config/device-client.toml` and add `"deepcode"` to the `backends` line:
+The DearMachine Client only dispatches work to backends you explicitly list.
+Edit `~/.dearmachine/config/dearmachine.toml` and add `"deepcode"` to the `backends` line:
 
 ```
 backends = ["codex", "forge", "deepcode"]
@@ -65,14 +65,14 @@ Or, for a quick test without touching the file, use an environment variable:
 export DEARMACHINE_BACKENDS='["codex", "forge", "deepcode"]'
 ```
 
-The order sets the **priority** — when no specific backend is requested, DearMachine tries the first available one.
+The order sets the **priority**—when no specific backend is requested, the DearMachine Client tries the first available one.
 
 ## 4. Verify everything is healthy
 
-From the `device-client` directory, build the `agent-manager` and run a health probe:
+From the `dearmachine` directory, build the `agent-manager` and run a health probe:
 
 ```bash
-cd ~/projects/DearMachine/device-client
+cd ~/projects/DearMachine/dearmachine
 go build -o agent-manager ./cmd/agent-manager
 
 DEARMACHINE_BACKENDS='["deepcode"]' ./agent-manager backend health deepcode
@@ -109,14 +109,14 @@ The reply (e.g., `"Bonjour !"`) appears in the ticket output.  Your custom backe
 
 Picking the right `output_format` is usually the only guesswork:
 
-- **`"plain"`** — Use if your backend prints the reply as normal text (or writes the reply file and prints very little to stdout).  DearMachine captures up to the last 64 KiB of stdout as the conversation reply.
+- **`"plain"`** — Use if your backend prints the reply as normal text (or writes the reply file and prints very little to stdout). The DearMachine Client captures up to the last 64 KiB of stdout as the conversation reply.
 - **`"json-stream"`** — Use if your backend prints one JSON object per line and embeds the reply text in an `agent_message` field (the Codex CLI convention).
 
 **Tip:** If you're unsure, start with `"plain"` and send a test ticket.  If the captured reply is garbled or empty, switch to `"json-stream"`.
 
 ## Is My Executable Compatible? (TUI vs Headless Backends)
 
-DearMachine backends must be **headless, non-interactive** programs that read from stdin, do their work, write a reply file, and exit. Terminal TUI (Text User Interface) applications — like many modern AI coding tools in their default mode — are **not compatible** as backends because they expect a pseudo-TTY for interactive input and produce ANSI-escape-heavy output.
+DearMachine Client backends must be **headless, non-interactive** programs that read from stdin, do their work, write a reply file, and exit. Terminal TUI (Text User Interface) applications—like many modern AI coding tools in their default mode—are **not compatible** as backends because they expect a pseudo-TTY for interactive input and produce ANSI-escape-heavy output.
 
 ### Quick Pre‑Flight Test
 
@@ -161,13 +161,13 @@ See the deepcode‑backend example in the walkthrough above for a working patter
 
 ## Beware of MACHTIANI_SESSION_ID when testing
 
-If you are testing a temporary device-client from within an existing
+If you are testing a temporary dearmachine from within an existing
 mct-agent session, the inherited `MACHTIANI_SESSION_ID` environment
 variable will cause the temporary client to collide with the parent
 session lock. The client fails with an error matching
 `session already active for .../session.lock`. Either unset the variable
 (`unset MACHTIANI_SESSION_ID`) or launch with a clean environment
-(`env -i PATH="$PATH" HOME="$HOME" device-client ...`).
+(`env -i PATH="$PATH" HOME="$HOME" dearmachine ...`).
 
 ## Where to find more help
 
@@ -178,7 +178,7 @@ session lock. The client fails with an error matching
 ## DeepCode CLI example (using the `deepcode` CLI directly)
 
 DeepCode is a terminal TUI tool by default, but supports headless operation
-via `-x`/`--exec`. To use it as a DearMachine backend, a thin wrapper script
+via `-x`/`--exec`. To use it as a DearMachine Client backend, a thin wrapper script
 handles the agent-manager's stdin protocol.
 
 ### 1. Install deepcode

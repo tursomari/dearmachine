@@ -1,6 +1,6 @@
-# DearMachine Development Roadmap
+# Dear Machine, Development Roadmap
 
-DearMachine is in pre-alpha. This roadmap orders engineering tracks by their
+Dear Machine, is in pre-alpha. This roadmap orders engineering tracks by its
 impact on a reliable local alpha; it is not a release-date commitment or a
 cross-repository project-management backlog.
 
@@ -13,13 +13,13 @@ live-test rounds. The automated suite currently has 14 passing tests and 71.2%
 statement coverage.
 
 Current behavior and test commands are documented in
-[`device-client/README.md`](device-client/README.md) and
-[`device-client/TESTING.md`](device-client/TESTING.md).
+[`dearmachine/README.md`](dearmachine/README.md) and
+[`dearmachine/TESTING.md`](dearmachine/TESTING.md).
 
 ## 1. Harden the alpha test boundary
 
 - Test CLI flags, required environment, dependency wiring, `--once`, and
-  signal cancellation in `cmd/device-client`.
+  signal cancellation in `cmd/dearmachine`.
 - Extend the AgentMail and fake-`mct-agent` harnesses with injected HTTP,
   subprocess, malformed-status, missing-output, and cancellation failures.
 - Add direct SQLite tests for legacy migration, state transitions, duplicates,
@@ -36,7 +36,7 @@ Current behavior and test commands are documented in
 
 ## 2. Make local deployment repeatable
 
-- Install and verify Go, `mct-agent`, and the Device Client in the initial
+- Install and verify Go, `mct-agent`, and the DearMachine Client in the initial
   alpha WSL environment.
 - Replace or reproducibly provision the local `../.state/agentmail-go` module
   replacement before building on another machine.
@@ -55,7 +55,7 @@ Current behavior and test commands are documented in
 
 ## 3. Close security and failure-handling gaps
 
-- Enforce paired-sender authorization at the Device Client boundary as well as
+- Enforce paired-sender authorization at the DearMachine Client boundary as well as
   at the hosted transport.
 - Add bounded subprocess timeouts, retry/backoff classification, and useful
   user-facing failure replies without duplicate execution.
@@ -89,7 +89,7 @@ Current behavior and test commands are documented in
 ## 6. Complete the product surface
 
 - Replace spike-only flags with the intended configuration file and
-  `machinemail up`, `status`, and `down` lifecycle.
+  `dearmachine up`, `status`, and `down` lifecycle.
 - Add attachment handling with explicit limits and safe local staging.
 - Implement configurable email‑response tiers (Plain, Formatted, Complete)
   that control message format, attachment policy, and artifact packaging per
@@ -98,8 +98,10 @@ Current behavior and test commands are documented in
   timestamped directories (`.attachments-inbox/` and
   `.attachments-outbox/`). The outbox holds files that `mct-agent` intends to
   share as email attachments, since the turn conclusion is the email response.
-- Rename the client from Device Client to DearMachine Client across code,
-  documentation, and CLI surface.
+- Maintain the decided naming regime across code, documentation, and the CLI:
+  binary `dearmachine`, user-facing “DearMachine Client”, Go package
+  `internal/client`, and “Device Client” only for the internal and legacy
+  cases allow-listed in [`docs/naming.md`](docs/naming.md).
 - Implement AskUser expiry and clear operator/user recovery messages.
 - Add structured logs and minimal diagnostics without retaining email content
   unnecessarily.
@@ -133,14 +135,14 @@ Current behavior and test commands are documented in
 ## Design references and documentation cleanup
 
 - Non-versioned design inputs are kept locally under
-  `.scratch/docs_staging/`. They include the target Device Client specification,
+  `.scratch/docs_staging/`. They include the target DearMachine Client specification,
   future scenario catalog, and relay capability profile. Treat them as design
   inputs rather than current operational truth.
-- The local `device-client-config.md` staging note duplicates the Device Client
+- The local `dearmachine-config.md` staging note duplicates the DearMachine Client
   README and implies a model must be supplied even though model selection is
   optional. Consolidate any still-useful credential/setup guidance into
-  `device-client/README.md`, then retire the staging note.
-- When the Device Client specification stabilizes against implemented code,
+  `dearmachine/README.md`, then retire the staging note.
+- When the DearMachine Client specification stabilizes against implemented code,
   promote it from `.scratch/docs_staging/` to a normal versioned documentation
   location. Until then, avoid presenting staged design documents as shipped
   behavior.
