@@ -243,7 +243,7 @@ transcript, or version-controlled files.
 Do not permanently delete the backup until the fresh installation and a live
 exercise have passed and the operator separately approves deletion.
 
-## Phase 3: Build from the default branch HEAD
+## Phase 3: Build and install from the default branch HEAD
 
 1. Return to the source repository and verify the branch without contacting a
    remote:
@@ -262,33 +262,51 @@ exercise have passed and the operator separately approves deletion.
    Confirm `source_commit` equals the commit recorded during preflight. If it
    changed, stop and have the operator approve the new revision.
 
-2. Test and build both executables into a private temporary directory:
+2. Run the Nix checks, then build both the named package and the default
+   package. These two builds must resolve to the same `dearmachine` package:
+
+   ```bash
+   cd "$source_repo"
+   nix flake check
+   nix build .#dearmachine
+   nix build
+   ```
+
+   The flake check runs the Go suite with CGO enabled and runs the installed
+   command's `--help` smoke test. The package wraps Git as a standard runtime
+   dependency; `mct-agent`, Agent Manager, and configured backends remain
+   separately discovered operator-managed executables.
+
+3. Build and verify the separately installed Agent Manager executable in a
+   private temporary directory:
 
    ```bash
    build_root=$(mktemp -d -t dearmachine-reinstall.XXXXXXXX)
    chmod 0700 "$build_root"
 
    cd "$source_repo/dearmachine"
-   go test -count=1 ./...
    go test -race -count=1 ./...
    go vet ./...
-   go build -o "$build_root/dearmachine" ./cmd/dearmachine
    go build -o "$build_root/agent-manager" ./cmd/agent-manager
    ```
 
-3. Install only the freshly built binaries:
+4. Run the Nix install app from the repository root. It installs only the
+   `dearmachine` binary and creates the user runtime directories under the
+   ambient `HOME`; it does not start a service or migrate existing state.
+   Install Agent Manager at its separate private path:
 
    ```bash
-   install -D -m 0755 "$build_root/dearmachine" \
-     "$HOME/.local/bin/dearmachine"
+   cd "$source_repo"
+   nix run .#install
    install -D -m 0755 "$build_root/agent-manager" \
      "$HOME/.dearmachine/agent-manager/agent-manager"
    chmod 0700 "$HOME/.dearmachine"
    chmod 0700 "$HOME/.dearmachine/agent-manager"
    ```
 
-   Compare the installed checksums with the temporary build checksums before
-   deleting the temporary build directory.
+   Compare `result/bin/dearmachine` with `~/.local/bin/dearmachine`, and compare
+   the installed Agent Manager checksum with the temporary build checksum,
+   before deleting the temporary build directory.
 
 ## Phase 4: Create fresh configuration and state
 

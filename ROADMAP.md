@@ -48,10 +48,11 @@ Current behavior and test commands are documented in
   documented deployment smoke test.
 - Add enough health reporting to distinguish a live process, a working poll
   loop, and successful `mct-agent` execution.
-- Add a reproducible Nix build (flake.nix) so the client and its toolchain can
-  be built declaratively on any machine.
-- Package the client as an OCI container image for one‑off deployment,
-  paralleling the existing WSL provisioning path.
+- The root Nix flake now provides the `dearmachine` package, `install` app,
+  build and help smoke checks, and a CGO-enabled Go-suite check.
+- Continue the single install path with the pending OCI image, Compose stack,
+  and explicit container execution boundary, then add the pending host
+  lifecycle, systemd user unit, and WAL-safe live-state migration.
 
 ## 3. Close security and failure-handling gaps
 
@@ -98,10 +99,10 @@ Current behavior and test commands are documented in
   timestamped directories (`.attachments-inbox/` and
   `.attachments-outbox/`). The outbox holds files that `mct-agent` intends to
   share as email attachments, since the turn conclusion is the email response.
-- Maintain the decided naming regime across code, documentation, and the CLI:
-  binary `dearmachine`, user-facing “DearMachine Client”, Go package
-  `internal/client`, and “Device Client” only for the internal and legacy
-  cases allow-listed in [`docs/naming.md`](docs/naming.md).
+- The repository rename is complete: maintain binary `dearmachine`,
+  user-facing “DearMachine Client”, Go package `internal/client`, and “Device
+  Client” only for the internal and legacy cases allow-listed in
+  [`docs/naming.md`](docs/naming.md).
 - Implement AskUser expiry and clear operator/user recovery messages.
 - Add structured logs and minimal diagnostics without retaining email content
   unnecessarily.

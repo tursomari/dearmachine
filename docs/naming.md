@@ -45,6 +45,17 @@ runbooks, executable names, package paths, or runtime artifact names.
 The obsolete command and path may appear only in an explicit migration or
 supersession note.
 
+## Nix package and app conventions
+
+| Context | Canonical form |
+| --- | --- |
+| Default package and named package | `dearmachine` (`nix build` or `nix build .#dearmachine`) |
+| User install app | `install` (`nix run .#install`) |
+
+The `install` app installs `~/.local/bin/dearmachine` and prepares the canonical
+directories under `~/.dearmachine`. Host supervision and container lifecycle
+commands remain planned work.
+
 ## Planned container conventions
 
 These conventions are planned and are not yet implemented:
