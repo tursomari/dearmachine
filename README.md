@@ -418,6 +418,7 @@ You already know how to use `Dear Machine,`.
 - [Runbooks](device-client/runbooks/README.md) indexes normal operations, maintenance, and isolated live-test procedures.
 - [Testing](device-client/TESTING.md) explains how to run and extend the automated suite.
 - [Roadmap](ROADMAP.md) outlines the next engineering tracks and alpha milestones.
+- [Custom Backend Guide](docs/custom-backend-guide.md) explains how to register your own backend agent.
 
 ---
 
