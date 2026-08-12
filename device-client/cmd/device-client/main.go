@@ -19,6 +19,8 @@ import (
 	"github.com/dearmachine/dearmachine/internal/deviceclient"
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
+
+	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
 
 func main() {
@@ -238,7 +240,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if getenv("AGENTMAIL_API_KEY") == "" {
 		return fmt.Errorf("AGENTMAIL_API_KEY is required")
 	}
-	backends, managerPath, err := loadAgentManagedConfig(cfg, deps)
+	backends, managerPath, customBackends, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {
 		return err
 	}
@@ -268,7 +270,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return err
 	}
 	logger := deps.newLogger()
-	orchestrator, err := buildOrchestrator(cfg, deps, logger, backends, managerPath)
+	orchestrator, err := buildOrchestrator(cfg, deps, logger, backends, managerPath, customBackends)
 	if err != nil {
 		return err
 	}
@@ -385,31 +387,35 @@ func runInit(args []string, deps dependencies) error {
 	return nil
 }
 
-func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, error) {
+func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, []backendcatalog.Backend, error) {
 	configPath := cfg.deviceConfig
 	var err error
 	if configPath == "" {
 		configPath, err = deviceclient.DefaultDeviceConfigPath(deps.userHomeDir)
 		if err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
-	}
-	deviceConfig, err := deviceclient.LoadDeviceConfig(configPath)
-	if err != nil {
-		return nil, "", err
 	}
 	managerPath := cfg.managerPath
 	if managerPath == "" {
 		managerPath, err = deviceclient.DefaultAgentManagerPath(deps.userHomeDir)
 		if err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 	}
 	managerPath, err = filepath.Abs(managerPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve agent-manager path: %w", err)
+		return nil, "", nil, fmt.Errorf("resolve agent-manager path: %w", err)
 	}
-	return append([]string(nil), deviceConfig.Backends...), managerPath, nil
+	customBackendCatalog, err := deviceclient.LoadCustomBackendsFromManager(managerPath)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	deviceConfig, err := deviceclient.LoadDeviceConfigWithCustom(configPath, customBackendCatalog...)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return append([]string(nil), deviceConfig.Backends...), managerPath, customBackendCatalog, nil
 }
 
 func buildOrchestrator(
@@ -418,6 +424,7 @@ func buildOrchestrator(
 	logger *log.Logger,
 	backends []string,
 	managerPath string,
+	customBackends []backendcatalog.Backend,
 ) (*synctrigger.Orchestrator, error) {
 	entryPointRepo := strings.TrimSpace(cfg.entryPointRepo)
 	if entryPointRepo == "" {
@@ -439,6 +446,7 @@ func buildOrchestrator(
 		MCTBinary:           cfg.mctBinary,
 		AgentManagerPath:    managerPath,
 		Backends:            append([]string(nil), backends...),
+		CustomBackends:      append([]backendcatalog.Backend(nil), customBackends...),
 		PromptTemplatePath:  resolvedPrompt,
 		MaintenanceMinTurns: cfg.maintenanceMinTurns,
 		Logger:              logger,

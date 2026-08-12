@@ -26,12 +26,13 @@ type RunResult struct {
 }
 
 type MCTRunner struct {
-	binary     string
-	projectDir string
-	model      string
-	backends   []string
-	manager    string
-	invoke     func(*exec.Cmd) error
+	binary         string
+	projectDir     string
+	model          string
+	backends       []string
+	customBackends []backendcatalog.Backend
+	manager        string
+	invoke         func(*exec.Cmd) error
 }
 
 func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string) error {
@@ -43,6 +44,7 @@ func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string)
 		return fmt.Errorf("absolute agent-manager path is required")
 	}
 	r.backends = append([]string(nil), backends...)
+	r.customBackends = append([]backendcatalog.Backend(nil), customCatalog...)
 	r.manager = filepath.Clean(managerPath)
 	return nil
 }
@@ -122,7 +124,7 @@ func (r *MCTRunner) Run(
 	if len(r.backends) == 0 || r.manager == "" {
 		return RunResult{}, fmt.Errorf("agent-managed mode is not configured")
 	}
-	encodedBackends, err := backendcatalog.Encode(r.backends)
+	encodedBackends, err := backendcatalog.EncodeWithCustom(r.backends, r.customBackends)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("encode configured agent backends: %w", err)
 	}

@@ -100,3 +100,10 @@ func customBackendCatalog(managerPath string) []backendcatalog.Backend {
 	}
 	return backends
 }
+
+// LoadCustomBackendsFromManager loads custom backend definitions using the
+// agent-manager binary path to derive the config location. Returns the
+// catalog-compatible Backend values.
+func LoadCustomBackendsFromManager(managerPath string) ([]backendcatalog.Backend, error) {
+    return customBackendCatalog(managerPath), nil
+}

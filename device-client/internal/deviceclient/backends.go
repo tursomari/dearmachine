@@ -80,7 +80,19 @@ func DefaultAgentManagerPath(userHomeDir func() (string, error)) (string, error)
 	return filepath.Join(root, ".dearmachine", "agent-manager", "agent-manager"), nil
 }
 
+// LoadDeviceConfigWithCustom reads and validates a device config, also accepting
+// custom backends for validation.
+func LoadDeviceConfigWithCustom(path string, custom ...backendcatalog.Backend) (DeviceConfig, error) {
+	return loadDeviceConfig(path, custom...)
+}
+
+// LoadDeviceConfig reads and validates a device config against the built-in
+// backend catalog.
 func LoadDeviceConfig(path string) (DeviceConfig, error) {
+	return loadDeviceConfig(path)
+}
+
+func loadDeviceConfig(path string, custom ...backendcatalog.Backend) (DeviceConfig, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return DeviceConfig{}, fmt.Errorf("read device config: %w", err)
@@ -124,7 +136,7 @@ func LoadDeviceConfig(path string) (DeviceConfig, error) {
 		return DeviceConfig{}, fmt.Errorf("device config backends are required")
 	}
 	config.Backends = backendcatalog.CanonicalizeIDs(config.Backends)
-	if err := validateBackendIDs(config.Backends, false); err != nil {
+	if err := validateBackendIDs(config.Backends, false, custom...); err != nil {
 		return DeviceConfig{}, fmt.Errorf(
 			"validate device config: %w; rerun device-client setup-agents",
 			err,
@@ -246,7 +258,10 @@ func SetupAgents(
 	return config, nil
 }
 
-func validateBackendIDs(ids []string, allowEmpty bool) error {
+func validateBackendIDs(ids []string, allowEmpty bool, custom ...backendcatalog.Backend) error {
+	if len(custom) > 0 {
+		return backendcatalog.ValidateIDsWithCustom(ids, custom, allowEmpty)
+	}
 	return backendcatalog.ValidateIDs(ids, allowEmpty)
 }
 

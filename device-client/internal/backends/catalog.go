@@ -115,6 +115,20 @@ func Encode(ids []string) (string, error) {
 	return string(encoded), nil
 }
 
+// EncodeWithCustom encodes the backend list to its JSON representation
+// and validates every ID against the hardcoded catalog plus the custom
+// backends slice.
+func EncodeWithCustom(ids []string, custom []Backend) (string, error) {
+	if err := ValidateIDsWithCustom(ids, custom, false); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return "", fmt.Errorf("encode backend list: %w", err)
+	}
+	return string(encoded), nil
+}
+
 func Decode(value string) ([]string, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, fmt.Errorf("%s is required", EnvironmentVariable)

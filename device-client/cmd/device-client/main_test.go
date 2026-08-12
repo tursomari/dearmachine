@@ -426,6 +426,7 @@ func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
 		log.New(io.Discard, "", 0),
 		backends,
 		manager,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("buildOrchestrator: %v", err)

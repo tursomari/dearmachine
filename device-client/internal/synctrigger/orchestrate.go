@@ -30,12 +30,12 @@ func DefaultCommandRunner(
 	return command.CombinedOutput()
 }
 
-func agentManagedCommandRunner(managerPath string, backends []string) (CommandRunner, error) {
+func agentManagedCommandRunner(managerPath string, backends []string, customBackends []backendcatalog.Backend) (CommandRunner, error) {
 	managerPath = strings.TrimSpace(managerPath)
 	if managerPath == "" || !filepath.IsAbs(managerPath) {
 		return nil, fmt.Errorf("absolute agent-manager path is required")
 	}
-	encodedBackends, err := backendcatalog.Encode(backends)
+	encodedBackends, err := backendcatalog.EncodeWithCustom(backends, customBackends)
 	if err != nil {
 		return nil, fmt.Errorf("encode configured agent backends: %w", err)
 	}
@@ -81,6 +81,7 @@ type Orchestrator struct {
 	MCTBinary           string
 	AgentManagerPath    string
 	Backends            []string
+	CustomBackends      []backendcatalog.Backend
 	PromptTemplatePath  string
 	StatePath           string
 	MaintenanceMinTurns int
@@ -117,7 +118,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	}
 	runCommand := o.RunCommand
 	if runCommand == nil {
-		configuredRunner, err := agentManagedCommandRunner(o.AgentManagerPath, o.Backends)
+		configuredRunner, err := agentManagedCommandRunner(o.AgentManagerPath, o.Backends, o.CustomBackends)
 		if err != nil {
 			return fmt.Errorf("configure sync-trigger command: %w", err)
 		}

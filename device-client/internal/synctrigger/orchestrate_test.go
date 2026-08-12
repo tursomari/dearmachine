@@ -366,6 +366,7 @@ func TestAgentManagedCommandRunnerSetsConfiguredEnvironment(t *testing.T) {
 	runner, err := agentManagedCommandRunner(
 		"/configured/agent-manager",
 		[]string{"forge", "codex"},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("agentManagedCommandRunner: %v", err)
