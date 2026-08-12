@@ -140,6 +140,20 @@ Apply these boundaries throughout the exercise:
    SDK or API. Use descriptive disposable metadata and verify every returned
    inbox with a read operation. Do not invent or reuse an inbox ID.
 
+> **Warning: MACHTIANI_SESSION_ID collision.** If this test runs from within
+> an existing mct-agent session, the inherited `MACHTIANI_SESSION_ID`
+> environment variable causes the temporary device-client to collide with
+> the parent session lock. The client will fail with an error matching
+> `session already active for .../session.lock`. Prevent this by either:
+>
+> - unsetting `MACHTIANI_SESSION_ID` before launching the device-client:
+>   `unset MACHTIANI_SESSION_ID`
+> - launching with a clean environment:
+>   `env -i PATH="$PATH" HOME="$HOME" device-client ...`
+>
+> Confirm the variable is absent in the launch environment before
+> proceeding.
+
 6. Load the AgentMail credential without displaying it, export the isolated
    `DEARMACHINE_HOME`, and launch the freshly built client in an observable
    foreground terminal or a bounded service owned by the test. The effective

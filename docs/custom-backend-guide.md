@@ -159,6 +159,16 @@ If your tool is TUI‑only but can be scripted via an API, write a wrapper that:
 
 See the deepcode‑backend example in the walkthrough above for a working pattern.
 
+## Beware of MACHTIANI_SESSION_ID when testing
+
+If you are testing a temporary device-client from within an existing
+mct-agent session, the inherited `MACHTIANI_SESSION_ID` environment
+variable will cause the temporary client to collide with the parent
+session lock. The client fails with an error matching
+`session already active for .../session.lock`. Either unset the variable
+(`unset MACHTIANI_SESSION_ID`) or launch with a clean environment
+(`env -i PATH="$PATH" HOME="$HOME" device-client ...`).
+
 ## Where to find more help
 
 - **Design document** (architecture details): `~/projects/pm/docs/custom-backend-design.md`
