@@ -114,6 +114,51 @@ Picking the right `output_format` is usually the only guesswork:
 
 **Tip:** If you're unsure, start with `"plain"` and send a test ticket.  If the captured reply is garbled or empty, switch to `"json-stream"`.
 
+## Is My Executable Compatible? (TUI vs Headless Backends)
+
+DearMachine backends must be **headless, non-interactive** programs that read from stdin, do their work, write a reply file, and exit. Terminal TUI (Text User Interface) applications — like many modern AI coding tools in their default mode — are **not compatible** as backends because they expect a pseudo-TTY for interactive input and produce ANSI-escape-heavy output.
+
+### Quick Pre‑Flight Test
+
+Before registering a backend, run this one‑liner to check compatibility:
+
+```bash
+echo "Say hello in French, just one short phrase." | timeout 10 /path/to/your-executable --headless-flag 2>&1
+```
+
+**Compatible if:**
+- The command completes within seconds (not minutes).
+- Produces clean, readable text output (plain text or JSON).
+- Does **not** print ANSI escape codes, spinner animations, or interactive prompts.
+
+**Incompatible if you see:**
+- The command hangs until timeout (waiting for TTY input).
+- Escape sequences like `\x1b[`, `ESC[`, or terminal control codes.
+- Interactive prompts like `? Select an option`.
+
+### Finding Headless/Automation Flags
+
+Many TUI tools offer a headless or non‑interactive mode. Check the tool's help:
+
+```bash
+/path/to/your-executable --help | grep -i -E 'auto|headless|non.interactive|batch|run|--model'
+```
+
+Examples:
+- **OpenCode**: requires `run --auto` (headless mode). Without `--auto`, opencode hangs waiting for TTY input.
+- **Codex CLI**: headless by default; accepts stdin and produces JSON Lines output.
+- **DeepCode CLI** (`@vegamo/deepcode-cli`): terminal TUI only; requires a wrapper script to work as a backend.
+
+### Writing a Wrapper Script
+
+If your tool is TUI‑only but can be scripted via an API, write a wrapper that:
+1. Reads the work request from stdin.
+2. Extracts the `Close-Path` line (format: `# Close-Path: /absolute/path`).
+3. Calls the tool's underlying API (or SDK) programmatically.
+4. Writes the reply to the close‑path file.
+
+See the deepcode‑backend example in the walkthrough above for a working pattern.
+
 ## Where to find more help
 
 - **Design document** (architecture details): `~/projects/pm/docs/custom-backend-design.md`
