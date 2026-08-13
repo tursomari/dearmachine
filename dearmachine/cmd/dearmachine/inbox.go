@@ -88,8 +88,8 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 			"--inbox-id is required\nRun \"dearmachine inbox skip --help\" for usage",
 		)
 	}
-	if getenv("AGENTMAIL_API_KEY") == "" {
-		return fmt.Errorf("AGENTMAIL_API_KEY is required")
+	if err := loadAgentMailCredential(getenv, deps); err != nil {
+		return err
 	}
 	resolvedDB, resolvedPID, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
 	if err != nil {

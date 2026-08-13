@@ -6,8 +6,11 @@ Go test suite.
 
 ## Normal operation
 
-- [`host-install.md`](./host-install.md) is the single supported installation,
-  secret-provisioning, upgrade/rollback, and user-service path.
+- [`native-install.md`](./native-install.md) is the default portable install
+  and foreground execution path. It packages DearMachine and Agent Manager
+  while using `mct-agent` and configured backends from the host `PATH`.
+- [`host-install.md`](./host-install.md) is the optional Linux container-stack
+  installation, secret-provisioning, upgrade/rollback, and systemd-user path.
 - [`operate-entrypoint-client.md`](./operate-entrypoint-client.md) operates and
   diagnoses the installed `dearmachine-stack.service`.
 - [`migrate-live-state.md`](./migrate-live-state.md) first proves the migration
@@ -22,8 +25,9 @@ Go test suite.
 
 - [`testing/temporary-instance.md`](./testing/temporary-instance.md) defines
   the shared provisioning, isolation, observation, evidence, and teardown
-  requirements for all live-test protocols. It is a reference, not a
-  standalone test.
+  requirements for all live-test protocols. Live protocols use its
+  containerized production path by default; direct native launches are only
+  for explicitly scoped development diagnostics.
 - [`testing/disposable-instance.md`](./testing/disposable-instance.md) tests
   the ordinary email lifecycle and local skip/unskip behavior.
 - [`testing/concurrent-sessions.md`](./testing/concurrent-sessions.md) compares

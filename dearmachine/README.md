@@ -19,6 +19,18 @@ abstraction.
 
 SQLite uses `go-sqlite3`, so source builds require CGO and
 a C compiler; the resulting binary has no separate SQLite runtime dependency.
+The default Nix package contains both `dearmachine` and its matching
+`agent-manager`:
+
+```bash
+cd ..
+nix profile install .#dearmachine
+command -v dearmachine agent-manager
+```
+
+Install `mct-agent` and backend CLIs separately. Native DearMachine resolves
+them from the inherited host `PATH` and uses their normal host configuration
+and credentials.
 
 Configure the agent backends first. Configuration is stored at
 `~/.dearmachine/config/dearmachine.toml`. Repeat `--backend` to approve more
@@ -56,25 +68,21 @@ tests actual tool execution rather than only checking `PATH`. If every approved
 backend fails its probe, the coordinator reports the failure and asks for
 direction; it never falls back to modifying project files directly.
 
-Build the standalone manager at its private path:
-
 ```bash
-cd dearmachine
-mkdir -p ~/.dearmachine/agent-manager
-go build -o ~/.dearmachine/agent-manager/agent-manager ./cmd/agent-manager
-```
+export AGENTMAIL_API_KEY_FILE="$HOME/.config/dearmachine/agentmail-api-key"
 
-```bash
-cd dearmachine
-export AGENTMAIL_API_KEY=am_your_key
-
-go run ./cmd/dearmachine \
+dearmachine \
   --inbox-id your-inbox-id \
   --project ~/.dearmachine/entrypoint/main \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
   --maintenance-min-turns 20 \
   --pidfile ~/.dearmachine/run/dearmachine.pid
 ```
+
+`AGENTMAIL_API_KEY_FILE` must contain exactly one non-empty line.
+`AGENTMAIL_API_KEY` remains supported as an environment-based alternative.
+DearMachine runs in the foreground and handles `SIGINT` and `SIGTERM`; it does
+not require a particular process supervisor.
 
 The default SQLite state database is
 `~/.dearmachine/state/dearmachine.db`. DearMachine Client creates its state
@@ -315,7 +323,9 @@ health help never launches a probe.
 
 ## Verify
 
-For normal installed operation against the machine entry point, follow
+For default native operation against the machine entry point, follow
+[`runbooks/native-install.md`](./runbooks/native-install.md). For the optional
+installed Linux container stack, follow
 [`runbooks/operate-entrypoint-client.md`](./runbooks/operate-entrypoint-client.md).
 All normal-operation, maintenance, and isolated live-test procedures are
 indexed in [`runbooks/README.md`](./runbooks/README.md).

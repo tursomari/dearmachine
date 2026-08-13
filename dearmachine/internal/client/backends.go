@@ -69,17 +69,6 @@ func DefaultDeviceDatabasePath(userHomeDir func() (string, error)) (string, erro
 	return filepath.Join(root, ".dearmachine", "state", "dearmachine.db"), nil
 }
 
-func DefaultAgentManagerPath(userHomeDir func() (string, error)) (string, error) {
-	root, err := userHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user home directory: %w", err)
-	}
-	if strings.TrimSpace(root) == "" {
-		return "", fmt.Errorf("user home directory is empty")
-	}
-	return filepath.Join(root, ".dearmachine", "agent-manager", "agent-manager"), nil
-}
-
 // LoadDeviceConfigWithCustom reads and validates a device config, also accepting
 // custom backends for validation.
 func LoadDeviceConfigWithCustom(path string, custom ...backendcatalog.Backend) (DeviceConfig, error) {

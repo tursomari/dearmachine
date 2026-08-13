@@ -12,52 +12,52 @@ No bots. No dashboards. No new messaging app to learn.
 
 ---
 
-## Quick Start
+## Current Alpha Quick Start
 
-### 1. Install
+The open-source alpha runs as a portable foreground process. Nix packages the
+DearMachine Client and Agent Manager together; install `mct-agent` and your
+chosen backend separately so they are available on `PATH`.
 
-```bash
-curl -fsSL https://dearmachine.to/install.sh | bash
-```
-
-### 2. Bring your computer online
+### 1. Install the native package
 
 ```bash
-dearmachine up --email <your>@gmail.com
+nix profile install .#dearmachine
+command -v dearmachine agent-manager mct-agent
 ```
+
+### 2. Configure an installed backend
+
+```bash
+dearmachine setup-agents --backend codex
+```
+
+The backend command itself—`codex` in this example—is discovered from the host
+`PATH` and uses its normal host credentials.
+
+### 3. Start in the foreground
+
+Provide an existing AgentMail inbox and a private one-line credential file:
+
+```bash
+export AGENTMAIL_API_KEY_FILE="$HOME/.config/dearmachine/agentmail-api-key"
+
+dearmachine \
+  --inbox-id <agentmail-inbox-id> \
+  --project "$HOME/.dearmachine/entrypoint/main" \
+  --entry-point-repo "$HOME/.dearmachine/entrypoint/main" \
+  --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
+  --verbose
+```
+
+DearMachine remains in the foreground and does not assume systemd or another
+service manager. The optional Nix/OCI container deployment and Linux lifecycle
+helper are documented in
+[`dearmachine/runbooks/host-install.md`](dearmachine/runbooks/host-install.md).
+Live integration tests use isolated container deployments by default.
 
 `dearmachine` supersedes the obsolete `machinemail` command. Migrate any
 legacy `~/.config/machinemail` configuration into `~/.dearmachine/config`;
 new installations must not create or use the old path.
-
-`Dear Machine,` will:
-
-- discover supported agents already installed on your computer
-- create a private device identity
-- pair `<your>@gmail.com` as the authorized sender
-- start the local `Dear Machine,` service
-- give your computer an email address
-- open your subscription link if needed
-
-You will see something like:
-
-```text
-✓ Found Codex
-✓ Found Claude Code
-✓ `Dear Machine,` is running
-
-Your computer's address:
-
-    my-laptop-k7vx9m@dearmachine.to
-
-Authorized sender:
-
-    <your>@gmail.com
-
-Email it from that address anywhere.
-```
-
-That is the entire setup.
 
 ---
 
@@ -418,6 +418,8 @@ You already know how to use `Dear Machine,`.
 ## Development
 
 - [DearMachine Client](dearmachine/README.md) describes the current Go alpha architecture and runtime.
+- [Native installation](dearmachine/runbooks/native-install.md) is the default portable deployment path.
+- [Optional container installation](dearmachine/runbooks/host-install.md) describes the Nix OCI, rootless Podman, and current Linux lifecycle helper.
 - [DearMachine Client operations](dearmachine/runbooks/operate-entrypoint-client.md) covers launching, monitoring, and stopping the normal entry-point client.
 - [Runbooks](dearmachine/runbooks/README.md) indexes normal operations, maintenance, and isolated live-test procedures.
 - [Testing](dearmachine/TESTING.md) explains how to run and extend the automated suite.
@@ -446,18 +448,13 @@ The hosted service is the easiest way to get started. The protocol remains open.
 ## The Promise
 
 ```bash
-curl -fsSL https://dearmachine.to/install.sh | bash
-dearmachine up --email <your>@gmail.com
+nix profile install .#dearmachine
+dearmachine setup-agents --backend codex
 ```
 
-Or enable end-to-end encryption:
+Then run it natively with an AgentMail inbox, or choose the optional OCI
+deployment when an explicit container boundary is useful.
 
-```bash
-dearmachine up --email <your>@proton.me --pgp ~/<your>-public-key.asc
-```
-
-Your computer gets an address.
-
-Email it.
-
-It works.
+The intended hosted `dearmachine up` onboarding and OpenPGP commands described
+above remain product direction rather than commands implemented by the current
+alpha client.

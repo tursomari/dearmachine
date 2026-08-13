@@ -48,13 +48,19 @@ Current behavior and test commands are documented in
   documented deployment smoke test.
 - Add enough health reporting to distinguish a live process, a working poll
   loop, and successful `mct-agent` execution.
-- The root Nix flake now provides the `dearmachine` package, `install` app,
-  build and help smoke checks, and a CGO-enabled Go-suite check.
+- The root Nix flake now provides the default native `dearmachine` package
+  containing both DearMachine and Agent Manager, the `install` development
+  app, build and help smoke checks, and a CGO-enabled Go-suite check. Native
+  execution uses `mct-agent` and configured backends from the host `PATH` and
+  does not assume a process supervisor.
 - The Stage 2 install path now provides `localhost/dearmachine:nix`, the
   `dearmachine` Compose service, an isolated rootless `dearmachine-stack`
-  wrapper, image and Compose checks, and a documented host-mount boundary for
-  client state, mct-agent/Agent Manager/backend tools, and coding repositories.
-- Stage 3 adds the `dearmachine-stack.service` systemd user unit, a user-owned
+  wrapper, image and Compose checks, and a documented optional host-mount
+  boundary for client state, mct-agent/backend tools, and coding repositories.
+  Isolated live integration tests use this container path by default without
+  requiring systemd.
+- The optional Linux Stage 3 adapter adds the `dearmachine-stack.service`
+  systemd user unit, a user-owned
   versioned OCI archive with one-level rollback, production Podman secret
   synchronization/rotation, and WAL-safe `device-client.db` to
   `dearmachine.db` migration. Dry-run snapshots a live WAL database through

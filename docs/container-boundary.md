@@ -11,6 +11,8 @@ runtime mounts.
 `localhost/dearmachine:nix` contains:
 
 - the CGO-enabled `dearmachine` package and its wrapped `git` dependency;
+- the matching in-tree `agent-manager` executable, resolved from the same Nix
+  package as the client;
 - BusyBox and CA certificates;
 - a small entry point that can load `AGENTMAIL_API_KEY` from a production
   Podman secret; and
@@ -33,7 +35,7 @@ The `dearmachine` Compose service has these host mounts:
 | `DEARMACHINE_CLIENT_AGENT_MANAGER_DIR` | `/home/dearmachine/.dearmachine/agent-manager` | read/write | Canonical Agent Manager tickets and worker state, preserved across container replacement and host rollback. |
 | `DEARMACHINE_MACHTIANI_DIR` | `/home/dearmachine/.machtiani` | read/write | mct-agent session/project stores. |
 | `DEARMACHINE_PROJECT_DIR` | `/workspace` | read/write | The single coding repository in which mct-agent and backend workers operate. |
-| `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `mct-agent`, `agent-manager`, `codex`, `forge`, and custom-backend executables or symlinks. |
+| `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `mct-agent`, `codex`, `forge`, and custom-backend executables or symlinks. Agent Manager is packaged in the image. |
 | `/nix/store` | `/nix/store` | read-only | Resolves Nix-store interpreters, libraries, and targets used by mounted Nix-installed tools. |
 
 The explicit client directories default beneath the private client home, while
@@ -70,13 +72,15 @@ sidecar without replacing the lifecycle command.
 
 ## User service and release boundary
 
-`dearmachine-stack.service` is a systemd user unit. This differs intentionally
+The OCI image and direct `dearmachine-stack` Compose workflow do not require
+systemd. The optional Linux lifecycle helper installs
+`dearmachine-stack.service` as a systemd user unit. This differs intentionally
 from xsrc's dedicated system-user service: DearMachine agents operate as the
 current user and need that user's selected repository, backend credentials,
 and `~/.machtiani`. The unit does not elevate privileges, use system systemd,
 or broaden the Compose mounts to the ambient home.
 
-`dearmachine-host-lifecycle` copies each realized OCI tarball into the private
+`dearmachine-container-lifecycle` copies each realized OCI tarball into the private
 user archive at `~/.local/share/dearmachine/image-archive/releases`, and keeps
 `current` plus one `rollback` symlink. Upgrade and rollback stop the unit,
 unload the currently tagged Podman image, change both archive/runtime links,

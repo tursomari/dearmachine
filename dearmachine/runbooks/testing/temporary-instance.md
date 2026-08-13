@@ -24,6 +24,13 @@ inbox or reuse normal runtime state. Do not change product code in response to
 the exercise unless the tester separately authorizes diagnosis and repair.
 Preserve all pre-existing tracked and untracked workspace state.
 
+Live integration protocols use the containerized production path in this
+document by default. That path exercises the Nix-built OCI image, packaged
+Agent Manager, real rootless Compose lifecycle, mounts, secret boundary,
+mct-agent, and configured backend without requiring systemd. Use the native diagnostic exception only
+when a protocol explicitly scopes the test to direct binary behavior that does
+not claim container or deployment coverage.
+
 Never print, copy, or retain credential contents in commands, logs, prompts,
 reports, or shell history. Live identifiers and private message content may be
 recorded only in the protocol's Git-excluded evidence directory.
@@ -77,10 +84,10 @@ Apply these boundaries throughout the exercise:
    identify the protocol and run. Create a temporary sender too when needed for
    complete isolation. Never point a temporary client at the normal inbox or
    use an inbox polled by the normal client as the isolated sender.
-3. Keep freshly built binaries, backend configuration, SQLite database, PID
-   file, logs, Agent Manager home, evidence staging, and disposable project
-   files beneath the runtime root unless the protocol names a private retained
-   evidence directory.
+3. Keep backend configuration, SQLite database, PID file, logs, Agent Manager
+   home, evidence staging, and disposable project files beneath the runtime
+   root unless the protocol names a private retained evidence directory. The
+   tested Nix image and mounted tool revisions must be recorded separately.
 4. Set `DEARMACHINE_HOME` beneath the runtime root. Pass every important path
    explicitly; do not rely on normal DearMachine Client defaults.
 5. Use a dedicated mct project when the test must leave no session data in a
@@ -91,7 +98,11 @@ Apply these boundaries throughout the exercise:
 7. Do not use a generic cleanup command, wildcard, `/tmp`, home directory,
    repository root, or `.machtiani` parent as a recursive deletion target.
 
-### Provision the instance
+### Native diagnostic exception
+
+The direct launch below is for explicitly requested native binary diagnostics.
+It is not the default for a live email protocol and does not prove the OCI,
+Compose, mount, secret, or container-health paths.
 
 1. Create and secure the runtime root:
 
@@ -194,11 +205,10 @@ Apply these boundaries throughout the exercise:
    - no other process polls the temporary inbox; and
    - the first poll has no authentication or configuration error.
 
-### Containerized production-path variant
+### Default containerized production path
 
-When the Nix/OCI/Podman install architecture itself is under test, the direct
-binary launch above is insufficient. Use the production Compose overlay with a
-unique systemd user unit, scratch HOME/XDG roots, the temporary inbox, the real
+For live integration tests, use the production Compose overlay directly with
+scratch HOME/XDG roots, a unique Compose project, the temporary inbox, the real
 PID healthcheck, and at least one configured backend turn. This is a live,
 credentialed protocol and requires the inbox/send/allow-list authorization
 listed above; the credential-free `compose.test.yaml` exercise cannot replace
@@ -207,7 +217,6 @@ it.
 ```bash
 repository=<DearMachine-source>
 runtime_root=$(mktemp -d -t dearmachine-production-test.XXXXXXXX)
-operator_unit_dir="$(systemd-path user-configuration)/systemd/user"
 chmod 0700 "$runtime_root"
 
 export HOME="$runtime_root/home"
@@ -216,23 +225,29 @@ export XDG_CONFIG_HOME="$runtime_root/xdg-config"
 export XDG_STATE_HOME="$runtime_root/xdg-state"
 export XDG_CACHE_HOME="$runtime_root/xdg-cache"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-export DEARMACHINE_SYSTEMD_USER_DIR="$operator_unit_dir"
-export DEARMACHINE_UNIT_NAME="dearmachine-test-production-$RANDOM.service"
+export DEARMACHINE_STATE_DIR="$XDG_STATE_HOME/dearmachine-stack"
+export DEARMACHINE_CACHE_DIR="$XDG_CACHE_HOME/dearmachine-stack"
+export DEARMACHINE_CLIENT_HOME="$runtime_root/client-home"
+export DEARMACHINE_TOOLS_DIR="$runtime_root/tools"
+export DEARMACHINE_MACHTIANI_DIR="$runtime_root/machtiani"
+export DEARMACHINE_PROJECT_NAME="dearmachine-test-production-$RANDOM"
 export DEARMACHINE_STACK_MODE=production
 
 install -d -m 0700 \
-  "$HOME" "$HOME/.machtiani" \
+  "$HOME" "$DEARMACHINE_MACHTIANI_DIR" \
+  "$DEARMACHINE_CLIENT_HOME" "$DEARMACHINE_TOOLS_DIR" \
   "$XDG_CONFIG_HOME/dearmachine" \
-  "$XDG_DATA_HOME/dearmachine/tools" \
   "$runtime_root/project"
 ```
 
 Initialize the disposable project and copy or symlink the exact tested
-Linux/Nix `mct-agent`, `agent-manager`, and selected backend executables into
-`$XDG_DATA_HOME/dearmachine/tools`. Provision only that backend's necessary
-credential files beneath `$XDG_DATA_HOME/dearmachine/client-home`; never mount
+Linux/Nix `mct-agent` and selected backend executables into
+`$DEARMACHINE_TOOLS_DIR`. Provision only that backend's necessary credential
+files beneath `$DEARMACHINE_CLIENT_HOME`; never mount
 or copy the ambient home wholesale. Write its version-1 backend configuration
-under the canonical `.dearmachine/config` path in that private home.
+under the canonical `.dearmachine/config` path in that private home. Agent
+Manager comes from the tested DearMachine image and must not be replaced by a
+host-mounted copy.
 
 Write `stack.env` with the temporary receiver and project, then synchronize the
 AgentMail key into the isolated Podman secret without printing it:
@@ -247,10 +262,14 @@ DEARMACHINE_POLL_INTERVAL=10s
 EOF
 chmod 0600 "$XDG_CONFIG_HOME/dearmachine/stack.env"
 
+set -a
+source "$XDG_CONFIG_HOME/dearmachine/stack.env"
+set +a
+
 cd "$repository"
-nix run .#host-secrets -- sync --file <mode-0600-AgentMail-key-file>
-nix run .#host-install
-nix run .#dearmachine-host-lifecycle -- health
+nix run .#dearmachine-stack -- secrets sync --file <mode-0600-AgentMail-key-file>
+nix run .#dearmachine-stack -- up
+nix run .#dearmachine-stack -- health
 ```
 
 Send the protocol message only after health succeeds. Success requires—not
@@ -259,11 +278,21 @@ real Agent Manager ticket for the selected backend, a completed mct session,
 and exactly one reply observed at the temporary sender. Record the image
 revision and container ID with that evidence.
 
-Teardown must stop and uninstall the unique unit, remove the isolated Podman
-secret, prove no container or unit remains, inspect and then remove only the
+Teardown must bring down the exact Compose project, remove the isolated Podman
+secret, prove no test container remains, inspect and then remove only the
 validated scratch root, and delete only run-created inboxes/allow-list entries
 under the earlier authorization. The protected Gmail allow-list entry remains
 untouched.
+
+```bash
+nix run .#dearmachine-stack -- down
+nix run .#dearmachine-stack -- secrets remove
+test -z "$(nix run .#dearmachine-stack -- containers --format '{{.ID}}')"
+```
+
+The optional Linux systemd-user lifecycle has its own credential-free real
+Podman test in `tests/nix/test-host-podman-integration.sh`; it is not a
+prerequisite for portable live protocol coverage.
 
 ### Observe without brittle sleeps
 

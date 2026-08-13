@@ -218,15 +218,12 @@ manage_secret() {
 }
 
 require_runtime_boundary() {
-  local executable
   [[ $mode == test ]] && return 0
-  for executable in mct-agent agent-manager; do
-    [[ -x $DEARMACHINE_TOOLS_DIR/$executable ]] || {
-      echo "missing executable boundary: $DEARMACHINE_TOOLS_DIR/$executable" >&2
-      echo "place a Linux-compatible executable or Nix-store symlink there" >&2
-      return 1
-    }
-  done
+  [[ -x $DEARMACHINE_TOOLS_DIR/mct-agent ]] || {
+    echo "missing executable boundary: $DEARMACHINE_TOOLS_DIR/mct-agent" >&2
+    echo "place a Linux-compatible executable or Nix-store symlink there" >&2
+    return 1
+  }
 }
 
 wait_healthy() {

@@ -1,6 +1,6 @@
-# Operate the DearMachine user stack
+# Operate the optional DearMachine container stack
 
-The normal installation is the systemd **user** service
+The optional Linux container installation uses the systemd **user** service
 `dearmachine-stack.service`. It drives the production Podman Compose overlay
 through the pinned `dearmachine-stack` wrapper. Do not launch a direct
 `dearmachine` process or transient `dearmachine.service` alongside it.
@@ -10,9 +10,9 @@ through the pinned `dearmachine-stack` wrapper. Do not launch a direct
 ```bash
 systemctl --user show dearmachine-stack.service \
   -p ActiveState -p SubState -p Result -p ExecMainStatus
-nix run .#dearmachine-host-lifecycle -- status
-nix run .#dearmachine-host-lifecycle -- health
-nix run .#dearmachine-host-lifecycle -- logs --tail 100
+nix run .#dearmachine-container-lifecycle -- status
+nix run .#dearmachine-container-lifecycle -- health
+nix run .#dearmachine-container-lifecycle -- logs --tail 100
 ```
 
 The user unit is healthy only when systemd reports `active/exited` for its
@@ -25,17 +25,17 @@ oneshot unit has completed.
 Inspect the mounted executable boundary without exposing credentials:
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- exec dearmachine --help
-nix run .#dearmachine-host-lifecycle -- exec sh -c \
+nix run .#dearmachine-container-lifecycle -- exec dearmachine --help
+nix run .#dearmachine-container-lifecycle -- exec sh -c \
   'command -v mct-agent && command -v agent-manager'
 ```
 
 ## Start, stop, and restart
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- stop
-nix run .#dearmachine-host-lifecycle -- start
-nix run .#dearmachine-host-lifecycle -- restart
+nix run .#dearmachine-container-lifecycle -- stop
+nix run .#dearmachine-container-lifecycle -- start
+nix run .#dearmachine-container-lifecycle -- restart
 ```
 
 Stop through the user service so `dearmachine-stack down` removes the Compose
@@ -70,7 +70,7 @@ silently forever:
 date '+%Y-%m-%d %H:%M:%S %Z'
 systemctl --user show dearmachine-stack.service \
   -p ActiveState -p SubState -p Result -p NRestarts
-nix run .#dearmachine-host-lifecycle -- containers \
+nix run .#dearmachine-container-lifecycle -- containers \
   --format 'table {{.ID}}\t{{.Status}}\t{{.Names}}'
 
 sqlite3 -readonly "$HOME/.dearmachine/state/dearmachine.db" '
@@ -85,17 +85,17 @@ sqlite3 -readonly "$HOME/.dearmachine/state/dearmachine.db" '
 '
 
 for backend in codex forge; do
-  nix run .#dearmachine-host-lifecycle -- exec \
+  nix run .#dearmachine-container-lifecycle -- exec \
     agent-manager worker "$backend" status || true
 done
-nix run .#dearmachine-host-lifecycle -- logs --tail 80
+nix run .#dearmachine-container-lifecycle -- logs --tail 80
 ```
 
 For a pending row with a session ID, inspect the exact session from the mounted
 project rather than inferring progress from the database timestamp:
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- exec \
+nix run .#dearmachine-container-lifecycle -- exec \
   mct-agent session show <session-id> --json
 ```
 
@@ -112,8 +112,8 @@ nix run .#dearmachine-host-lifecycle -- exec \
 Capture the monitoring snapshot first, then stop through the user service:
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- stop
-test -z "$(nix run .#dearmachine-host-lifecycle -- \
+nix run .#dearmachine-container-lifecycle -- stop
+test -z "$(nix run .#dearmachine-container-lifecycle -- \
   containers --format '{{.ID}}')"
 test ! -e "$HOME/.dearmachine/run/dearmachine.pid"
 ```
@@ -168,9 +168,9 @@ After an ordinary restart, confirm the previous pending row is recovered under
 one session and produces at most one eventual reply:
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- start
-nix run .#dearmachine-host-lifecycle -- health
-nix run .#dearmachine-host-lifecycle -- logs --tail 100
+nix run .#dearmachine-container-lifecycle -- start
+nix run .#dearmachine-container-lifecycle -- health
+nix run .#dearmachine-container-lifecycle -- logs --tail 100
 ```
 
 Do not locally skip unread mail merely because the service is restarting.
@@ -186,14 +186,14 @@ variables; `stack.env` may not override them. After an approved non-secret
 change:
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- restart
+nix run .#dearmachine-container-lifecycle -- restart
 ```
 
 Never put the AgentMail API key in that file or an environment variable.
 Rotate it through the external Podman secret:
 
 ```bash
-nix run .#host-secrets -- rotate --file <mode-0600-secret-file>
+nix run .#container-secrets -- rotate --file <mode-0600-secret-file>
 ```
 
 Install, upgrade, restart, and migration do not authorize inbox mutation or

@@ -45,7 +45,7 @@
             pname = "dearmachine";
             version = "0.1.0-${shortRevision}";
             src = source;
-            subPackages = [ "cmd/dearmachine" ];
+            subPackages = [ "cmd/dearmachine" "cmd/agent-manager" ];
             vendorHash = "sha256-sU+aA2uXwKyUPM/BydYy7vJUDHzKXH3D8ANT1p8KwIA=";
             env.CGO_ENABLED = 1;
             doCheck = false;
@@ -61,7 +61,7 @@
             '';
             postInstall = ''
               wrapProgram $out/bin/dearmachine \
-                --prefix PATH : ${lib.makeBinPath [ pkgs.gitMinimal ]}
+                --prefix PATH : $out/bin:${lib.makeBinPath [ pkgs.gitMinimal ]}
             '';
             meta.mainProgram = "dearmachine";
           };
@@ -97,8 +97,11 @@
               install -m 0755 \
                 ${dearmachine}/bin/dearmachine \
                 "$HOME/.local/bin/dearmachine"
+              install -m 0755 \
+                ${dearmachine}/bin/agent-manager \
+                "$HOME/.local/bin/agent-manager"
 
-              printf 'Installed dearmachine at %s\n' "$HOME/.local/bin/dearmachine"
+              printf 'Installed dearmachine and agent-manager in %s\n' "$HOME/.local/bin"
             '';
           };
           containerEntrypoint = pkgs.writeShellScriptBin "dearmachine-container-entrypoint" ''
@@ -188,6 +191,7 @@
             assert service["image"] == "''${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}"
             assert service["restart"] == "unless-stopped"
             assert service["healthcheck"]["test"] == ["CMD", "dearmachine-health"]
+            assert "--agent-manager" not in service["command"]
             assert service["environment"]["HOME"] == "/home/dearmachine"
             for directory in ("config", "state", "run", "log"):
                 assert any(
@@ -270,6 +274,25 @@
           hostUninstall = lifecycleApp "dearmachine-host-uninstall" "uninstall";
           hostSecrets = lifecycleApp "dearmachine-host-secrets" "secrets";
           hostMigrate = lifecycleApp "dearmachine-host-migrate" "migrate";
+          containerLifecycle = pkgs.writeShellApplication {
+            name = "dearmachine-container-lifecycle";
+            runtimeInputs = [ hostLifecycle ];
+            text = ''
+              exec dearmachine-host-lifecycle "$@"
+            '';
+          };
+          containerLifecycleApp = name: command: pkgs.writeShellApplication {
+            inherit name;
+            runtimeInputs = [ containerLifecycle ];
+            text = ''
+              exec dearmachine-container-lifecycle ${command} "$@"
+            '';
+          };
+          containerInstall = containerLifecycleApp "dearmachine-container-install" "install";
+          containerUpgrade = containerLifecycleApp "dearmachine-container-upgrade" "upgrade";
+          containerUninstall = containerLifecycleApp "dearmachine-container-uninstall" "uninstall";
+          containerSecrets = containerLifecycleApp "dearmachine-container-secrets" "secrets";
+          containerMigrate = containerLifecycleApp "dearmachine-container-migrate" "migrate";
           unitCheck = pkgs.runCommand "dearmachine-systemd-user-unit-check" {
             nativeBuildInputs = [ pkgs.systemd ];
           } ''
@@ -325,6 +348,8 @@
             pkgs dearmachine agentManager codexTool goTests install dearmachineImage composeBundle
             composeCheck stackRuntime stateMigration hostLifecycle
             hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
+            containerLifecycle containerInstall containerUpgrade containerUninstall
+            containerSecrets containerMigrate
             unitCheck hostLifecycleCheck stateMigrationCheck runbookCheck shellCheck;
         };
     in {
@@ -340,6 +365,7 @@
           dearmachine-compose = project.composeBundle;
           dearmachine-stack = project.stackRuntime;
           dearmachine-host-lifecycle = project.hostLifecycle;
+          dearmachine-container-lifecycle = project.containerLifecycle;
         });
 
       apps = forAllSystems (system:
@@ -383,6 +409,30 @@
             type = "app";
             program = "${project.hostMigrate}/bin/dearmachine-host-migrate";
           };
+          dearmachine-container-lifecycle = {
+            type = "app";
+            program = "${project.containerLifecycle}/bin/dearmachine-container-lifecycle";
+          };
+          container-install = {
+            type = "app";
+            program = "${project.containerInstall}/bin/dearmachine-container-install";
+          };
+          container-upgrade = {
+            type = "app";
+            program = "${project.containerUpgrade}/bin/dearmachine-container-upgrade";
+          };
+          container-uninstall = {
+            type = "app";
+            program = "${project.containerUninstall}/bin/dearmachine-container-uninstall";
+          };
+          container-secrets = {
+            type = "app";
+            program = "${project.containerSecrets}/bin/dearmachine-container-secrets";
+          };
+          container-migrate = {
+            type = "app";
+            program = "${project.containerMigrate}/bin/dearmachine-container-migrate";
+          };
         });
 
       checks = forAllSystems (system:
@@ -397,6 +447,13 @@
           } ''
             ${project.dearmachine}/bin/dearmachine --help > $out 2>&1
             grep -F "Usage of dearmachine" $out
+            printf 'smoke\n' > "$TMPDIR/agentmail-api-key"
+            credential_smoke=$(AGENTMAIL_API_KEY_FILE="$TMPDIR/agentmail-api-key" \
+              PATH=/missing ${project.dearmachine}/bin/dearmachine \
+              --inbox-id smoke \
+              --config /missing \
+              --once 2>&1 || true)
+            grep -F 'read device config' <<<"$credential_smoke" > /dev/null
           '';
           install-smoke = pkgs.runCommand "dearmachine-install-smoke" {
             nativeBuildInputs = [ project.install ];
@@ -404,10 +461,12 @@
             export HOME="$TMPDIR/home"
             dearmachine-install
             test -x "$HOME/.local/bin/dearmachine"
+            test -x "$HOME/.local/bin/agent-manager"
             for directory in config state run log; do
               test -d "$HOME/.dearmachine/$directory"
             done
             "$HOME/.local/bin/dearmachine" --help 2>&1 | grep -F "Usage of dearmachine"
+            "$HOME/.local/bin/agent-manager" --help 2>&1 | grep -F "agent-manager <command>"
             touch $out
           '';
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {

@@ -55,11 +55,11 @@ and is not a symlink. Never point these variables at `~/.dearmachine`.
 
 For a real temporary inbox exercise, repeat the isolation setup with
 `DEARMACHINE_STACK_MODE=development`. Create a self-contained Git checkout at
-`DEARMACHINE_PROJECT_DIR`. Put Linux-compatible `mct-agent`, `agent-manager`,
-and every configured backend executable or symlink in
+`DEARMACHINE_PROJECT_DIR`. Put Linux-compatible `mct-agent` and every
+configured backend executable or symlink in
 `DEARMACHINE_TOOLS_DIR`; Nix-store symlinks work because `/nix/store` is
 mounted read-only. Configure and authenticate those tools only under
-`DEARMACHINE_CLIENT_HOME`.
+`DEARMACHINE_CLIENT_HOME`. Agent Manager is packaged in the image.
 
 Rebuild and replace a running disposable stack from the current source with:
 
@@ -73,7 +73,7 @@ service. For rollback, retain a previously built image archive, set both
 `DEARMACHINE_IMAGE_ARCHIVE` and `DEARMACHINE_IMAGE` to that archive and its
 embedded tag, then run `dearmachine-stack rebuild`. Confirm the selected image
 with `nix run .#dearmachine-stack -- image` before resuming a disposable inbox.
-The host lifecycle below provides the supported archive retention and
+The container lifecycle below provides the supported archive retention and
 rollback behavior.
 
 Write the backend selection to
@@ -106,7 +106,7 @@ disposable inbox, mct store, and runtime root.
 For production mode, create the external Podman secret in the same isolated
 Podman context and set `DEARMACHINE_STACK_MODE=production`. The wrapper refuses
 to start if `dearmachine_agentmail_api_key` is absent. Provision and rotate it
-with `nix run .#host-secrets`; plaintext never enters Compose or the Nix store.
+with `nix run .#container-secrets`; plaintext never enters Compose or the Nix store.
 
 ## Isolated systemd user lifecycle
 
@@ -143,12 +143,12 @@ printf '%s\n' \
   >"$XDG_CONFIG_HOME/dearmachine/stack.env"
 
 cd "$repository"
-nix run .#host-install
-nix run .#dearmachine-host-lifecycle -- health
-nix run .#dearmachine-host-lifecycle -- exec dearmachine --help
-nix run .#dearmachine-host-lifecycle -- logs --tail 100 |
+nix run .#container-install
+nix run .#dearmachine-container-lifecycle -- health
+nix run .#dearmachine-container-lifecycle -- exec dearmachine --help
+nix run .#dearmachine-container-lifecycle -- logs --tail 100 |
   grep -F 'DearMachine credential-free Compose test service ready'
-nix run .#dearmachine-host-lifecycle -- stop
+nix run .#dearmachine-container-lifecycle -- stop
 
 # Give the same OCI payload a second scratch release name so the isolated
 # trial exercises upgrade and rollback links without requiring another commit.
@@ -156,13 +156,13 @@ current_archive=$(readlink -f \
   "$XDG_DATA_HOME/dearmachine/image-archive/current")
 trial_upgrade="$runtime_root/dearmachine-trial-upgrade.tar.gz"
 cp --reflink=auto "$current_archive" "$trial_upgrade"
-DEARMACHINE_IMAGE_SOURCE="$trial_upgrade" nix run .#host-upgrade
+DEARMACHINE_IMAGE_SOURCE="$trial_upgrade" nix run .#container-upgrade
 DEARMACHINE_IMAGE_SOURCE="$trial_upgrade" \
-  nix run .#host-upgrade -- --rollback
-nix run .#dearmachine-host-lifecycle -- health
+  nix run .#container-upgrade -- --rollback
+nix run .#dearmachine-container-lifecycle -- health
 
-nix run .#host-uninstall
-test -z "$(nix run .#dearmachine-host-lifecycle -- \
+nix run .#container-uninstall
+test -z "$(nix run .#dearmachine-container-lifecycle -- \
   containers --format '{{.ID}}')"
 test ! -e "$DEARMACHINE_SYSTEMD_USER_DIR/$DEARMACHINE_UNIT_NAME"
 test ! -e "$XDG_DATA_HOME/dearmachine/image-archive"
@@ -193,5 +193,5 @@ database name.
 
 Inspect the exact scratch root before deleting it: it must be the
 mode-`0700`, current-user-owned, non-symlink directory created above. If a
-command fails, run `nix run .#host-uninstall` with the same exported variables
+command fails, run `nix run .#container-uninstall` with the same exported variables
 before leaving the unique unit behind.

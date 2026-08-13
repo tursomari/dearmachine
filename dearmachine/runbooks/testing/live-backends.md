@@ -53,8 +53,8 @@ Before the first test:
 
 1. Record the repository's tracked status and current revision so you can prove
    the test did not alter versioned files.
-2. Build fresh DearMachine Client and Agent Manager binaries from the current source
-   into a temporary directory outside the repository.
+2. Build the Nix OCI image from the current source. Use its packaged DearMachine
+   Client and Agent Manager; do not replace Agent Manager with a host binary.
 3. Use temporary, explicitly named paths for the device configuration, SQLite
    database, PID file, logs, and `DEARMACHINE_HOME`. Do not overwrite the
    user's normal DearMachine Client configuration or Agent Manager state.
@@ -105,8 +105,8 @@ trajectory and closed-ticket metadata must prove which backend was selected.
    backends = ["forge"]
    ```
 
-2. Start the isolated DearMachine Client with that configuration, the freshly built
-   Agent Manager, the test inbox, the project directory, and short verbose
+2. Start the isolated container with that configuration, the packaged Agent
+   Manager, the test inbox, the project directory, and short verbose
    polling suitable for observation.
 3. Send a new-thread email containing a meaningful read-only task.
 4. Observe the entire lifecycle through the email reply.

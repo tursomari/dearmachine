@@ -17,7 +17,7 @@ Use this matrix for source code, documentation, commands, and runtime files.
 | PID file | `~/.dearmachine/run/dearmachine.pid` | Standard supervised-process PID file. |
 | Log | `~/.dearmachine/log/dearmachine.log` | Standard client log. |
 | Temporary results | `dearmachine-mct-results` | Temporary-directory prefix for mct-agent result files. |
-| systemd user unit | `dearmachine-stack.service` | Canonical installed user service; disposable trials use `dearmachine-test-<unique>.service`. |
+| Optional container systemd user unit | `dearmachine-stack.service` | Linux container helper; disposable trials use `dearmachine-test-<unique>.service`. Native DearMachine does not assume systemd. |
 
 ## Internal and legacy allow-list
 
@@ -49,14 +49,16 @@ supersession note.
 
 | Context | Canonical form |
 | --- | --- |
-| Default package and named package | `dearmachine` (`nix build` or `nix build .#dearmachine`) |
-| User install app | `install` (`nix run .#install`) |
-| Host lifecycle package/app | `dearmachine-host-lifecycle` |
-| Host entry-point apps | `host-install`, `host-upgrade`, `host-uninstall`, `host-secrets`, `host-migrate` |
+| Native package | `dearmachine` (`nix profile install .#dearmachine`) |
+| Development copy app | `install` (`nix run .#install`) |
+| Container lifecycle package/app | `dearmachine-container-lifecycle` |
+| Container entry-point apps | `container-install`, `container-upgrade`, `container-uninstall`, `container-secrets`, `container-migrate` |
 
-The legacy `install` app installs only `~/.local/bin/dearmachine` for direct
-development. The complete host path is `nix run .#host-install`, which installs
-the immutable OCI stack and systemd user service.
+The default package contains both `dearmachine` and its matching
+`agent-manager`. The `install` app copies both commands into `~/.local/bin` for
+development. The optional Linux container path is
+`nix run .#container-install`, which installs the immutable OCI stack and its
+systemd user service. The older `host-*` app names remain compatibility aliases.
 
 ## Container conventions
 
@@ -70,17 +72,18 @@ The image is the `dearmachine-image` flake package, and the wrapper is available
 as both the `dearmachine-stack` package and app. The wrapper names follow the
 xsrc pattern.
 
-## Host lifecycle conventions
+## Container lifecycle conventions
 
 | Context | Canonical form |
 | --- | --- |
-| Host lifecycle wrapper | `dearmachine-host-lifecycle` |
+| Container lifecycle wrapper | `dearmachine-container-lifecycle` |
 | Current image link | `~/.local/share/dearmachine/image-archive/current` |
 | Rollback image link | `~/.local/share/dearmachine/image-archive/rollback` |
 | Non-secret service environment | `~/.config/dearmachine/stack.env` |
 | Migration metadata | `~/.local/state/dearmachine-migration` |
 
-Host supervision is deliberately user-scoped. Unlike xsrc, DearMachine runs
+The current optional Linux container supervision is deliberately user-scoped.
+Unlike xsrc, DearMachine runs
 agents with the operator's permissions and needs their selected repositories,
 backend credentials, and `~/.machtiani`; a dedicated system user would sever
 that ownership boundary. Containers still receive only the explicit mounts in

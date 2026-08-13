@@ -12,7 +12,7 @@ Run this first from the repository root while the normal client remains
 running:
 
 ```bash
-nix run .#host-migrate -- --dry-run
+nix run .#container-migrate -- --dry-run
 ```
 
 Dry-run opens only
@@ -39,7 +39,7 @@ expected values for that exact authorized snapshot when appropriate:
 DEARMACHINE_EXPECT_PENDING=1 \
 DEARMACHINE_EXPECT_PROCESSED=185 \
 DEARMACHINE_EXPECT_THREADS=36 \
-  nix run .#host-migrate -- --dry-run
+  nix run .#container-migrate -- --dry-run
 ```
 
 The tool always reports the three counts and fails if source and migrated
@@ -65,7 +65,7 @@ authorized cutover, require:
 Then run exactly:
 
 ```bash
-nix run .#host-migrate -- --real
+nix run .#container-migrate -- --real
 ```
 
 The lifecycle stops both `dearmachine.service` and
@@ -85,8 +85,8 @@ and rollback set for inspection.
 To restore the checkpointed legacy set:
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- stop
-nix run .#host-migrate -- --rollback
+nix run .#dearmachine-container-lifecycle -- stop
+nix run .#container-migrate -- --rollback
 ```
 
 Rollback checkpoints the current migrated target and verifies its integrity.

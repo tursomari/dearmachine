@@ -72,9 +72,10 @@ does not alter the rolling rule: review the oldest eligible source and hold the 
    chmod 0700 "$runtime_root"
    ```
 
-3. Build fresh DearMachine Client and Agent Manager binaries beneath that root. Set
-   `DEARMACHINE_HOME` to an isolated directory beneath it. Resolve mct-agent to
-   an absolute path. Unset `MACHTIANI_SESSION_ID` and
+3. Build the Nix OCI image from the recorded source revision and use its
+   packaged DearMachine Client and Agent Manager. Set the mounted
+   `DEARMACHINE_HOME` to isolated state beneath the scratch roots. Resolve
+   mct-agent to the read-only mounted tool path. Unset `MACHTIANI_SESSION_ID` and
    `MACHTIANI_SESSION_TEMP_ROOT` before initialization, inspection, and cleanup
    commands.
 4. Create a temporary AgentMail sender and receiver. Verify both by exact ID,
@@ -110,14 +111,13 @@ include this effective argument set, with `--concurrency 3` or another recorded
 value of at least two:
 
 ```text
-dearmachine
+dearmachine # effective command inside the Compose container
   --inbox-id <temporary-receiver-id>
   --project <phase-1-disposable-project>
   --config <runtime-root>/dearmachine.toml
-  --agent-manager <runtime-root>/agent-manager
-  --mct-agent <absolute-mct-agent-path>
-  --db <runtime-root>/phase-1-dearmachine.db
-  --pidfile <runtime-root>/phase-1-dearmachine.pid
+  --mct-agent /opt/dearmachine/bin/mct-agent
+  --db <mounted-runtime-root>/phase-1-dearmachine.db
+  --pidfile <mounted-runtime-root>/phase-1-dearmachine.pid
   --entry-point-repo ""
   --entry-point-prompt <runtime-root>/phase-1-unused-prompt.md
   --concurrency 3

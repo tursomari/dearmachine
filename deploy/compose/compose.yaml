@@ -22,8 +22,6 @@ services:
       - /workspace
       - --config
       - /home/dearmachine/.dearmachine/config/dearmachine.toml
-      - --agent-manager
-      - /opt/dearmachine/bin/agent-manager
       - --mct-agent
       - /opt/dearmachine/bin/mct-agent
       - --db

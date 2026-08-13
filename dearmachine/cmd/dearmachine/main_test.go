@@ -181,7 +181,7 @@ func TestRunValidatesRequiredConfigurationBeforeConstruction(t *testing.T) {
 			name:   "missing API key",
 			args:   []string{"--inbox-id", "inbox-123"},
 			getenv: func(string) string { return "" },
-			want:   "AGENTMAIL_API_KEY is required",
+			want:   "AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required",
 		},
 	}
 	for _, test := range tests {
@@ -193,6 +193,65 @@ func TestRunValidatesRequiredConfigurationBeforeConstruction(t *testing.T) {
 			}
 			if called {
 				t.Fatal("dependency construction started before validation")
+			}
+		})
+	}
+}
+
+func TestRunLoadsAgentMailCredentialFile(t *testing.T) {
+	credentialPath := filepath.Join(t.TempDir(), "agentmail-api-key")
+	if err := os.WriteFile(credentialPath, []byte("test-key-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := &fakeApplication{}
+	deps := testDependencies(t, app)
+	var setName, setValue string
+	deps.setenv = func(name, value string) error {
+		setName, setValue = name, value
+		return nil
+	}
+	if err := run(
+		[]string{"--inbox-id", "inbox-123", "--once"},
+		func(name string) string {
+			if name == "AGENTMAIL_API_KEY_FILE" {
+				return credentialPath
+			}
+			return ""
+		},
+		deps,
+	); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if setName != "AGENTMAIL_API_KEY" || setValue != "test-key-from-file" {
+		t.Fatalf("setenv = %q, %q", setName, setValue)
+	}
+}
+
+func TestLoadAgentMailCredentialRejectsInvalidFiles(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		contents string
+		want     string
+	}{
+		{name: "empty", contents: "\n", want: "AGENTMAIL_API_KEY_FILE is empty"},
+		{name: "multiple lines", contents: "first\nsecond\n", want: "must contain exactly one line"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "credential")
+			if err := os.WriteFile(path, []byte(test.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			err := loadAgentMailCredential(
+				func(name string) string {
+					if name == "AGENTMAIL_API_KEY_FILE" {
+						return path
+					}
+					return ""
+				},
+				dependencies{readFile: os.ReadFile, setenv: os.Setenv},
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("loadAgentMailCredential error = %v, want %q", err, test.want)
 			}
 		})
 	}
@@ -449,6 +508,21 @@ func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadAgentManagedConfigFindsPackagedManagerOnPath(t *testing.T) {
+	deps := dependencies{}
+	configureAgentTestDeps(t, &deps)
+	backends, manager, _, err := loadAgentManagedConfig(config{}, deps)
+	if err != nil {
+		t.Fatalf("loadAgentManagedConfig: %v", err)
+	}
+	if manager != "/test/bin/agent-manager" {
+		t.Fatalf("manager = %q", manager)
+	}
+	if !slices.Equal(backends, []string{"codex"}) {
+		t.Fatalf("backends = %v", backends)
+	}
+}
+
 func TestSetupAgentsUsesDearMachineConfigPath(t *testing.T) {
 	home := t.TempDir()
 	var output strings.Builder
@@ -505,6 +579,8 @@ func testDependencies(t *testing.T, app application) dependencies {
 			return context.WithCancel(parent)
 		},
 		flagOutput: io.Discard,
+		readFile:   os.ReadFile,
+		setenv:     os.Setenv,
 	}
 	configureAgentTestDeps(t, &deps)
 	return deps
@@ -522,7 +598,10 @@ func configureAgentTestDeps(t *testing.T, deps *dependencies) {
 	}
 	deps.userHomeDir = func() (string, error) { return home, nil }
 	deps.lookPath = func(executable string) (string, error) {
-		if executable == "codex" {
+		switch executable {
+		case "agent-manager":
+			return "/test/bin/agent-manager", nil
+		case "codex":
 			return "/test/bin/codex", nil
 		}
 		return "", os.ErrNotExist

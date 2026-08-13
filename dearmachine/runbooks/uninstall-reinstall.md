@@ -1,4 +1,4 @@
-# Uninstall and reinstall the DearMachine user stack
+# Uninstall and reinstall the optional container stack
 
 The lifecycle distinguishes immutable release removal from mutable-state or
 credential deletion. Default uninstall is recoverable: it stops and disables
@@ -10,14 +10,14 @@ Podman storage, `stack.env`, and the Podman secret.
 ## Record and uninstall
 
 ```bash
-nix run .#dearmachine-host-lifecycle -- status || true
+nix run .#dearmachine-container-lifecycle -- status || true
 current_archive=$(readlink \
   "$HOME/.local/share/dearmachine/image-archive/current")
 rollback_archive=$(readlink \
   "$HOME/.local/share/dearmachine/image-archive/rollback" 2>/dev/null || true)
 printf 'current=%s rollback=%s\n' "$current_archive" "$rollback_archive"
 
-nix run .#host-uninstall
+nix run .#container-uninstall
 ```
 
 Verify the immutable host boundary is gone and mutable state remains:
@@ -45,10 +45,10 @@ present, then install the exact flake-locked release:
 
 ```bash
 nix flake check
-nix run .#host-secrets -- status
-nix run .#host-install
-nix run .#dearmachine-host-lifecycle -- health
-nix run .#dearmachine-host-lifecycle -- logs --tail 100
+nix run .#container-secrets -- status
+nix run .#container-install
+nix run .#dearmachine-container-lifecycle -- health
+nix run .#dearmachine-container-lifecycle -- logs --tail 100
 ```
 
 Reinstall reuses preserved state. If a legacy `device-client.db` still needs
@@ -85,8 +85,8 @@ database="$HOME/.dearmachine/state/dearmachine.db"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 backup_root="$HOME/.local/state/dearmachine-reinstall-backups/$stamp"
 
-nix run .#dearmachine-host-lifecycle -- stop
-test -z "$(nix run .#dearmachine-host-lifecycle -- \
+nix run .#dearmachine-container-lifecycle -- stop
+test -z "$(nix run .#dearmachine-container-lifecycle -- \
   containers --format '{{.ID}}')"
 test ! -e "$HOME/.dearmachine/run/dearmachine.pid"
 for member in "$database" "$database-wal" "$database-shm"; do
@@ -127,9 +127,9 @@ sha256sum "$backup_root/original-set/dearmachine.db" |
   cut -d' ' -f1 >"$backup_root/original-db.sha256"
 chmod 0600 "$backup_root/original-db.sha256"
 
-nix run .#host-uninstall
-nix run .#host-install
-nix run .#dearmachine-host-lifecycle -- health
+nix run .#container-uninstall
+nix run .#container-install
+nix run .#dearmachine-container-lifecycle -- health
 ```
 
 Verify a reset replacement has a new mode-`0600` database with integrity `ok`,
@@ -141,7 +141,7 @@ and re-check integrity and counts before restarting the former deployment.
 
 ```bash
 # Failure rollback for an authorized reset.
-nix run .#dearmachine-host-lifecycle -- stop
+nix run .#dearmachine-container-lifecycle -- stop
 failed_root="$backup_root/failed-replacement"
 install -d -m 0700 "$failed_root"
 for member in "$database" "$database-wal" "$database-shm"; do

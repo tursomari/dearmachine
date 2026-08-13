@@ -1,9 +1,11 @@
-# Install the DearMachine user stack
+# Install the optional Linux container stack
 
-This is the complete supported host path: the root Nix flake builds one OCI
+This is the supported Linux container path: the root Nix flake builds one OCI
 image, `dearmachine-stack` runs it with rootless Podman Compose, and
 `dearmachine-stack.service` supervises it in the current user's systemd
-manager. Run these commands from the DearMachine repository root.
+manager. Native foreground execution is the portable default and is documented
+in [`native-install.md`](./native-install.md). The filename is retained for
+existing links; the canonical commands below use `container-*` names.
 
 DearMachine must run as the operator, not a dedicated system user. Its agents
 need that user's selected repositories, backend credentials, and
@@ -47,27 +49,24 @@ printf '%s\n' \
   >"$HOME/.config/dearmachine/stack.env"
 ```
 
-Put Linux-compatible `mct-agent`, `agent-manager`, and configured backend
-executables or Nix-store symlinks in
+Put Linux-compatible `mct-agent` and configured backend executables or
+Nix-store symlinks in
 `~/.local/share/dearmachine/tools`. Authenticate backends only in the private
 client home at `~/.local/share/dearmachine/client-home`. The service mounts the
 selected project and the current user's `~/.machtiani` separately.
 
-The flake exposes the in-tree Agent Manager and a separately pinned compatible
-Codex CLI for that boundary:
+Agent Manager is built from the DearMachine source and included in the OCI
+image. The flake exposes a separately pinned compatible Codex CLI as an
+optional convenience for the external backend boundary:
 
 ```bash
-nix build .#agent-manager --out-link \
-  "$HOME/.local/share/dearmachine/tools/.roots/agent-manager"
 nix build .#codex-tool --out-link \
   "$HOME/.local/share/dearmachine/tools/.roots/codex"
-ln -sfn .roots/agent-manager/bin/agent-manager \
-  "$HOME/.local/share/dearmachine/tools/agent-manager"
 ln -sfn .roots/codex/bin/codex \
   "$HOME/.local/share/dearmachine/tools/codex"
 ```
 
-Keep these as Nix GC roots. A backend executable merely being present is not
+Keep this as a Nix GC root. A backend executable merely being present is not
 readiness proof; run its Agent Manager functional health probe from inside the
 production container before accepting the cutover.
 
@@ -80,8 +79,8 @@ the operator's credential policy:
 secret_file="$HOME/.config/dearmachine/agentmail-api-key"
 test -s "$secret_file"
 test "$(stat -c %a "$secret_file")" = 600
-nix run .#host-secrets -- sync --file "$secret_file"
-nix run .#host-secrets -- status
+nix run .#container-secrets -- sync --file "$secret_file"
+nix run .#container-secrets -- status
 ```
 
 The secret is named `dearmachine_agentmail_api_key` and appears in the
@@ -89,17 +88,17 @@ container only at `/run/secrets/dearmachine_agentmail_api_key`. Rotation
 replaces the secret and restarts the user stack:
 
 ```bash
-nix run .#host-secrets -- rotate --file "$secret_file"
+nix run .#container-secrets -- rotate --file "$secret_file"
 ```
 
 ## Install and verify
 
 ```bash
-nix run .#host-install
+nix run .#container-install
 systemctl --user status --no-pager dearmachine-stack.service
-nix run .#dearmachine-host-lifecycle -- health
-nix run .#dearmachine-host-lifecycle -- exec dearmachine --help
-nix run .#dearmachine-host-lifecycle -- logs --tail 100
+nix run .#dearmachine-container-lifecycle -- health
+nix run .#dearmachine-container-lifecycle -- exec dearmachine --help
+nix run .#dearmachine-container-lifecycle -- logs --tail 100
 ```
 
 Installation writes `~/.config/systemd/user/dearmachine-stack.service`,
@@ -113,8 +112,8 @@ active archive. Mutable Podman state stays under
 ## Upgrade and rollback
 
 ```bash
-nix run .#host-upgrade
-nix run .#dearmachine-host-lifecycle -- health
+nix run .#container-upgrade
+nix run .#dearmachine-container-lifecycle -- health
 ```
 
 Upgrade stops the unit, unloads the old tagged image, changes the runtime and
@@ -124,7 +123,7 @@ new service does not start, it restores the prior links automatically. An
 operator can also swap the two releases explicitly:
 
 ```bash
-nix run .#host-upgrade -- --rollback
+nix run .#container-upgrade -- --rollback
 ```
 
 Neither path changes the database, project, `~/.machtiani`, backend

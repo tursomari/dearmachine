@@ -76,6 +76,8 @@ type dependencies struct {
 	flagOutput    io.Writer
 	stdin         io.Reader
 	stdout        io.Writer
+	readFile      func(string) ([]byte, error)
+	setenv        func(string, string) error
 	lookPath      func(string) (string, error)
 	userHomeDir   func() (string, error)
 }
@@ -117,6 +119,8 @@ func defaultDependencies() dependencies {
 		flagOutput:    os.Stderr,
 		stdin:         os.Stdin,
 		stdout:        os.Stdout,
+		readFile:      os.ReadFile,
+		setenv:        os.Setenv,
 		lookPath:      exec.LookPath,
 		userHomeDir:   os.UserHomeDir,
 	}
@@ -161,7 +165,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		&cfg.managerPath,
 		"agent-manager",
 		"",
-		"agent-manager executable (default: ~/.dearmachine/agent-manager/agent-manager)",
+		"agent-manager executable (default: agent-manager from PATH)",
 	)
 	flags.StringVar(
 		&cfg.entryPointRepo,
@@ -237,8 +241,8 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if cfg.inboxID == "" {
 		return fmt.Errorf("--inbox-id is required")
 	}
-	if getenv("AGENTMAIL_API_KEY") == "" {
-		return fmt.Errorf("AGENTMAIL_API_KEY is required")
+	if err := loadAgentMailCredential(getenv, deps); err != nil {
+		return err
 	}
 	backends, managerPath, customBackends, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {
@@ -316,6 +320,34 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
+}
+
+func loadAgentMailCredential(getenv func(string) string, deps dependencies) error {
+	if strings.TrimSpace(getenv("AGENTMAIL_API_KEY")) != "" {
+		return nil
+	}
+	credentialPath := strings.TrimSpace(getenv("AGENTMAIL_API_KEY_FILE"))
+	if credentialPath == "" {
+		return fmt.Errorf("AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required")
+	}
+	if deps.readFile == nil || deps.setenv == nil {
+		return fmt.Errorf("load AGENTMAIL_API_KEY_FILE: credential file support is unavailable")
+	}
+	contents, err := deps.readFile(credentialPath)
+	if err != nil {
+		return fmt.Errorf("read AGENTMAIL_API_KEY_FILE: %w", err)
+	}
+	credential := strings.TrimRight(string(contents), "\r\n")
+	if strings.TrimSpace(credential) == "" {
+		return fmt.Errorf("AGENTMAIL_API_KEY_FILE is empty")
+	}
+	if strings.ContainsAny(credential, "\r\n") {
+		return fmt.Errorf("AGENTMAIL_API_KEY_FILE must contain exactly one line")
+	}
+	if err := deps.setenv("AGENTMAIL_API_KEY", credential); err != nil {
+		return fmt.Errorf("set AGENTMAIL_API_KEY from file: %w", err)
+	}
+	return nil
 }
 
 func runInit(args []string, deps dependencies) error {
@@ -398,9 +430,9 @@ func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, []
 	}
 	managerPath := cfg.managerPath
 	if managerPath == "" {
-		managerPath, err = client.DefaultAgentManagerPath(deps.userHomeDir)
+		managerPath, err = deps.lookPath("agent-manager")
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, fmt.Errorf("find packaged agent-manager on PATH: %w", err)
 		}
 	}
 	managerPath, err = filepath.Abs(managerPath)

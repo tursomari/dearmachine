@@ -41,13 +41,13 @@ documentation sensitivity separately.
 
 ### Provision the sync-specific instance
 
-1. Apply the shared temporary-instance procedure with a fresh sender/receiver
-   inbox pair, runtime root, DearMachine Client, Agent Manager, configuration,
+1. Apply the shared containerized temporary-instance procedure with a fresh
+   sender/receiver inbox pair, runtime root, OCI image, packaged Agent Manager, configuration,
    database, PID file, and isolated `DEARMACHINE_HOME`. Use the receiver only
    for the temporary DearMachine Client and the sender only for test delivery and
    reply observation.
 2. Create an empty entry-point directory beneath the runtime root and initialize
-   it with the freshly built client. Pass the absolute mct-agent path and a
+   it with the tested image/client. Pass the mounted mct-agent path and a
    snapshot directory beneath the runtime root.
 3. Resolve and record the disposable entry point's mct UUID, store path,
    source Git history, internal-README artifact repository, artifact Git
