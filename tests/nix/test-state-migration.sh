@@ -96,6 +96,14 @@ grep -F 'target counts: pending=1 processed=185 threads=36' <<<"$real_output"
 rollback_dir=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["rollback_dir"])' "$metadata/last.json")
 [[ -f $rollback_dir/device-client.db ]]
 
+# The new stack may recover pending work before an operator requests rollback.
+# Rollback must preserve those new rows rather than requiring baseline counts.
+sqlite3 "$target_db" <<'SQL'
+INSERT INTO processed_messages
+  (message_id, thread_id, outbound_message_id, processed_at)
+VALUES ('message-after-migration', 'thread-1', 'reply-after-migration', 'processed');
+SQL
+
 DEARMACHINE_MIGRATION_TEST_ROOT=$TEST_ROOT \
   DEARMACHINE_MIGRATION_SOURCE_DB=$source_db \
   DEARMACHINE_MIGRATION_TARGET_DB=$target_db \
@@ -104,8 +112,11 @@ DEARMACHINE_MIGRATION_TEST_ROOT=$TEST_ROOT \
 [[ -f $source_db ]]
 [[ ! -e $target_db ]]
 [[ $(sqlite3 "$source_db" 'SELECT COUNT(*) FROM pending_messages') == 1 ]]
-[[ $(sqlite3 "$source_db" 'SELECT COUNT(*) FROM processed_messages') == 185 ]]
+[[ $(sqlite3 "$source_db" 'SELECT COUNT(*) FROM processed_messages') == 186 ]]
 [[ $(sqlite3 "$source_db" 'SELECT COUNT(*) FROM thread_sessions') == 36 ]]
+[[ $(sqlite3 "$source_db" \
+  "SELECT COUNT(*) FROM processed_messages WHERE message_id='message-after-migration'") == 1 ]]
+[[ -f $rollback_dir/post-migration ]]
 
 mismatch_root=$TEST_ROOT/mismatch
 mismatch_source=$mismatch_root/old/device-client.db

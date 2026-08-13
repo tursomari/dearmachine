@@ -78,8 +78,9 @@ filesystem. It starts the stack only after target integrity and counts match.
 
 The rollback directory remains after health succeeds. The migration is marked
 clean only after the verbose container log contains an actual AgentMail poll;
-a merely running PID is insufficient. If the start or poll proof fails, leave
-the stack stopped and retain the rollback set.
+a merely running PID is insufficient. If the start, metadata update, or poll
+proof fails, the lifecycle stops the stack and retains both the migrated state
+and rollback set for inspection.
 
 To restore the checkpointed legacy set:
 
@@ -88,8 +89,10 @@ nix run .#dearmachine-host-lifecycle -- stop
 nix run .#host-migrate -- --rollback
 ```
 
-Rollback first verifies that the migrated target still has the recorded
-integrity and counts. It retains that post-migration target for diagnosis,
-restores the checksum-verified legacy files to their original names, and does
-not restart either client. Start only the explicitly selected deployment after
-reviewing the restored counts.
+Rollback checkpoints the current migrated target and verifies its integrity.
+It then keeps a checksum-recorded `post-migration*` copy and moves that current
+database set back to the legacy name. This preserves pending recovery and any
+messages processed after cutover instead of reverting to stale baseline row
+counts. The original pre-migration backup also remains for forensic recovery.
+Rollback does not restart either client; start only the explicitly selected
+deployment after reviewing the restored counts.

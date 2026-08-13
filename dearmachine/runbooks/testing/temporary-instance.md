@@ -194,6 +194,77 @@ Apply these boundaries throughout the exercise:
    - no other process polls the temporary inbox; and
    - the first poll has no authentication or configuration error.
 
+### Containerized production-path variant
+
+When the Nix/OCI/Podman install architecture itself is under test, the direct
+binary launch above is insufficient. Use the production Compose overlay with a
+unique systemd user unit, scratch HOME/XDG roots, the temporary inbox, the real
+PID healthcheck, and at least one configured backend turn. This is a live,
+credentialed protocol and requires the inbox/send/allow-list authorization
+listed above; the credential-free `compose.test.yaml` exercise cannot replace
+it.
+
+```bash
+repository=<DearMachine-source>
+runtime_root=$(mktemp -d -t dearmachine-production-test.XXXXXXXX)
+operator_unit_dir="$(systemd-path user-configuration)/systemd/user"
+chmod 0700 "$runtime_root"
+
+export HOME="$runtime_root/home"
+export XDG_DATA_HOME="$runtime_root/xdg-data"
+export XDG_CONFIG_HOME="$runtime_root/xdg-config"
+export XDG_STATE_HOME="$runtime_root/xdg-state"
+export XDG_CACHE_HOME="$runtime_root/xdg-cache"
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DEARMACHINE_SYSTEMD_USER_DIR="$operator_unit_dir"
+export DEARMACHINE_UNIT_NAME="dearmachine-test-production-$RANDOM.service"
+export DEARMACHINE_STACK_MODE=production
+
+install -d -m 0700 \
+  "$HOME" "$HOME/.machtiani" \
+  "$XDG_CONFIG_HOME/dearmachine" \
+  "$XDG_DATA_HOME/dearmachine/tools" \
+  "$runtime_root/project"
+```
+
+Initialize the disposable project and copy or symlink the exact tested
+Linux/Nix `mct-agent`, `agent-manager`, and selected backend executables into
+`$XDG_DATA_HOME/dearmachine/tools`. Provision only that backend's necessary
+credential files beneath `$XDG_DATA_HOME/dearmachine/client-home`; never mount
+or copy the ambient home wholesale. Write its version-1 backend configuration
+under the canonical `.dearmachine/config` path in that private home.
+
+Write `stack.env` with the temporary receiver and project, then synchronize the
+AgentMail key into the isolated Podman secret without printing it:
+
+```bash
+cat >"$XDG_CONFIG_HOME/dearmachine/stack.env" <<EOF
+DEARMACHINE_PROJECT_DIR=$runtime_root/project
+DEARMACHINE_INBOX_ID=<temporary-receiver-id>
+DEARMACHINE_STACK_MODE=production
+DEARMACHINE_ENTRY_POINT_REPO=
+DEARMACHINE_POLL_INTERVAL=10s
+EOF
+chmod 0600 "$XDG_CONFIG_HOME/dearmachine/stack.env"
+
+cd "$repository"
+nix run .#host-secrets -- sync --file <mode-0600-AgentMail-key-file>
+nix run .#host-install
+nix run .#dearmachine-host-lifecycle -- health
+```
+
+Send the protocol message only after health succeeds. Success requires—not
+merely a PID—the expected `poll:` log, one pending-to-processed transition, a
+real Agent Manager ticket for the selected backend, a completed mct session,
+and exactly one reply observed at the temporary sender. Record the image
+revision and container ID with that evidence.
+
+Teardown must stop and uninstall the unique unit, remove the isolated Podman
+secret, prove no container or unit remains, inspect and then remove only the
+validated scratch root, and delete only run-created inboxes/allow-list entries
+under the earlier authorization. The protected Gmail allow-list entry remains
+untouched.
+
 ### Observe without brittle sleeps
 
 Poll according to observed activity, using seconds while a transition is

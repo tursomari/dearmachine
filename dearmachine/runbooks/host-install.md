@@ -111,3 +111,16 @@ nix run .#host-upgrade -- --rollback
 
 Neither path changes the database, project, `~/.machtiani`, backend
 credentials, inbox, or AgentMail allow lists.
+
+The hermetic lifecycle test injects a failed `systemctl start`. Before a release
+is considered host-validated, also run the real rootless Podman/systemd test,
+which attempts to upgrade from an invalid OCI archive and requires the prior
+release to be restored and healthy:
+
+```bash
+bash tests/nix/test-host-podman-integration.sh
+```
+
+This remains credential-free. Complete production validation requires the
+disposable-inbox procedure in `testing/temporary-instance.md`, including an
+actual poll and configured backend turn.

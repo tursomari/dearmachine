@@ -88,11 +88,9 @@ case $mode in
 #!/bin/sh
 set -eu
 dearmachine --help
-ready=$DEARMACHINE_PIDFILE
-ready=${ready%/*}/compose-test.ready
-touch "$ready"
+printf '%s\n' "$$" >"$DEARMACHINE_PIDFILE"
 echo "DearMachine credential-free Compose test service ready"
-trap 'rm -f "$ready"; exit 0' TERM INT
+trap 'rm -f "$DEARMACHINE_PIDFILE"; exit 0' TERM INT
 while :; do
   sleep 60 &
   wait $! || true
@@ -231,16 +229,6 @@ require_runtime_boundary() {
 
 wait_healthy() {
   local cid health
-  if [[ $mode == test ]]; then
-    for _ in $(seq 1 60); do
-      [[ -f $DEARMACHINE_CLIENT_RUN_DIR/compose-test.ready ]] && return 0
-      sleep 1
-    done
-    if [[ -f $DEARMACHINE_CLIENT_RUN_DIR/compose-test.ready ]]; then
-      return 0
-    fi
-    return 1
-  fi
   cid=$(container_id)
   [[ -n $cid ]] || return 1
   for _ in $(seq 1 60); do
@@ -302,19 +290,10 @@ case $action in
     ;;
   wait) wait_healthy ;;
   health)
-    if [[ $mode == test ]]; then
-      if [[ -f $DEARMACHINE_CLIENT_RUN_DIR/compose-test.ready ]]; then
-        echo healthy
-      else
-        echo unhealthy
-        exit 1
-      fi
-    else
-      cid=$(container_id)
-      [[ -n $cid ]]
-      podman healthcheck run "$cid" >/dev/null
-      podman inspect --format '{{.State.Health.Status}}' "$cid"
-    fi
+    cid=$(container_id)
+    [[ -n $cid ]]
+    podman healthcheck run "$cid" >/dev/null
+    podman inspect --format '{{.State.Health.Status}}' "$cid"
     ;;
   status) compose ps ;;
   stop) compose stop ;;

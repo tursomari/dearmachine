@@ -59,3 +59,106 @@ Permanent reset or deletion is outside the host-lifecycle command. It requires
 a separately authorized, checksum-recorded backup, exact-path review, proof
 that no process has the database set open, and a clean replacement poll before
 any old copy can be deleted.
+
+## Full reset or destructive reinstall
+
+Do not interpret “reinstall” as permission to reset or delete state. Record
+exactly one disposition before proceeding:
+
+- **Preserve:** reinstall immutable releases and reuse the existing database.
+- **Reset:** retain the old database in a private backup and let the replacement
+  create an empty database.
+- **Delete:** follow reset first; permanent deletion requires a second explicit
+  authorization after the replacement passes verification.
+
+Before reset or delete, record the source commit, image/runtime links, selected
+project and entry-point identity, tool checksums, database path/mode/integrity,
+SQLite sidecar inventory, row counts, pending session, and backend ticket
+count. Resolve the effective database from the running command/config; never
+assume the default path when a custom `--db` may be active.
+
+Stop and prove the service, container, PID, and database handles are gone. Then
+checkpoint and back up the exact database set:
+
+```bash
+database="$HOME/.dearmachine/state/dearmachine.db"
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+backup_root="$HOME/.local/state/dearmachine-reinstall-backups/$stamp"
+
+nix run .#dearmachine-host-lifecycle -- stop
+test -z "$(nix run .#dearmachine-host-lifecycle -- \
+  containers --format '{{.ID}}')"
+test ! -e "$HOME/.dearmachine/run/dearmachine.pid"
+for member in "$database" "$database-wal" "$database-shm"; do
+  test ! -e "$member" || ! fuser "$member"
+done
+
+install -d -m 0700 "$backup_root" "$backup_root/original-set"
+test "$(sqlite3 "$database" \
+  'PRAGMA wal_checkpoint(TRUNCATE); PRAGMA integrity_check;' | tail -n 1)" = ok
+sqlite3 "$database" ".backup '$backup_root/dearmachine.db'"
+chmod 0600 "$backup_root/dearmachine.db"
+sha256sum "$backup_root/dearmachine.db" >"$backup_root/SHA256SUMS"
+sqlite3 -readonly "$backup_root/dearmachine.db" '
+  SELECT COUNT(*) FROM pending_messages;
+  SELECT COUNT(*) FROM processed_messages;
+  SELECT COUNT(*) FROM thread_sessions;
+' >"$backup_root/counts.txt"
+chmod 0600 "$backup_root/SHA256SUMS" "$backup_root/counts.txt"
+```
+
+For **preserve**, do not move the active state; use the normal uninstall and
+reinstall commands. For an explicitly authorized **reset**, move only the exact
+checkpointed database and any remaining sidecars into the private backup, then
+install and start the replacement. Never move or delete the whole
+`~/.dearmachine`, `~/.machtiani`, project, entry-point store, credentials, or
+AgentMail identity as a shortcut.
+
+```bash
+# Reset only, after the stop/open-file/checksum checks above.
+for member in "$database" "$database-wal" "$database-shm"; do
+  if test -e "$member"; then
+    test -f "$member" && test ! -L "$member"
+    test "$(stat -c %u "$member")" = "$(id -u)"
+    mv -- "$member" "$backup_root/original-set/$(basename "$member")"
+  fi
+done
+sha256sum "$backup_root/original-set/dearmachine.db" |
+  cut -d' ' -f1 >"$backup_root/original-db.sha256"
+chmod 0600 "$backup_root/original-db.sha256"
+
+nix run .#host-uninstall
+nix run .#host-install
+nix run .#dearmachine-host-lifecycle -- health
+```
+
+Verify a reset replacement has a new mode-`0600` database with integrity `ok`,
+no inherited pending/processed/thread rows before its first poll, healthy
+configured backends, the expected project/session identity, and a successful
+disposable-inbox poll/reply. If verification fails, stop it, retain its database
+for diagnosis, restore the checksum-verified backup to the original exact path,
+and re-check integrity and counts before restarting the former deployment.
+
+```bash
+# Failure rollback for an authorized reset.
+nix run .#dearmachine-host-lifecycle -- stop
+failed_root="$backup_root/failed-replacement"
+install -d -m 0700 "$failed_root"
+for member in "$database" "$database-wal" "$database-shm"; do
+  test ! -e "$member" || mv -- "$member" "$failed_root/$(basename "$member")"
+done
+for member in \
+  "$backup_root/original-set/dearmachine.db" \
+  "$backup_root/original-set/dearmachine.db-wal" \
+  "$backup_root/original-set/dearmachine.db-shm"; do
+  test ! -e "$member" || mv -- "$member" "$(dirname "$database")/$(basename "$member")"
+done
+test "$(sqlite3 -readonly "$database" 'PRAGMA integrity_check;')" = ok
+test "$(sha256sum "$database" | cut -d' ' -f1)" = \
+  "$(cat "$backup_root/original-db.sha256")"
+```
+
+Permanent deletion is allowed only after all replacement checks pass and the
+operator separately identifies the exact backup database by path and checksum.
+Delete only that file and its exact sidecars; never recursively delete the
+backup root or search-and-delete arbitrary `*.db` files.

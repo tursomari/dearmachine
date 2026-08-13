@@ -200,9 +200,7 @@
             assert test["services"]["dearmachine"]["entrypoint"] == [
                 "/bin/sh", "/opt/dearmachine/bin/test-service.sh"
             ]
-            assert test["services"]["dearmachine"]["healthcheck"] == {
-                "disable": True
-            }
+            assert "healthcheck" not in test["services"]["dearmachine"]
             PY
             touch $out
           '';
@@ -291,12 +289,30 @@
             PROJECT_ROOT=${./.} bash ${./tests/nix/test-state-migration.sh}
             touch $out
           '';
+          runbookCheck = pkgs.runCommand "dearmachine-runbook-contract-check" {
+            nativeBuildInputs = [ pkgs.bash pkgs.gnugrep ];
+          } ''
+            PROJECT_ROOT=${./.} bash ${./tests/nix/test-runbook-contracts.sh}
+            touch $out
+          '';
+          shellCheck = pkgs.runCommand "dearmachine-shellcheck" {
+            nativeBuildInputs = [ pkgs.shellcheck ];
+          } ''
+            shellcheck \
+              ${./scripts/nix/host-lifecycle.sh} \
+              ${./scripts/nix/stack-runtime.sh} \
+              ${./tests/nix/test-host-lifecycle.sh} \
+              ${./tests/nix/test-host-podman-integration.sh} \
+              ${./tests/nix/test-runbook-contracts.sh} \
+              ${./tests/nix/test-state-migration.sh}
+            touch $out
+          '';
         in {
           inherit
             pkgs dearmachine goTests install dearmachineImage composeBundle
             composeCheck stackRuntime stateMigration hostLifecycle
             hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
-            unitCheck hostLifecycleCheck stateMigrationCheck;
+            unitCheck hostLifecycleCheck stateMigrationCheck runbookCheck shellCheck;
         };
     in {
       packages = forAllSystems (system:
@@ -386,6 +402,8 @@
           host-lifecycle-test = project.hostLifecycleCheck;
           state-migration-test = project.stateMigrationCheck;
           systemd-user-unit = project.unitCheck;
+          runbook-contracts = project.runbookCheck;
+          shellcheck = project.shellCheck;
         });
     };
 }

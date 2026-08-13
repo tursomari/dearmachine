@@ -171,9 +171,27 @@ test -z "$(systemctl --user list-unit-files "$DEARMACHINE_UNIT_NAME" \
   --no-legend 2>/dev/null)"
 ```
 
-`health` must print `healthy`, `exec` must print `Usage of dearmachine`, logs
-must contain the ready line, and the final stack status must contain no
-container. Inspect the exact scratch root before deleting it: it must be the
+`health` must print `healthy` from the image's normal PID-file health command,
+`exec` must print `Usage of dearmachine`, logs must contain the ready line, and
+the final stack status must contain no container. Test mode proves the real
+rootless Podman, Compose, systemd-user, mount, PID-health, and cleanup paths; it
+does not authenticate AgentMail or execute a backend turn. Use a separately
+authorized disposable inbox for that production-only proof.
+
+Before accepting upgrade rollback, also exercise an actually invalid archive,
+not only a second filename for the same image. The repository test performs
+the complete trial and verifies automatic restoration:
+
+```bash
+bash tests/nix/test-host-podman-integration.sh
+```
+
+That test also migrates a scratch WAL database through the real lifecycle,
+withholds the required poll proof, requires systemd to stop the stack, writes a
+post-migration row, and verifies rollback preserves that row under the legacy
+database name.
+
+Inspect the exact scratch root before deleting it: it must be the
 mode-`0700`, current-user-owned, non-symlink directory created above. If a
 command fails, run `nix run .#host-uninstall` with the same exported variables
 before leaving the unique unit behind.

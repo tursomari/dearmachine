@@ -57,7 +57,10 @@ already-exported `AGENTMAIL_API_KEY` into the container. Production mode adds
 external Podman secret `dearmachine_agentmail_api_key` through
 `/run/secrets/dearmachine_agentmail_api_key`. Test mode adds
 `compose.test.yaml`; it runs a credential-free long-lived image/help probe so
-the rootless Compose lifecycle can be verified without touching AgentMail.
+the rootless Compose lifecycle can be verified without touching AgentMail. The
+probe writes the normal PID file and uses the same `dearmachine-health` command
+as production. Test mode does not claim to prove AgentMail authentication or a
+backend turn; those require a separately authorized disposable-inbox exercise.
 
 The wrapper intentionally keeps `podman-compose` even though v1 has one
 service. This matches xsrc's operator interface, makes health/restart/secret

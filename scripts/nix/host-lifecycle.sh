@@ -434,8 +434,18 @@ secrets_host() {
 }
 
 prove_database_closed() {
-  local database=$1 pidfile=$CLIENT_ROOT/run/dearmachine.pid unit
-  for unit in "$SERVICE_NAME" "${DEARMACHINE_LEGACY_UNIT_NAME:-dearmachine.service}"; do
+  local database=$1 pidfile=$CLIENT_ROOT/run/dearmachine.pid unit legacy_unit
+  local -a units=("$SERVICE_NAME")
+  legacy_unit=${DEARMACHINE_LEGACY_UNIT_NAME:-}
+  if [[ -z $legacy_unit && $SERVICE_NAME == dearmachine-stack.service ]]; then
+    legacy_unit=dearmachine.service
+  fi
+  if [[ -n $legacy_unit && $legacy_unit != "$SERVICE_NAME" ]]; then
+    [[ $legacy_unit =~ ^dearmachine[-A-Za-z0-9_@.]*\.service$ ]] ||
+      die "unsafe legacy systemd user unit name: $legacy_unit"
+    units+=("$legacy_unit")
+  fi
+  for unit in "${units[@]}"; do
     systemctl_user stop "$unit" >/dev/null 2>&1 || true
     if systemctl_user is-active --quiet "$unit" >/dev/null 2>&1; then
       die "service is still active: $unit"
@@ -485,12 +495,19 @@ migrate_host() {
       prove_database_closed "${DEARMACHINE_MIGRATION_SOURCE_DB:-$CLIENT_ROOT/state/device-client.db}"
       DEARMACHINE_MIGRATION_STOP_PROOF=1 \
         "$DEARMACHINE_MIGRATION_HELPER" --real
-      systemctl_user start "$SERVICE_NAME"
+      if ! systemctl_user start "$SERVICE_NAME"; then
+        systemctl_user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+        die "migrated database verified, but the new stack failed to start; stack left stopped and rollback retained"
+      fi
       if wait_for_clean_poll; then
-        "$DEARMACHINE_MIGRATION_HELPER" --mark-clean
+        if ! "$DEARMACHINE_MIGRATION_HELPER" --mark-clean; then
+          systemctl_user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+          die "clean poll observed but migration metadata could not be updated; stack left stopped"
+        fi
         printf 'migration verified by a healthy container and clean AgentMail poll\n'
       else
-        die "migration retained its rollback copy because no clean poll was observed"
+        systemctl_user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+        die "no clean poll was observed; stack left stopped and rollback retained"
       fi
       ;;
     --rollback)

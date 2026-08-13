@@ -155,7 +155,9 @@ def check_expected(counts: dict[str, int]) -> None:
             )
 
 
-def checkpoint_and_close(path: Path) -> tuple[dict[str, int], list[Path]]:
+def checkpoint_and_close(
+    path: Path, *, enforce_expected: bool = True
+) -> tuple[dict[str, int], list[Path]]:
     inventory = [path]
     inventory.extend(
         candidate for suffix in SIDECAR_SUFFIXES if (candidate := Path(f"{path}{suffix}")).exists()
@@ -170,7 +172,8 @@ def checkpoint_and_close(path: Path) -> tuple[dict[str, int], list[Path]]:
     finally:
         connection.close()
     counts = integrity_and_counts(path)
-    check_expected(counts)
+    if enforce_expected:
+        check_expected(counts)
     closed_inventory = [path]
     closed_inventory.extend(
         candidate for suffix in SIDECAR_SUFFIXES if (candidate := Path(f"{path}{suffix}")).exists()
@@ -356,29 +359,61 @@ def rollback(metadata_dir: Path) -> None:
     backup_dir = Path(manifest["rollback_dir"])
     if source.exists() or Path(f"{source}-wal").exists() or Path(f"{source}-shm").exists():
         fail(f"legacy source path is occupied; refusing rollback: {source}")
-    observed = integrity_and_counts(target)
-    if observed != manifest["counts"]:
-        fail(f"target counts changed since migration: {observed} != {manifest['counts']}")
-    for suffix in ("", *SIDECAR_SUFFIXES):
-        target_file = Path(f"{target}{suffix}")
-        if target_file.exists():
-            os.replace(target_file, backup_dir / f"post-migration{suffix}")
-    for item in manifest["backups"]:
-        backup = Path(item["backup"])
-        original = Path(item["original"])
-        if sha256(backup) != item["sha256"]:
-            fail(f"rollback backup checksum mismatch: {backup}")
-        shutil.copy2(backup, original)
-        original.chmod(0o600)
-    restored = integrity_and_counts(source)
-    if restored != manifest["counts"]:
-        fail(f"restored counts do not match migration baseline: {restored}")
+    observed, target_files = checkpoint_and_close(target, enforce_expected=False)
+    print_counts("rollback source", observed)
+
+    # Roll back the deployment name without throwing away messages processed by
+    # the new stack. Preserve a checksum-recorded copy of the current target,
+    # then move that exact checkpointed set back to the legacy name. The
+    # original pre-migration backup remains available for forensic recovery.
+    current_backups: list[dict[str, str]] = []
+    for target_file in target_files:
+        if target_file.is_symlink() or not target_file.is_file():
+            fail(f"target database set member is not a regular file: {target_file}")
+        if target_file.stat().st_uid != os.getuid():
+            fail(f"target database set member is not owned by the current user: {target_file}")
+        suffix = target_file.name.removeprefix(target.name)
+        backup = backup_dir / f"post-migration{suffix}"
+        if backup.exists():
+            fail(f"post-migration rollback backup already exists: {backup}")
+        shutil.copy2(target_file, backup)
+        backup.chmod(0o600)
+        current_backups.append(
+            {
+                "source": str(target_file),
+                "backup": str(backup),
+                "sha256": sha256(backup),
+            }
+        )
+
+    try:
+        for target_file in target_files:
+            suffix = target_file.name.removeprefix(target.name)
+            legacy_file = Path(f"{source}{suffix}")
+            os.replace(target_file, legacy_file)
+            legacy_file.chmod(0o600)
+        restored = integrity_and_counts(source)
+        if restored != observed:
+            fail(f"rolled-back counts do not match current target: {restored} != {observed}")
+    except Exception:
+        for suffix in ("", *SIDECAR_SUFFIXES):
+            legacy_file = Path(f"{source}{suffix}")
+            target_file = Path(f"{target}{suffix}")
+            backup = backup_dir / f"post-migration{suffix}"
+            if legacy_file.exists():
+                os.replace(legacy_file, target_file)
+            elif backup.exists() and not target_file.exists():
+                shutil.copy2(backup, target_file)
+                target_file.chmod(0o600)
+        raise
     manifest["status"] = "rolled-back"
     manifest["rolled_back_at"] = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    manifest["rollback_counts"] = observed
+    manifest["post_migration_backups"] = current_backups
     atomic_json(backup_dir / "manifest.json", manifest)
     atomic_json(last, manifest)
     print_counts("restored", restored)
-    print("migration rolled back; post-migration database retained for diagnosis")
+    print("migration rolled back with current state preserved under the legacy name")
 
 
 def mark_clean(metadata_dir: Path) -> None:
