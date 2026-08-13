@@ -265,6 +265,15 @@ stack_executable() {
 
 run_stack() {
   local executable
+  if [[ -f $STACK_ENV ]]; then
+    # Match systemd's EnvironmentFile behavior for operator-invoked lifecycle
+    # commands such as exec, logs, and health. Managed boundary variables are
+    # exported afterward so stack.env cannot redirect lifecycle-owned storage.
+    set -a
+    # shellcheck disable=SC1090
+    source "$STACK_ENV"
+    set +a
+  fi
   export_stack_context
   executable=$(stack_executable)
   "$executable" "$@"

@@ -59,7 +59,12 @@ make_runtime() {
 set -euo pipefail
 printf 'stack %s\n' "$*" >>"$TEST_ACTION_LOG"
 case ${1:-} in
-  container-logs) echo 'DearMachine credential-free Compose test service ready' ;;
+  container-logs)
+    printf 'stack-env %s %s\n' \
+      "${DEARMACHINE_PROJECT_DIR:-}" "${DEARMACHINE_INBOX_ID:-}" \
+      >>"$TEST_ACTION_LOG"
+    echo 'DearMachine credential-free Compose test service ready'
+    ;;
   poll-ready) [[ ! -e $TEST_FAIL_POLL ]] ;;
   wait) exit 0 ;;
 esac
@@ -103,6 +108,8 @@ touch "$HOME/.dearmachine/state/preserved-client-state"
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" install
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" status
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" logs
+grep -F "stack-env $TEST_ROOT/project credential-free-test" \
+  "$TEST_ACTION_LOG" >/dev/null
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" secrets status
 
 touch "$TEST_FAIL_START"
