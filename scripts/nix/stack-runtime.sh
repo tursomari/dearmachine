@@ -25,7 +25,7 @@ export DEARMACHINE_CLIENT_STATE_DIR=${DEARMACHINE_CLIENT_STATE_DIR:-$DEARMACHINE
 export DEARMACHINE_CLIENT_RUN_DIR=${DEARMACHINE_CLIENT_RUN_DIR:-$DEARMACHINE_CLIENT_HOME/.dearmachine/run}
 export DEARMACHINE_CLIENT_LOG_DIR=${DEARMACHINE_CLIENT_LOG_DIR:-$DEARMACHINE_CLIENT_HOME/.dearmachine/log}
 export DEARMACHINE_MACHTIANI_DIR=${DEARMACHINE_MACHTIANI_DIR:-$DEARMACHINE_CLIENT_HOME/.machtiani}
-export DEARMACHINE_PROJECT_DIR=${DEARMACHINE_PROJECT_DIR:?DEARMACHINE_PROJECT_DIR is required}
+export DEARMACHINE_PROJECT_DIR=${DEARMACHINE_PROJECT_DIR:-}
 export DEARMACHINE_TOOLS_DIR=${DEARMACHINE_TOOLS_DIR:-$state_dir/tools}
 export DEARMACHINE_PROJECT_NAME=$project
 export CONTAINERS_STORAGE_CONF=$storage_conf
@@ -50,6 +50,10 @@ mkdir -p \
   "$DEARMACHINE_CLIENT_HOME/.local/state" \
   "$DEARMACHINE_TOOLS_DIR" "$runtime_dir/dearmachine-podman" \
   "$(dirname "$policy_conf")"
+
+if [[ -n $DEARMACHINE_PROJECT_DIR ]]; then
+  mkdir -p "$DEARMACHINE_PROJECT_DIR"
+fi
 
 if [[ ! -f $storage_conf ]]; then
   cat >"$storage_conf" <<EOF
@@ -101,6 +105,10 @@ EOF
 esac
 
 compose() {
+  [[ -n $DEARMACHINE_PROJECT_DIR ]] || {
+    echo "DEARMACHINE_PROJECT_DIR is required for Compose actions" >&2
+    return 1
+  }
   podman-compose "${compose_files[@]}" --project-name "$project" "$@"
 }
 
@@ -140,6 +148,73 @@ preflight() {
 
 load_image() {
   podman load --input "$DEARMACHINE_IMAGE_ARCHIVE" >/dev/null
+}
+
+unload_image() {
+  local image=${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}
+  if podman image inspect "$image" >/dev/null 2>&1; then
+    podman image rm --force "$image" >/dev/null
+  fi
+}
+
+manage_secret() {
+  local command=${1:-status}
+  local name=dearmachine_agentmail_api_key
+  local file mode
+  shift || true
+
+  case $command in
+    status)
+      [[ $# -eq 0 ]] || {
+        echo "usage: dearmachine-stack secrets status" >&2
+        return 2
+      }
+      if podman secret inspect "$name" >/dev/null 2>&1; then
+        printf '%s\tpresent\n' "$name"
+      else
+        printf '%s\tmissing\n' "$name"
+      fi
+      ;;
+    sync|rotate)
+      [[ ${1:-} == --file && -n ${2:-} && $# -eq 2 ]] || {
+        echo "usage: dearmachine-stack secrets $command --file FILE" >&2
+        return 2
+      }
+      file=$2
+      [[ -f $file && ! -L $file && -r $file ]] || {
+        echo "secret input must be a readable regular file, not a symlink: $file" >&2
+        return 1
+      }
+      [[ $(stat -c %u "$file") -eq $(id -u) ]] || {
+        echo "secret input must be owned by the current user: $file" >&2
+        return 1
+      }
+      mode=$(stat -c %a "$file")
+      (( (8#$mode & 8#077) == 0 )) || {
+        echo "secret input must not be accessible by group or other: $file" >&2
+        return 1
+      }
+      [[ -s $file ]] || {
+        echo "secret input is empty: $file" >&2
+        return 1
+      }
+      podman secret create --replace "$name" - <"$file" >/dev/null
+      printf '%s synchronized\n' "$name"
+      ;;
+    remove)
+      [[ $# -eq 0 ]] || {
+        echo "usage: dearmachine-stack secrets remove" >&2
+        return 2
+      }
+      if podman secret inspect "$name" >/dev/null 2>&1; then
+        podman secret rm "$name" >/dev/null
+      fi
+      ;;
+    *)
+      echo "usage: dearmachine-stack secrets <status|sync|rotate|remove>" >&2
+      return 2
+      ;;
+  esac
 }
 
 require_runtime_boundary() {
@@ -197,6 +272,9 @@ case $action in
     preflight
     load_image
     ;;
+  unload)
+    unload_image
+    ;;
   image)
     preflight
     podman image inspect "${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}"
@@ -242,9 +320,30 @@ case $action in
   stop) compose stop ;;
   exec) compose exec -T dearmachine "$@" ;;
   logs) compose logs "$@" ;;
+  container-logs)
+    cid=$(container_id)
+    [[ -n $cid ]] || {
+      echo "no dearmachine container found for project $project" >&2
+      exit 1
+    }
+    podman logs "$@" "$cid"
+    ;;
+  containers)
+    podman ps -a "$@" \
+      --filter "label=io.podman.compose.project=$project"
+    ;;
+  poll-ready)
+    cid=$(container_id)
+    [[ -n $cid ]] || exit 1
+    podman logs "$cid" 2>&1 | grep -q 'poll: [0-9][0-9]* unread messages'
+    ;;
+  secrets)
+    preflight
+    manage_secret "$@"
+    ;;
   down) compose down ;;
   *)
-    echo "usage: dearmachine-stack <preflight|config|load|image|run|up|rebuild|wait|health|status|stop|exec|logs|down>" >&2
+    echo "usage: dearmachine-stack <preflight|config|load|unload|image|run|up|rebuild|wait|health|status|stop|exec|logs|container-logs|containers|poll-ready|secrets|down>" >&2
     exit 2
     ;;
 esac

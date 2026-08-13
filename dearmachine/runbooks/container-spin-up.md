@@ -2,7 +2,8 @@
 
 Use this runbook to build the Nix OCI image and exercise a clean, per-project
 rootless Podman stack. It does not migrate or reuse the normal
-`~/.dearmachine` tree, and it does not replace the Stage 3 host service work.
+`~/.dearmachine` tree. The second exercise passes the same stack through the
+Stage 3 systemd user lifecycle with a unique temporary unit.
 The container boundary and tool requirements are documented in
 [`../../docs/container-boundary.md`](../../docs/container-boundary.md).
 
@@ -72,8 +73,8 @@ service. For rollback, retain a previously built image archive, set both
 `DEARMACHINE_IMAGE_ARCHIVE` and `DEARMACHINE_IMAGE` to that archive and its
 embedded tag, then run `dearmachine-stack rebuild`. Confirm the selected image
 with `nix run .#dearmachine-stack -- image` before resuming a disposable inbox.
-Stage 3 must turn this manual archive retention into a host upgrade/rollback
-lifecycle.
+The host lifecycle below provides the supported archive retention and
+rollback behavior.
 
 Write the backend selection to
 `$DEARMACHINE_CLIENT_HOME/.dearmachine/config/dearmachine.toml`, for example:
@@ -104,5 +105,75 @@ disposable inbox, mct store, and runtime root.
 
 For production mode, create the external Podman secret in the same isolated
 Podman context and set `DEARMACHINE_STACK_MODE=production`. The wrapper refuses
-to start if `dearmachine_agentmail_api_key` is absent. Secret provisioning and
-rotation automation remain Stage 3 host-lifecycle work.
+to start if `dearmachine_agentmail_api_key` is absent. Provision and rotate it
+with `nix run .#host-secrets`; plaintext never enters Compose or the Nix store.
+
+## Isolated systemd user lifecycle
+
+This exercise uses a unique unit name and scratch HOME/XDG/state roots. The
+only live user-manager mutation is that uniquely named unit; uninstall removes
+it. Never use `dearmachine-stack.service` for this trial, and never point any
+scratch variable at the normal `~/.dearmachine` tree.
+
+```bash
+repository=$PWD
+operator_unit_dir="$(systemd-path user-configuration)/systemd/user"
+runtime_root=$(mktemp -d -t dearmachine-host-trial.XXXXXXXX)
+chmod 0700 "$runtime_root"
+
+export HOME="$runtime_root/home"
+export XDG_DATA_HOME="$runtime_root/xdg-data"
+export XDG_CONFIG_HOME="$runtime_root/xdg-config"
+export XDG_STATE_HOME="$runtime_root/xdg-state"
+export XDG_CACHE_HOME="$runtime_root/xdg-cache"
+export DEARMACHINE_SYSTEMD_USER_DIR="$operator_unit_dir"
+export DEARMACHINE_UNIT_NAME="dearmachine-test-$RANDOM.service"
+export DEARMACHINE_PROJECT_DIR="$runtime_root/project"
+export DEARMACHINE_PROJECT_NAME=dearmachine
+export DEARMACHINE_STACK_MODE=test
+export NIX_CONFIG='experimental-features = nix-command flakes'
+
+install -d -m 0700 \
+  "$HOME" "$XDG_CONFIG_HOME/dearmachine" "$DEARMACHINE_PROJECT_DIR"
+install -m 0600 /dev/null "$XDG_CONFIG_HOME/dearmachine/stack.env"
+printf '%s\n' \
+  "DEARMACHINE_PROJECT_DIR=$DEARMACHINE_PROJECT_DIR" \
+  'DEARMACHINE_INBOX_ID=credential-free-test' \
+  'DEARMACHINE_STACK_MODE=test' \
+  >"$XDG_CONFIG_HOME/dearmachine/stack.env"
+
+cd "$repository"
+nix run .#host-install
+nix run .#dearmachine-host-lifecycle -- health
+nix run .#dearmachine-host-lifecycle -- exec dearmachine --help
+nix run .#dearmachine-host-lifecycle -- logs --tail 100 |
+  grep -F 'DearMachine credential-free Compose test service ready'
+nix run .#dearmachine-host-lifecycle -- stop
+
+# Give the same OCI payload a second scratch release name so the isolated
+# trial exercises upgrade and rollback links without requiring another commit.
+current_archive=$(readlink -f \
+  "$XDG_DATA_HOME/dearmachine/image-archive/current")
+trial_upgrade="$runtime_root/dearmachine-trial-upgrade.tar.gz"
+cp --reflink=auto "$current_archive" "$trial_upgrade"
+DEARMACHINE_IMAGE_SOURCE="$trial_upgrade" nix run .#host-upgrade
+DEARMACHINE_IMAGE_SOURCE="$trial_upgrade" \
+  nix run .#host-upgrade -- --rollback
+nix run .#dearmachine-host-lifecycle -- health
+
+nix run .#host-uninstall
+test -z "$(nix run .#dearmachine-host-lifecycle -- \
+  containers --format '{{.ID}}')"
+test ! -e "$DEARMACHINE_SYSTEMD_USER_DIR/$DEARMACHINE_UNIT_NAME"
+test ! -e "$XDG_DATA_HOME/dearmachine/image-archive"
+test ! -e "$XDG_DATA_HOME/dearmachine/runtime"
+test -z "$(systemctl --user list-unit-files "$DEARMACHINE_UNIT_NAME" \
+  --no-legend 2>/dev/null)"
+```
+
+`health` must print `healthy`, `exec` must print `Usage of dearmachine`, logs
+must contain the ready line, and the final stack status must contain no
+container. Inspect the exact scratch root before deleting it: it must be the
+mode-`0700`, current-user-owned, non-symlink directory created above. If a
+command fails, run `nix run .#host-uninstall` with the same exported variables
+before leaving the unique unit behind.

@@ -1,6 +1,6 @@
 # DearMachine container boundary
 
-Stage 2 packages the dearmachine client as an immutable OCI image while keeping
+The install path packages the dearmachine client as an immutable OCI image while keeping
 machine-specific state and independently released tools outside that image.
 This is the same image-versus-runtime split used by xsrc: Nix builds the image;
 the stack wrapper prepares isolated rootless Podman storage and supplies the
@@ -64,11 +64,33 @@ service. This matches xsrc's operator interface, makes health/restart/secret
 semantics declarative, and leaves room for a later relay or diagnostics
 sidecar without replacing the lifecycle command.
 
-## What Stage 2 does not do
+## User service and release boundary
+
+`dearmachine-stack.service` is a systemd user unit. This differs intentionally
+from xsrc's dedicated system-user service: DearMachine agents operate as the
+current user and need that user's selected repository, backend credentials,
+and `~/.machtiani`. The unit does not elevate privileges, use system systemd,
+or broaden the Compose mounts to the ambient home.
+
+`dearmachine-host-lifecycle` copies each realized OCI tarball into the private
+user archive at `~/.local/share/dearmachine/image-archive/releases`, and keeps
+`current` plus one `rollback` symlink. Upgrade and rollback stop the unit,
+unload the currently tagged Podman image, change both archive/runtime links,
+and start through the Stage 2 wrapper, which loads the selected archive.
+Mutable client and Podman state is never stored in those release directories
+and survives upgrades and default uninstall.
+
+Production secret management uses the same isolated Podman configuration as
+the wrapper. The lifecycle synchronizes only
+`dearmachine_agentmail_api_key`; the production overlay mounts it at the
+existing `/run/secrets/dearmachine_agentmail_api_key` path and the image entry
+point reads it from there.
+
+## Health and migration limits
 
 The container healthcheck proves that the supervised dearmachine PID is alive;
-it does not yet prove a successful AgentMail poll or backend turn. Stage 3 must
-add host lifecycle integration and a WAL-safe migration from the live
-`~/.dearmachine` tree. Until that migration is explicitly performed, the
-container stack and the host installation are separate state domains and must
-not poll the same inbox concurrently.
+it does not prove a successful AgentMail poll or backend turn. The migration
+lifecycle therefore requires both container health and a new verbose `poll:`
+line before marking a cutover clean. Until migration is explicitly performed,
+the container stack and a legacy host process are separate state domains and
+must not poll the same inbox concurrently.

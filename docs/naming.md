@@ -17,7 +17,7 @@ Use this matrix for source code, documentation, commands, and runtime files.
 | PID file | `~/.dearmachine/run/dearmachine.pid` | Standard supervised-process PID file. |
 | Log | `~/.dearmachine/log/dearmachine.log` | Standard client log. |
 | Temporary results | `dearmachine-mct-results` | Temporary-directory prefix for mct-agent result files. |
-| systemd unit | `dearmachine.service` | Use for every documented systemd command and unit reference. |
+| systemd user unit | `dearmachine-stack.service` | Canonical installed user service; disposable trials use `dearmachine-test-<unique>.service`. |
 
 ## Internal and legacy allow-list
 
@@ -51,10 +51,12 @@ supersession note.
 | --- | --- |
 | Default package and named package | `dearmachine` (`nix build` or `nix build .#dearmachine`) |
 | User install app | `install` (`nix run .#install`) |
+| Host lifecycle package/app | `dearmachine-host-lifecycle` |
+| Host entry-point apps | `host-install`, `host-upgrade`, `host-uninstall`, `host-secrets`, `host-migrate` |
 
-The `install` app installs `~/.local/bin/dearmachine` and prepares the canonical
-directories under `~/.dearmachine`. The container lifecycle is implemented;
-host supervision remains planned work.
+The legacy `install` app installs only `~/.local/bin/dearmachine` for direct
+development. The complete host path is `nix run .#host-install`, which installs
+the immutable OCI stack and systemd user service.
 
 ## Container conventions
 
@@ -68,10 +70,20 @@ The image is the `dearmachine-image` flake package, and the wrapper is available
 as both the `dearmachine-stack` package and app. The wrapper names follow the
 xsrc pattern.
 
-## Planned host convention
+## Host lifecycle conventions
 
-| Context | Planned form |
+| Context | Canonical form |
 | --- | --- |
 | Host lifecycle wrapper | `dearmachine-host-lifecycle` |
+| Current image link | `~/.local/share/dearmachine/image-archive/current` |
+| Rollback image link | `~/.local/share/dearmachine/image-archive/rollback` |
+| Non-secret service environment | `~/.config/dearmachine/stack.env` |
+| Migration metadata | `~/.local/state/dearmachine-migration` |
 
-Host lifecycle and live-state migration remain planned until Stage 3 lands.
+Host supervision is deliberately user-scoped. Unlike xsrc, DearMachine runs
+agents with the operator's permissions and needs their selected repositories,
+backend credentials, and `~/.machtiani`; a dedicated system user would sever
+that ownership boundary. Containers still receive only the explicit mounts in
+the container-boundary document. The former transient direct-process unit
+`dearmachine.service` is a legacy migration stop target, not an installed
+service name.

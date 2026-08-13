@@ -54,9 +54,14 @@ Current behavior and test commands are documented in
   `dearmachine` Compose service, an isolated rootless `dearmachine-stack`
   wrapper, image and Compose checks, and a documented host-mount boundary for
   client state, mct-agent/Agent Manager/backend tools, and coding repositories.
-- Continue with the pending host lifecycle, systemd user unit, production
-  secret rotation workflow, richer poll/backend health, and WAL-safe live-state
-  migration.
+- Stage 3 adds the `dearmachine-stack.service` systemd user unit, a user-owned
+  versioned OCI archive with one-level rollback, production Podman secret
+  synchronization/rotation, and WAL-safe `device-client.db` to
+  `dearmachine.db` migration. Dry-run snapshots a live WAL database through
+  SQLite's read-only online backup API and exercises cutover only in `/tmp`;
+  real cutover remains an explicit operator action.
+- Continue with richer poll/backend health, reboot/recovery exercises on an
+  authorized host, and the separately authorized production migration.
 
 ## 3. Close security and failure-handling gaps
 

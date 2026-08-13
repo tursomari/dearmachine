@@ -190,6 +190,10 @@
             assert any("/opt/dearmachine/bin" in volume for volume in service["volumes"])
             assert any("/nix/store" in volume for volume in service["volumes"])
             assert set(production["secrets"]) == {"dearmachine_agentmail_api_key"}
+            assert production["services"]["dearmachine"]["environment"] == {
+                "AGENTMAIL_API_KEY": "",
+                "AGENTMAIL_API_KEY_FILE": "/run/secrets/dearmachine_agentmail_api_key",
+            }
             assert production["services"]["dearmachine"]["secrets"] == [
                 "dearmachine_agentmail_api_key"
             ]
@@ -218,10 +222,81 @@
               ${builtins.readFile ./scripts/nix/stack-runtime.sh}
             '';
           };
+          stateMigration = pkgs.writeShellApplication {
+            name = "dearmachine-state-migrate";
+            runtimeInputs = [ pkgs.python3 ];
+            text = ''
+              exec python3 ${./scripts/nix/migrate-state.py} "$@"
+            '';
+          };
+          hostLifecycle = pkgs.writeShellApplication {
+            name = "dearmachine-host-lifecycle";
+            runtimeInputs = with pkgs; [
+              coreutils
+              gnugrep
+              nix
+              psmisc
+              systemd
+              stackRuntime
+            ];
+            text = ''
+              export DEARMACHINE_RUNTIME_PATH="''${DEARMACHINE_RUNTIME_PATH:-${stackRuntime}}"
+              export DEARMACHINE_IMAGE_SOURCE="''${DEARMACHINE_IMAGE_SOURCE:-${dearmachineImage}}"
+              export DEARMACHINE_UNIT_TEMPLATE="''${DEARMACHINE_UNIT_TEMPLATE:-${./contrib/systemd/dearmachine-stack.service.in}}"
+              export DEARMACHINE_MIGRATION_HELPER="''${DEARMACHINE_MIGRATION_HELPER:-${stateMigration}/bin/dearmachine-state-migrate}"
+              ${builtins.readFile ./scripts/nix/host-lifecycle.sh}
+            '';
+          };
+          lifecycleApp = name: command: pkgs.writeShellApplication {
+            inherit name;
+            runtimeInputs = [ hostLifecycle ];
+            text = ''
+              exec dearmachine-host-lifecycle ${command} "$@"
+            '';
+          };
+          hostInstall = lifecycleApp "dearmachine-host-install" "install";
+          hostUpgrade = lifecycleApp "dearmachine-host-upgrade" "upgrade";
+          hostUninstall = lifecycleApp "dearmachine-host-uninstall" "uninstall";
+          hostSecrets = lifecycleApp "dearmachine-host-secrets" "secrets";
+          hostMigrate = lifecycleApp "dearmachine-host-migrate" "migrate";
+          unitCheck = pkgs.runCommand "dearmachine-systemd-user-unit-check" {
+            nativeBuildInputs = [ pkgs.systemd ];
+          } ''
+            export HOME="$TMPDIR/home"
+            export XDG_CONFIG_HOME="$TMPDIR/config"
+            export XDG_DATA_HOME="$TMPDIR/data"
+            export XDG_RUNTIME_DIR="$TMPDIR/run"
+            export SYSTEMD_UNIT_PATH="$TMPDIR:${pkgs.systemd}/example/systemd/user"
+            mkdir -m 0700 "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_RUNTIME_DIR"
+            touch "$TMPDIR/runtime.env" "$TMPDIR/stack.env"
+            substitute ${./contrib/systemd/dearmachine-stack.service.in} \
+              "$TMPDIR/dearmachine-stack.service" \
+              --replace-fail '@RELEASE@' 'hermetic-check' \
+              --replace-fail '@RUNTIME_ENV@' "$TMPDIR/runtime.env" \
+              --replace-fail '@STACK_ENV@' "$TMPDIR/stack.env" \
+              --replace-fail '@STACK_EXEC@' '${stackRuntime}/bin/dearmachine-stack'
+            systemd-analyze --user --man=no --generators=no \
+              verify "$TMPDIR/dearmachine-stack.service"
+            touch $out
+          '';
+          hostLifecycleCheck = pkgs.runCommand "dearmachine-host-lifecycle-check" {
+            nativeBuildInputs = with pkgs; [ bash coreutils gnugrep ];
+          } ''
+            PROJECT_ROOT=${./.} bash ${./tests/nix/test-host-lifecycle.sh}
+            touch $out
+          '';
+          stateMigrationCheck = pkgs.runCommand "dearmachine-state-migration-check" {
+            nativeBuildInputs = [ pkgs.bash pkgs.coreutils pkgs.python3 pkgs.sqlite ];
+          } ''
+            PROJECT_ROOT=${./.} bash ${./tests/nix/test-state-migration.sh}
+            touch $out
+          '';
         in {
           inherit
             pkgs dearmachine goTests install dearmachineImage composeBundle
-            composeCheck stackRuntime;
+            composeCheck stackRuntime stateMigration hostLifecycle
+            hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
+            unitCheck hostLifecycleCheck stateMigrationCheck;
         };
     in {
       packages = forAllSystems (system:
@@ -233,6 +308,7 @@
           dearmachine-image = project.dearmachineImage;
           dearmachine-compose = project.composeBundle;
           dearmachine-stack = project.stackRuntime;
+          dearmachine-host-lifecycle = project.hostLifecycle;
         });
 
       apps = forAllSystems (system:
@@ -251,6 +327,30 @@
           dearmachine-stack = {
             type = "app";
             program = "${self.packages.${system}.dearmachine-stack}/bin/dearmachine-stack";
+          };
+          dearmachine-host-lifecycle = {
+            type = "app";
+            program = "${self.packages.${system}.dearmachine-host-lifecycle}/bin/dearmachine-host-lifecycle";
+          };
+          host-install = {
+            type = "app";
+            program = "${project.hostInstall}/bin/dearmachine-host-install";
+          };
+          host-upgrade = {
+            type = "app";
+            program = "${project.hostUpgrade}/bin/dearmachine-host-upgrade";
+          };
+          host-uninstall = {
+            type = "app";
+            program = "${project.hostUninstall}/bin/dearmachine-host-uninstall";
+          };
+          host-secrets = {
+            type = "app";
+            program = "${project.hostSecrets}/bin/dearmachine-host-secrets";
+          };
+          host-migrate = {
+            type = "app";
+            program = "${project.hostMigrate}/bin/dearmachine-host-migrate";
           };
         });
 
@@ -282,6 +382,10 @@
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           image = project.dearmachineImage;
           compose = project.composeCheck;
+          host-lifecycle = project.hostLifecycle;
+          host-lifecycle-test = project.hostLifecycleCheck;
+          state-migration-test = project.stateMigrationCheck;
+          systemd-user-unit = project.unitCheck;
         });
     };
 }

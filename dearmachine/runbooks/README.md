@@ -6,15 +6,17 @@ Go test suite.
 
 ## Normal operation
 
-- [`container-spin-up.md`](./container-spin-up.md) builds the Stage 2 Nix OCI
-  image and exercises an isolated rootless Podman lifecycle before describing
-  the additional inputs for a functional disposable client. It does not
-  migrate the normal host installation.
-- [`operate-entrypoint-client.md`](./operate-entrypoint-client.md) launches,
-  monitors, stops, and restarts the normal installed client. It deliberately
-  uses the machine entry point for both email sessions and maintenance.
-- [`uninstall-reinstall.md`](./uninstall-reinstall.md) replaces the local
-  installation through a recoverable backup-and-verify procedure.
+- [`host-install.md`](./host-install.md) is the single supported installation,
+  secret-provisioning, upgrade/rollback, and user-service path.
+- [`operate-entrypoint-client.md`](./operate-entrypoint-client.md) operates and
+  diagnoses the installed `dearmachine-stack.service`.
+- [`migrate-live-state.md`](./migrate-live-state.md) first proves the migration
+  against a read-only online-backup snapshot, then describes the separately
+  authorized production cutover and rollback.
+- [`container-spin-up.md`](./container-spin-up.md) exercises the same packaged
+  image, wrapper, and lifecycle in disposable test mode.
+- [`uninstall-reinstall.md`](./uninstall-reinstall.md) removes and reinstalls
+  the service and immutable releases while preserving state by default.
 
 ## Isolated live testing
 
