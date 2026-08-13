@@ -30,6 +30,7 @@ The `dearmachine` Compose service has these host mounts:
 | `DEARMACHINE_CLIENT_STATE_DIR` | `/home/dearmachine/.dearmachine/state` | read/write | SQLite database and durable client state. |
 | `DEARMACHINE_CLIENT_RUN_DIR` | `/home/dearmachine/.dearmachine/run` | read/write | PID and other ephemeral run metadata. |
 | `DEARMACHINE_CLIENT_LOG_DIR` | `/home/dearmachine/.dearmachine/log` | read/write | Client logs when file logging is configured. |
+| `DEARMACHINE_CLIENT_AGENT_MANAGER_DIR` | `/home/dearmachine/.dearmachine/agent-manager` | read/write | Canonical Agent Manager tickets and worker state, preserved across container replacement and host rollback. |
 | `DEARMACHINE_MACHTIANI_DIR` | `/home/dearmachine/.machtiani` | read/write | mct-agent session/project stores. |
 | `DEARMACHINE_PROJECT_DIR` | `/workspace` | read/write | The single coding repository in which mct-agent and backend workers operate. |
 | `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `mct-agent`, `agent-manager`, `codex`, `forge`, and custom-backend executables or symlinks. |

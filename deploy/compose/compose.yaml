@@ -43,6 +43,7 @@ services:
       - ${DEARMACHINE_CLIENT_STATE_DIR:?set DEARMACHINE_CLIENT_STATE_DIR}:/home/dearmachine/.dearmachine/state:Z
       - ${DEARMACHINE_CLIENT_RUN_DIR:?set DEARMACHINE_CLIENT_RUN_DIR}:/home/dearmachine/.dearmachine/run:Z
       - ${DEARMACHINE_CLIENT_LOG_DIR:?set DEARMACHINE_CLIENT_LOG_DIR}:/home/dearmachine/.dearmachine/log:Z
+      - ${DEARMACHINE_CLIENT_AGENT_MANAGER_DIR:?set DEARMACHINE_CLIENT_AGENT_MANAGER_DIR}:/home/dearmachine/.dearmachine/agent-manager:Z
       - ${DEARMACHINE_MACHTIANI_DIR:?set DEARMACHINE_MACHTIANI_DIR}:/home/dearmachine/.machtiani:Z
       - ${DEARMACHINE_PROJECT_DIR:?set DEARMACHINE_PROJECT_DIR}:/workspace:Z
       - ${DEARMACHINE_TOOLS_DIR:?set DEARMACHINE_TOOLS_DIR}:/opt/dearmachine/bin:ro

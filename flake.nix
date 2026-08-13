@@ -191,6 +191,10 @@
                     f"/home/dearmachine/.dearmachine/{directory}" in volume
                     for volume in service["volumes"]
                 )
+            assert any(
+                "/home/dearmachine/.dearmachine/agent-manager" in volume
+                for volume in service["volumes"]
+            )
             assert any("/home/dearmachine/.machtiani" in volume for volume in service["volumes"])
             assert any("/workspace" in volume for volume in service["volumes"])
             assert any("/opt/dearmachine/bin" in volume for volume in service["volumes"])
