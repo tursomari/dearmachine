@@ -63,6 +63,12 @@
             '';
             meta.mainProgram = "dearmachine";
           };
+          agentManager = dearmachine.overrideAttrs (_: {
+            pname = "dearmachine-agent-manager";
+            subPackages = [ "cmd/agent-manager" ];
+            postInstall = "";
+            meta.mainProgram = "agent-manager";
+          });
           goTests = dearmachine.overrideAttrs (_: {
             pname = "dearmachine-go-tests";
             doCheck = true;
@@ -309,7 +315,7 @@
           '';
         in {
           inherit
-            pkgs dearmachine goTests install dearmachineImage composeBundle
+            pkgs dearmachine agentManager goTests install dearmachineImage composeBundle
             composeCheck stackRuntime stateMigration hostLifecycle
             hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
             unitCheck hostLifecycleCheck stateMigrationCheck runbookCheck shellCheck;
@@ -319,6 +325,7 @@
         let project = packageSet system;
         in {
           inherit (project) dearmachine install;
+          agent-manager = project.agentManager;
           default = project.dearmachine;
         } // project.pkgs.lib.optionalAttrs project.pkgs.stdenv.isLinux {
           dearmachine-image = project.dearmachineImage;
