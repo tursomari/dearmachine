@@ -92,8 +92,136 @@
               printf 'Installed dearmachine at %s\n' "$HOME/.local/bin/dearmachine"
             '';
           };
+          containerEntrypoint = pkgs.writeShellScriptBin "dearmachine-container-entrypoint" ''
+            set -eu
+
+            if [ -n "''${AGENTMAIL_API_KEY_FILE:-}" ]; then
+              if [ ! -r "$AGENTMAIL_API_KEY_FILE" ]; then
+                printf 'AGENTMAIL_API_KEY_FILE is not readable: %s\n' \
+                  "$AGENTMAIL_API_KEY_FILE" >&2
+                exit 1
+              fi
+              IFS= read -r AGENTMAIL_API_KEY < "$AGENTMAIL_API_KEY_FILE" || \
+                [ -n "$AGENTMAIL_API_KEY" ]
+              export AGENTMAIL_API_KEY
+            fi
+
+            exec ${lib.getExe dearmachine} "$@"
+          '';
+          containerHealth = pkgs.writeShellScriptBin "dearmachine-health" ''
+            set -eu
+
+            pidfile="''${DEARMACHINE_PIDFILE:-/home/dearmachine/.dearmachine/run/dearmachine.pid}"
+            [ -r "$pidfile" ]
+            IFS= read -r pid < "$pidfile"
+            case "$pid" in
+              *[!0-9]*|"") exit 1 ;;
+            esac
+            kill -0 "$pid"
+            grep -aq dearmachine "/proc/$pid/cmdline"
+          '';
+          imageBase = {
+            created = "1970-01-01T00:00:01Z";
+            extraCommands = ''
+              mkdir -p tmp home/dearmachine opt/dearmachine/bin run/secrets usr/bin workspace
+              ln -s ../../bin/env usr/bin/env
+              chmod 1777 tmp
+              chmod 0700 home/dearmachine run/secrets
+            '';
+          };
+          dearmachineImage = pkgs.dockerTools.buildLayeredImage (imageBase // {
+            name = "localhost/dearmachine";
+            tag = "nix";
+            contents = [
+              dearmachine
+              containerEntrypoint
+              containerHealth
+              pkgs.busybox
+              pkgs.cacert
+            ];
+            config = {
+              Entrypoint = [ (lib.getExe containerEntrypoint) ];
+              Env = [
+                "DEARMACHINE_HOME=/home/dearmachine/.dearmachine"
+                "DEARMACHINE_PIDFILE=/home/dearmachine/.dearmachine/run/dearmachine.pid"
+                "HOME=/home/dearmachine"
+                "PATH=/opt/dearmachine/bin:/bin"
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                "XDG_CACHE_HOME=/home/dearmachine/.cache"
+                "XDG_CONFIG_HOME=/home/dearmachine/.config"
+                "XDG_STATE_HOME=/home/dearmachine/.local/state"
+              ];
+              WorkingDir = "/workspace";
+              Labels = {
+                "org.opencontainers.image.title" = "DearMachine Client";
+                "org.opencontainers.image.revision" = revision;
+              };
+            };
+          });
+          composeBundle = pkgs.runCommand "dearmachine-compose" { } ''
+            mkdir -p $out/share/dearmachine/compose
+            cp ${./deploy/compose}/*.yaml $out/share/dearmachine/compose/
+          '';
+          composeCheck = pkgs.runCommand "dearmachine-compose-check" {
+            nativeBuildInputs = [ (pkgs.python3.withPackages (p: [ p.pyyaml ])) ];
+          } ''
+            python - <<'PY'
+            import pathlib
+            import yaml
+
+            root = pathlib.Path("${composeBundle}/share/dearmachine/compose")
+            base = yaml.safe_load((root / "compose.yaml").read_text())
+            production = yaml.safe_load((root / "compose.production.yaml").read_text())
+            test = yaml.safe_load((root / "compose.test.yaml").read_text())
+
+            assert set(base["services"]) == {"dearmachine"}
+            service = base["services"]["dearmachine"]
+            assert service["image"] == "''${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}"
+            assert service["restart"] == "unless-stopped"
+            assert service["healthcheck"]["test"] == ["CMD", "dearmachine-health"]
+            assert service["environment"]["HOME"] == "/home/dearmachine"
+            for directory in ("config", "state", "run", "log"):
+                assert any(
+                    f"/home/dearmachine/.dearmachine/{directory}" in volume
+                    for volume in service["volumes"]
+                )
+            assert any("/home/dearmachine/.machtiani" in volume for volume in service["volumes"])
+            assert any("/workspace" in volume for volume in service["volumes"])
+            assert any("/opt/dearmachine/bin" in volume for volume in service["volumes"])
+            assert any("/nix/store" in volume for volume in service["volumes"])
+            assert set(production["secrets"]) == {"dearmachine_agentmail_api_key"}
+            assert production["services"]["dearmachine"]["secrets"] == [
+                "dearmachine_agentmail_api_key"
+            ]
+            assert test["services"]["dearmachine"]["entrypoint"] == [
+                "/bin/sh", "/opt/dearmachine/bin/test-service.sh"
+            ]
+            assert test["services"]["dearmachine"]["healthcheck"] == {
+                "disable": True
+            }
+            PY
+            touch $out
+          '';
+          stackRuntime = pkgs.writeShellApplication {
+            name = "dearmachine-stack";
+            runtimeInputs = with pkgs; [
+              coreutils
+              fuse-overlayfs
+              gnugrep
+              podman
+              podman-compose
+            ];
+            text = ''
+              export DEARMACHINE_COMPOSE_DIR="''${DEARMACHINE_COMPOSE_DIR:-${composeBundle}/share/dearmachine/compose}"
+              export DEARMACHINE_FUSE_OVERLAYFS="''${DEARMACHINE_FUSE_OVERLAYFS:-${lib.getExe pkgs.fuse-overlayfs}}"
+              export DEARMACHINE_IMAGE_ARCHIVE="''${DEARMACHINE_IMAGE_ARCHIVE:-${dearmachineImage}}"
+              ${builtins.readFile ./scripts/nix/stack-runtime.sh}
+            '';
+          };
         in {
-          inherit pkgs dearmachine goTests install;
+          inherit
+            pkgs dearmachine goTests install dearmachineImage composeBundle
+            composeCheck stackRuntime;
         };
     in {
       packages = forAllSystems (system:
@@ -101,19 +229,30 @@
         in {
           inherit (project) dearmachine install;
           default = project.dearmachine;
+        } // project.pkgs.lib.optionalAttrs project.pkgs.stdenv.isLinux {
+          dearmachine-image = project.dearmachineImage;
+          dearmachine-compose = project.composeBundle;
+          dearmachine-stack = project.stackRuntime;
         });
 
-      apps = forAllSystems (system: {
-        default = {
-          type = "app";
-          program = "${self.packages.${system}.dearmachine}/bin/dearmachine";
-        };
-        dearmachine = self.apps.${system}.default;
-        install = {
-          type = "app";
-          program = "${self.packages.${system}.install}/bin/dearmachine-install";
-        };
-      });
+      apps = forAllSystems (system:
+        let project = packageSet system;
+        in {
+          default = {
+            type = "app";
+            program = "${self.packages.${system}.dearmachine}/bin/dearmachine";
+          };
+          dearmachine = self.apps.${system}.default;
+          install = {
+            type = "app";
+            program = "${self.packages.${system}.install}/bin/dearmachine-install";
+          };
+        } // project.pkgs.lib.optionalAttrs project.pkgs.stdenv.isLinux {
+          dearmachine-stack = {
+            type = "app";
+            program = "${self.packages.${system}.dearmachine-stack}/bin/dearmachine-stack";
+          };
+        });
 
       checks = forAllSystems (system:
         let
@@ -140,6 +279,9 @@
             "$HOME/.local/bin/dearmachine" --help 2>&1 | grep -F "Usage of dearmachine"
             touch $out
           '';
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          image = project.dearmachineImage;
+          compose = project.composeCheck;
         });
     };
 }

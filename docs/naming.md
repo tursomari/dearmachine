@@ -53,19 +53,25 @@ supersession note.
 | User install app | `install` (`nix run .#install`) |
 
 The `install` app installs `~/.local/bin/dearmachine` and prepares the canonical
-directories under `~/.dearmachine`. Host supervision and container lifecycle
-commands remain planned work.
+directories under `~/.dearmachine`. The container lifecycle is implemented;
+host supervision remains planned work.
 
-## Planned container conventions
+## Container conventions
 
-These conventions are planned and are not yet implemented:
-
-| Context | Planned form |
+| Context | Canonical form |
 | --- | --- |
 | Container image | `localhost/dearmachine:nix` |
 | Compose service | `dearmachine` |
 | Stack wrapper | `dearmachine-stack` |
+
+The image is the `dearmachine-image` flake package, and the wrapper is available
+as both the `dearmachine-stack` package and app. The wrapper names follow the
+xsrc pattern.
+
+## Planned host convention
+
+| Context | Planned form |
+| --- | --- |
 | Host lifecycle wrapper | `dearmachine-host-lifecycle` |
 
-The wrapper names follow the xsrc pattern; documentation must continue to mark
-them as planned until the corresponding implementation lands.
+Host lifecycle and live-state migration remain planned until Stage 3 lands.

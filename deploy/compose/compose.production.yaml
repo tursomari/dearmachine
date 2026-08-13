@@ -1,0 +1,11 @@
+services:
+  dearmachine:
+    environment:
+      AGENTMAIL_API_KEY: ""
+      AGENTMAIL_API_KEY_FILE: /run/secrets/dearmachine_agentmail_api_key
+    secrets:
+      - dearmachine_agentmail_api_key
+
+secrets:
+  dearmachine_agentmail_api_key:
+    external: true

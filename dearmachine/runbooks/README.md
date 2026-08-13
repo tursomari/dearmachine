@@ -6,6 +6,10 @@ Go test suite.
 
 ## Normal operation
 
+- [`container-spin-up.md`](./container-spin-up.md) builds the Stage 2 Nix OCI
+  image and exercises an isolated rootless Podman lifecycle before describing
+  the additional inputs for a functional disposable client. It does not
+  migrate the normal host installation.
 - [`operate-entrypoint-client.md`](./operate-entrypoint-client.md) launches,
   monitors, stops, and restarts the normal installed client. It deliberately
   uses the machine entry point for both email sessions and maintenance.

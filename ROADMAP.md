@@ -50,9 +50,13 @@ Current behavior and test commands are documented in
   loop, and successful `mct-agent` execution.
 - The root Nix flake now provides the `dearmachine` package, `install` app,
   build and help smoke checks, and a CGO-enabled Go-suite check.
-- Continue the single install path with the pending OCI image, Compose stack,
-  and explicit container execution boundary, then add the pending host
-  lifecycle, systemd user unit, and WAL-safe live-state migration.
+- The Stage 2 install path now provides `localhost/dearmachine:nix`, the
+  `dearmachine` Compose service, an isolated rootless `dearmachine-stack`
+  wrapper, image and Compose checks, and a documented host-mount boundary for
+  client state, mct-agent/Agent Manager/backend tools, and coding repositories.
+- Continue with the pending host lifecycle, systemd user unit, production
+  secret rotation workflow, richer poll/backend health, and WAL-safe live-state
+  migration.
 
 ## 3. Close security and failure-handling gaps
 

@@ -1,0 +1,55 @@
+name: ${DEARMACHINE_PROJECT_NAME:-dearmachine}
+
+services:
+  dearmachine:
+    image: ${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}
+    restart: unless-stopped
+    environment:
+      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY:-}
+      AGENTMAIL_API_KEY_FILE: ${AGENTMAIL_API_KEY_FILE:-}
+      DEARMACHINE_HOME: /home/dearmachine/.dearmachine
+      DEARMACHINE_PIDFILE: /home/dearmachine/.dearmachine/run/dearmachine.pid
+      HOME: /home/dearmachine
+      MACHTIANI_SESSION_ID: ""
+      PATH: /opt/dearmachine/bin:/bin
+      XDG_CACHE_HOME: /home/dearmachine/.cache
+      XDG_CONFIG_HOME: /home/dearmachine/.config
+      XDG_STATE_HOME: /home/dearmachine/.local/state
+    command:
+      - --inbox-id
+      - ${DEARMACHINE_INBOX_ID:?set DEARMACHINE_INBOX_ID}
+      - --project
+      - /workspace
+      - --config
+      - /home/dearmachine/.dearmachine/config/dearmachine.toml
+      - --agent-manager
+      - /opt/dearmachine/bin/agent-manager
+      - --mct-agent
+      - /opt/dearmachine/bin/mct-agent
+      - --db
+      - /home/dearmachine/.dearmachine/state/dearmachine.db
+      - --pidfile
+      - /home/dearmachine/.dearmachine/run/dearmachine.pid
+      - --entry-point-repo
+      - ${DEARMACHINE_ENTRY_POINT_REPO:-}
+      - --entry-point-prompt
+      - ${DEARMACHINE_ENTRY_POINT_PROMPT:-/home/dearmachine/.dearmachine/entrypoint/main/documentation/update-prompt-template.md}
+      - --poll-interval
+      - ${DEARMACHINE_POLL_INTERVAL:-60s}
+      - --verbose
+    volumes:
+      - ${DEARMACHINE_CLIENT_HOME:?set DEARMACHINE_CLIENT_HOME}:/home/dearmachine:Z
+      - ${DEARMACHINE_CLIENT_CONFIG_DIR:?set DEARMACHINE_CLIENT_CONFIG_DIR}:/home/dearmachine/.dearmachine/config:Z
+      - ${DEARMACHINE_CLIENT_STATE_DIR:?set DEARMACHINE_CLIENT_STATE_DIR}:/home/dearmachine/.dearmachine/state:Z
+      - ${DEARMACHINE_CLIENT_RUN_DIR:?set DEARMACHINE_CLIENT_RUN_DIR}:/home/dearmachine/.dearmachine/run:Z
+      - ${DEARMACHINE_CLIENT_LOG_DIR:?set DEARMACHINE_CLIENT_LOG_DIR}:/home/dearmachine/.dearmachine/log:Z
+      - ${DEARMACHINE_MACHTIANI_DIR:?set DEARMACHINE_MACHTIANI_DIR}:/home/dearmachine/.machtiani:Z
+      - ${DEARMACHINE_PROJECT_DIR:?set DEARMACHINE_PROJECT_DIR}:/workspace:Z
+      - ${DEARMACHINE_TOOLS_DIR:?set DEARMACHINE_TOOLS_DIR}:/opt/dearmachine/bin:ro
+      - /nix/store:/nix/store:ro
+    healthcheck:
+      test: ["CMD", "dearmachine-health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s

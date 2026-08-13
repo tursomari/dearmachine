@@ -1,0 +1,7 @@
+services:
+  dearmachine:
+    entrypoint: ["/bin/sh", "/opt/dearmachine/bin/test-service.sh"]
+    command: []
+    restart: "no"
+    healthcheck:
+      disable: true

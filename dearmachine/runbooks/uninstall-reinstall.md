@@ -13,6 +13,12 @@ path before moving it.
 
 ## Scope and important boundaries
 
+The Stage 2 OCI path is documented in
+[`container-spin-up.md`](container-spin-up.md). Run its credential-free image
+and Compose lifecycle against a scratch home after the Nix checks below. Do not
+mount the backup or restored live `~/.dearmachine` tree into the container:
+host-service cutover and WAL-safe live-state migration remain Stage 3 work.
+
 The normal local installation consists of:
 
 - `~/.local/bin/dearmachine`;
@@ -269,13 +275,15 @@ exercise have passed and the operator separately approves deletion.
    cd "$source_repo"
    nix flake check
    nix build .#dearmachine
+   nix build .#dearmachine-image
    nix build
    ```
 
-   The flake check runs the Go suite with CGO enabled and runs the installed
-   command's `--help` smoke test. The package wraps Git as a standard runtime
-   dependency; `mct-agent`, Agent Manager, and configured backends remain
-   separately discovered operator-managed executables.
+   The flake check runs the Go suite with CGO enabled, the installed command's
+   `--help` smoke test, the OCI image build, and a hermetic Compose structure
+   check. The package wraps Git as a standard runtime dependency; `mct-agent`,
+   Agent Manager, and configured backends remain separately discovered
+   operator-managed executables and are mounted at container runtime.
 
 3. Build and verify the separately installed Agent Manager executable in a
    private temporary directory:
