@@ -51,6 +51,16 @@ version = 1
 backends = ["codex"]
 ```
 
+The built-in `codex-yolo` backend runs the host `codex` command with approvals
+and sandboxing disabled. It can access any host path available to the
+DearMachine user and is therefore excluded from the interactive setup default;
+select it explicitly only when email-dispatched work should have that authority:
+
+```toml
+version = 1
+backends = ["codex-yolo", "forge"]
+```
+
 DearMachine resolves `agent-manager` from the installed package. Agent Manager
 reads this configuration and resolves each selected backend from the inherited
 `PATH`. Changing backend installation or authentication does not require

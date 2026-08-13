@@ -73,6 +73,27 @@ func TestCodexAdapterAddsTicketDirectory(t *testing.T) {
 	}
 }
 
+func TestCodexYoloAdapterBypassesApprovalsAndSandbox(t *testing.T) {
+	launch, err := (CodexYoloAdapter{}).Prepare(context.Background(), "/project", "/tickets/ticket-1")
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if launch.Command.Dir != "/project" {
+		t.Fatalf("command directory = %q", launch.Command.Dir)
+	}
+	want := []string{
+		"codex",
+		"exec",
+		"--skip-git-repo-check",
+		"--json",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-",
+	}
+	if !slices.Equal(launch.Command.Args, want) {
+		t.Fatalf("command args = %v, want %v", launch.Command.Args, want)
+	}
+}
+
 func TestForgeAdapterInvokesForgeDirectly(t *testing.T) {
 	adapter := ForgeAdapter{newSessionID: func() (string, error) {
 		return "029a3702-f8fa-470f-8a28-190c0f53410e", nil
@@ -280,10 +301,12 @@ func TestForgeTicketCancel(t *testing.T) {
 }
 
 func TestBackendHealthFileProbe(t *testing.T) {
-	for _, backend := range []string{"codex", "forge"} {
+	for _, backend := range []string{"codex", "codex-yolo", "forge"} {
 		t.Run(backend, func(t *testing.T) {
 			bin := t.TempDir()
-			executableName := map[string]string{"codex": "codex", "forge": "forge"}[backend]
+			executableName := map[string]string{
+				"codex": "codex", "codex-yolo": "codex", "forge": "forge",
+			}[backend]
 			executable := filepath.Join(bin, executableName)
 			script := `#!/bin/sh
 set -eu
@@ -292,7 +315,7 @@ path=${prompt#*exactly }
 path=${path%% containing exactly*}
 printf '%s\n' 'Dear Machine, backend health probe.' > "$path"
 `
-			if backend == "codex" {
+			if backend != "forge" {
 				script += `printf '%s\n' '{"type":"thread.started","thread_id":"health-session"}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"probe complete"}}'
 `

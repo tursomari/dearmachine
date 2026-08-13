@@ -16,10 +16,10 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		ids = append(ids, backend.ID)
 		executables = append(executables, backend.Executable)
 	}
-	if !reflect.DeepEqual(ids, []string{"codex", "forge"}) {
+	if !reflect.DeepEqual(ids, []string{"codex", "codex-yolo", "forge"}) {
 		t.Fatalf("backend IDs = %v", ids)
 	}
-	if !reflect.DeepEqual(executables, []string{"codex", "forge"}) {
+	if !reflect.DeepEqual(executables, []string{"codex", "codex", "forge"}) {
 		t.Fatalf("backend executables = %v", executables)
 	}
 
@@ -29,8 +29,8 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		}
 		return "", os.ErrNotExist
 	})
-	if len(detections) != 2 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
-		detections[1].Found {
+	if len(detections) != 3 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
+		!detections[1].Found || detections[1].Path != "/test/bin/codex" || detections[2].Found {
 		t.Fatalf("detections = %+v", detections)
 	}
 }
@@ -188,6 +188,37 @@ func TestSetupAgentsPreferredOverrideStillRequiresConfirmation(t *testing.T) {
 		fakeBackendLookup("codex"),
 	); err == nil || !strings.Contains(err.Error(), "was not detected") {
 		t.Fatalf("missing preferred backend error = %v", err)
+	}
+}
+
+func TestSetupAgentsRequiresExplicitCodexYoloOptIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dearmachine.toml")
+	var output strings.Builder
+	config, err := SetupAgents(
+		strings.NewReader("yes\n"),
+		&output,
+		path,
+		[]string{"codex-yolo"},
+		fakeBackendLookup("codex"),
+	)
+	if err != nil || !reflect.DeepEqual(config.Backends, []string{"codex-yolo"}) {
+		t.Fatalf("preferred codex-yolo SetupAgents = %+v, %v", config, err)
+	}
+	if !strings.Contains(output.String(), "codex-yolo") ||
+		!strings.Contains(output.String(), "explicit opt-in") {
+		t.Fatalf("codex-yolo opt-in notice missing:\n%s", output.String())
+	}
+
+	defaultPath := filepath.Join(t.TempDir(), "dearmachine.toml")
+	defaultConfig, err := SetupAgents(
+		strings.NewReader("yes\n"),
+		ioDiscard{},
+		defaultPath,
+		nil,
+		fakeBackendLookup("codex"),
+	)
+	if err != nil || !reflect.DeepEqual(defaultConfig.Backends, []string{"codex"}) {
+		t.Fatalf("default SetupAgents selected unrestricted backend = %+v, %v", defaultConfig, err)
 	}
 }
 

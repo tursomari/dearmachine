@@ -181,8 +181,14 @@ func SetupAgents(
 	for _, detection := range detections {
 		if detection.Found {
 			found[detection.Backend.ID] = detection
-			defaultOrder = append(defaultOrder, detection.Backend.ID)
-			fmt.Fprintf(output, "  found   %-10s %s\n", detection.Backend.ID, detection.Path)
+			if !detection.Backend.ExplicitOptIn {
+				defaultOrder = append(defaultOrder, detection.Backend.ID)
+			}
+			suffix := ""
+			if detection.Backend.ExplicitOptIn {
+				suffix = " (explicit opt-in)"
+			}
+			fmt.Fprintf(output, "  found   %-10s %s%s\n", detection.Backend.ID, detection.Path, suffix)
 		} else {
 			fmt.Fprintf(output, "  missing %-10s (%s)\n", detection.Backend.ID, detection.Backend.Executable)
 		}

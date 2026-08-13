@@ -8,20 +8,20 @@ import (
 
 func TestCatalogAndEnvironmentRoundTrip(t *testing.T) {
 	registered := All()
-	if len(registered) != 2 || registered[0].ID != "codex" || registered[1].ID != "forge" {
+	if len(registered) != 3 || registered[0].ID != "codex" ||
+		registered[1].ID != "codex-yolo" || registered[2].ID != "forge" {
 		t.Fatalf("catalog = %+v", registered)
 	}
-	for _, backend := range registered {
-		if backend.ID != backend.Executable {
-			t.Errorf("backend ID %q does not match executable %q", backend.ID, backend.Executable)
-		}
+	yolo, ok := Lookup("codex-yolo")
+	if !ok || yolo.Executable != "codex" || !yolo.ExplicitOptIn {
+		t.Fatalf("codex-yolo backend = %+v, found = %v", yolo, ok)
 	}
-	encoded, err := Encode([]string{"forge", "codex"})
-	if err != nil || encoded != `["forge","codex"]` {
+	encoded, err := Encode([]string{"codex-yolo", "forge", "codex"})
+	if err != nil || encoded != `["codex-yolo","forge","codex"]` {
 		t.Fatalf("Encode = %q, %v", encoded, err)
 	}
 	decoded, err := Decode(encoded)
-	if err != nil || !reflect.DeepEqual(decoded, []string{"forge", "codex"}) {
+	if err != nil || !reflect.DeepEqual(decoded, []string{"codex-yolo", "forge", "codex"}) {
 		t.Fatalf("Decode = %v, %v", decoded, err)
 	}
 }

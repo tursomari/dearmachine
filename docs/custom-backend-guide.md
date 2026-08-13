@@ -1,6 +1,6 @@
 # Register Your Own Backend Agent in the DearMachine Client
 
-The DearMachine Client supports custom backend agents—you can bring any program that speaks stdin/stdout and have it handle work tickets just like the built-in `codex` and `forge` backends. You don't need to edit Go source or recompile anything; you just write a short TOML snippet and approve the backend's ID. Here's how, step by step.
+The DearMachine Client supports custom backend agents—you can bring any program that speaks stdin/stdout and have it handle work tickets just like the built-in `codex`, explicit-opt-in `codex-yolo`, and `forge` backends. You don't need to edit Go source or recompile anything; you just write a short TOML snippet and approve the backend's ID. Here's how, step by step.
 
 ## 1. Create the custom-backends configuration file
 

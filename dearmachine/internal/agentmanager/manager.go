@@ -78,6 +78,35 @@ func (CodexAdapter) Prepare(ctx context.Context, cwd, writableDir string) (Launc
 }
 
 func (CodexAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) (Observation, error) {
+	return consumeCodexStdout(stdout, foundSession)
+}
+
+// CodexYoloAdapter runs Codex without approvals or sandboxing. It is a
+// separate, explicitly selected backend because its worker inherits every
+// host permission available to the DearMachine user.
+type CodexYoloAdapter struct{}
+
+func (CodexYoloAdapter) Name() string       { return "codex-yolo" }
+func (CodexYoloAdapter) Executable() string { return "codex" }
+func (CodexYoloAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
+	command := exec.CommandContext(
+		ctx,
+		"codex",
+		"exec",
+		"--skip-git-repo-check",
+		"--json",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-",
+	)
+	command.Dir = cwd
+	return Launch{Command: command}, nil
+}
+
+func (CodexYoloAdapter) ConsumeStdout(stdout io.Reader, foundSession func(string)) (Observation, error) {
+	return consumeCodexStdout(stdout, foundSession)
+}
+
+func consumeCodexStdout(stdout io.Reader, foundSession func(string)) (Observation, error) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	observation := Observation{}
@@ -193,8 +222,9 @@ func New(root string) *Manager {
 	m := &Manager{
 		Root: filepath.Clean(root),
 		Adapters: map[string]Adapter{
-			"codex": CodexAdapter{},
-			"forge": ForgeAdapter{},
+			"codex":      CodexAdapter{},
+			"codex-yolo": CodexYoloAdapter{},
+			"forge":      ForgeAdapter{},
 		},
 		ExecutablePath: os.Executable,
 		Now:            time.Now,

@@ -54,7 +54,12 @@ backends = ["codex","forge"]
 `backends` is an approved list in priority order. DearMachine Client validates and
 loads the complete list at startup, then passes that immutable snapshot to each
 managed mct-agent run. Restart DearMachine Client after changing the configuration.
-Agent Manager currently supports `codex` and `forge`. A version-1 config using
+Agent Manager includes `codex`, `codex-yolo`, and `forge`. The ordinary
+`codex` adapter uses Codex's `workspace-write` sandbox. `codex-yolo` is an
+explicit opt-in adapter that passes
+`--dangerously-bypass-approvals-and-sandbox`, giving an email-dispatched
+worker every host permission available to the DearMachine user. Do not select
+it unless that unrestricted trust boundary is intentional. A version-1 config using
 the former `forgecode` identifier is accepted and normalized to `forge` in
 memory; rerun `setup-agents` to rewrite it canonically. A config naming any
 other unsupported backend is rejected with instructions to rerun setup.

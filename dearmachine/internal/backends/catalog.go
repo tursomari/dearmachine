@@ -11,10 +11,11 @@ const EnvironmentVariable = "DEARMACHINE_BACKENDS"
 const legacyForgecodeID = "forgecode"
 
 type Backend struct {
-	ID          string
-	DisplayName string
-	Executable  string
-	InstallHelp string
+	ID            string
+	DisplayName   string
+	Executable    string
+	InstallHelp   string
+	ExplicitOptIn bool
 }
 
 var catalog = []Backend{
@@ -23,6 +24,13 @@ var catalog = []Backend{
 		DisplayName: "Codex CLI",
 		Executable:  "codex",
 		InstallHelp: "Install Codex CLI, then ensure codex is on PATH.",
+	},
+	{
+		ID:            "codex-yolo",
+		DisplayName:   "Codex CLI (unrestricted host access)",
+		Executable:    "codex",
+		InstallHelp:   "Install Codex CLI, then ensure codex is on PATH.",
+		ExplicitOptIn: true,
 	},
 	{
 		ID:          "forge",
