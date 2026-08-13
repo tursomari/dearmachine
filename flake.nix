@@ -2,8 +2,9 @@
   description = "DearMachine Client";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  inputs.nixpkgs-codex.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-  outputs = { self, nixpkgs }:
+  outputs = { self, nixpkgs, nixpkgs-codex }:
     let
       systems = [
         "x86_64-linux"
@@ -15,6 +16,7 @@
       packageSet = system:
         let
           pkgs = import nixpkgs { inherit system; };
+          codexPkgs = import nixpkgs-codex { inherit system; };
           lib = pkgs.lib;
           patchedGo = pkgs.go.overrideAttrs (_: {
             version = "1.26.5";
@@ -69,6 +71,7 @@
             postInstall = "";
             meta.mainProgram = "agent-manager";
           });
+          codexTool = codexPkgs.codex;
           goTests = dearmachine.overrideAttrs (_: {
             pname = "dearmachine-go-tests";
             doCheck = true;
@@ -319,7 +322,7 @@
           '';
         in {
           inherit
-            pkgs dearmachine agentManager goTests install dearmachineImage composeBundle
+            pkgs dearmachine agentManager codexTool goTests install dearmachineImage composeBundle
             composeCheck stackRuntime stateMigration hostLifecycle
             hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
             unitCheck hostLifecycleCheck stateMigrationCheck runbookCheck shellCheck;
@@ -330,6 +333,7 @@
         in {
           inherit (project) dearmachine install;
           agent-manager = project.agentManager;
+          codex-tool = project.codexTool;
           default = project.dearmachine;
         } // project.pkgs.lib.optionalAttrs project.pkgs.stdenv.isLinux {
           dearmachine-image = project.dearmachineImage;

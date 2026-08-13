@@ -53,6 +53,24 @@ executables or Nix-store symlinks in
 client home at `~/.local/share/dearmachine/client-home`. The service mounts the
 selected project and the current user's `~/.machtiani` separately.
 
+The flake exposes the in-tree Agent Manager and a separately pinned compatible
+Codex CLI for that boundary:
+
+```bash
+nix build .#agent-manager --out-link \
+  "$HOME/.local/share/dearmachine/tools/.roots/agent-manager"
+nix build .#codex-tool --out-link \
+  "$HOME/.local/share/dearmachine/tools/.roots/codex"
+ln -sfn .roots/agent-manager/bin/agent-manager \
+  "$HOME/.local/share/dearmachine/tools/agent-manager"
+ln -sfn .roots/codex/bin/codex \
+  "$HOME/.local/share/dearmachine/tools/codex"
+```
+
+Keep these as Nix GC roots. A backend executable merely being present is not
+readiness proof; run its Agent Manager functional health probe from inside the
+production container before accepting the cutover.
+
 Never put the AgentMail key in `stack.env`. Create a mode-`0600`, user-owned
 input file, synchronize it into the exact external Podman secret required by
 the production Compose overlay, then remove or retain that input according to
