@@ -16,7 +16,7 @@ nix run .#container-migrate -- --dry-run
 ```
 
 Dry-run opens only
-`/home/david/.dearmachine/state/device-client.db`, using a SQLite URI with
+`$HOME/.dearmachine/state/device-client.db`, using a SQLite URI with
 `mode=ro`, and copies a consistent view through SQLite's online backup API. It
 does not stop a process, checkpoint the live database, rename a live file, or
 operate directly on its `-wal`/`-shm` sidecars. The full checkpoint, rollback,

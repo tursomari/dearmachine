@@ -189,7 +189,7 @@ Send an email to your `Dear Machine,` address.
 To: my-laptop-k7vx9m@dearmachine.to
 Subject: Check my project
 
-Tell me what branch I am on in ~/projects/dearmachine and whether there
+Tell me what branch I am on in /path/to/dearmachine and whether there
 are any uncommitted changes.
 ```
 
@@ -212,7 +212,7 @@ Replies continue the same conversation and local agent session.
 ```text
 Subject: Fix reconnect bug
 
-Use ~/projects/dearmachine.
+Use /path/to/dearmachine.
 
 Find the reconnect bug, fix it, run the relevant tests, and show me what
 changed. Do not commit.
@@ -223,7 +223,7 @@ changed. Do not commit.
 ```text
 Subject: Vacation story
 
-Find something funny in my ~/Vacations folder and tell me the story.
+Find something funny in my /path/to/vacation-photos folder and tell me the story.
 ```
 
 ### Ask for a status update
@@ -264,7 +264,7 @@ push anything.
 You can still be explicit when useful:
 
 ```text
-Directory: ~/projects/payments
+Directory: /path/to/payments
 Agent: codex
 Model: default
 Reasoning: high

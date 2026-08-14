@@ -39,7 +39,7 @@ Create the non-secret service environment before installation:
 install -d -m 0700 "$HOME/.config/dearmachine"
 install -d -m 0700 "$HOME/.local/share/dearmachine/tools"
 
-project_dir="$HOME/projects/<project>"
+project_dir="/absolute/path/to/project"
 test -d "$project_dir/.git"
 
 install -m 0600 /dev/null "$HOME/.config/dearmachine/stack.env"

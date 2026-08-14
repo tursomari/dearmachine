@@ -298,10 +298,11 @@ when they are invalid for the selected catalog entry.
 
 ## Sources
 
-The survey source was `/home/david/Downloads/agentmail_competitor_landscape.md`,
-titled “AgentMail-Style Competitor Landscape,” prepared 2026-08-06. Its product
-claims are a point-in-time summary and should be checked against the following
-provider pages before an implementation or purchasing decision:
+The comparison began as a maintainer research note titled “AgentMail-Style
+Competitor Landscape,” prepared 2026-08-06. That local note is not a repository
+dependency. Its product claims are a point-in-time summary and should be checked
+against the following provider pages before an implementation or purchasing
+decision:
 
 - OpenMail: <https://openmail.sh/>
 - Dead Simple Email: <https://deadsimple.email/>

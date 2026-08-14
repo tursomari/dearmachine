@@ -9,7 +9,7 @@ Each backend gets its own `[id]` section.  Here's the minimal entry for a backen
 
 ```toml
 [deepcode]
-executable = "/home/david/bin/deepcode-backend"
+executable = "deepcode-backend"
 output_format = "plain"
 ```
 
@@ -29,9 +29,8 @@ For deepcode, the full entry might look like:
 ```toml
 [deepcode]
 name = "Deepcode (Deepseek v4 Flash)"
-executable = "/home/david/bin/deepcode-backend"
+executable = "deepcode-backend"
 output_format = "plain"
-environment = { DEEPSEEK_API_KEY = "sk-..." }
 install_help = "See the custom backend runbook for details."
 ```
 
@@ -72,7 +71,7 @@ The order sets the **priority**—when no specific backend is requested, the Dea
 From the `dearmachine` directory, build the `agent-manager` and run a health probe:
 
 ```bash
-cd ~/projects/DearMachine/dearmachine
+cd /path/to/DearMachine/dearmachine
 go build -o agent-manager ./cmd/agent-manager
 
 DEARMACHINE_BACKENDS='["deepcode"]' ./agent-manager backend health deepcode
@@ -171,9 +170,8 @@ session lock. The client fails with an error matching
 
 ## Where to find more help
 
-- **Design document** (architecture details): `~/projects/pm/docs/custom-backend-design.md`
-- **PM ticket** (feature track & feedback): `7fe89894` (in `~/projects/pm/.issues`)
-- **Runbook** with deepcode example and troubleshooting: `~/projects/mct/docs/registering-a-custom-backend.md`
+- [DearMachine Client and Agent Manager](../dearmachine/README.md)
+- [The versioned DeepCode wrapper example](../scripts/deepcode-wrapper.sh)
 
 ## DeepCode CLI example (using the `deepcode` CLI directly)
 
@@ -184,7 +182,7 @@ handles the agent-manager's stdin protocol.
 ### 1. Install deepcode
 
 ```bash
-cd ~/projects/deepcode-cli
+cd /path/to/deepcode-cli
 npm install && npm run build
 # Ensure Node 23+ is on PATH; deepcode uses regex features from Node 23+
 ```
@@ -193,7 +191,7 @@ npm install && npm run build
 
 Save the wrapper script (see `scripts/deepcode-wrapper.sh` in the DearMachine
 repository) to a location on your machine, e.g.
-`~/projects/DearMachine/scripts/deepcode-wrapper.sh`. The wrapper:
+`/path/to/DearMachine/scripts/deepcode-wrapper.sh`. The wrapper:
 
 - Recognises health-check probes and writes the probe file
 - Extracts the `Close-Path` from ticket-open.md headers
@@ -205,9 +203,9 @@ repository) to a location on your machine, e.g.
 ```toml
 [deepcode]
 name = "DeepCode (Deepseek v4 Flash)"
-executable = "/home/david/projects/DearMachine/scripts/deepcode-wrapper.sh"
+executable = "/path/to/DearMachine/scripts/deepcode-wrapper.sh"
 output_format = "plain"
-install_help = "cd ~/projects/deepcode-cli && npm install && npm run build"
+install_help = "Install DeepCode CLI and ensure the deepcode executable is on PATH"
 ```
 
 ### 4. How the Close-Path protocol works
