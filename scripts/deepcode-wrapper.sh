@@ -8,8 +8,10 @@ set -euo pipefail
 # 2. For tickets: extract the Close-Path header, invoke deepcode headless,
 #    and write the reply to the Close-Path.
 
-# Ensure Node 23+ is on PATH for the deepcode CLI
-export PATH="$HOME/.config/nvm/versions/node/v23.5.0/bin:$PATH"
+if ! command -v deepcode >/dev/null 2>&1; then
+    echo "Error: deepcode is not on PATH; install DeepCode CLI before using this wrapper" >&2
+    exit 1
+fi
 
 stdin=$(cat)
 
