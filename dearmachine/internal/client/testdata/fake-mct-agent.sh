@@ -87,7 +87,7 @@ text=
 while [ "$#" -gt 0 ]; do
 	printf '%s\n' "$1" >> "$capture_dir/args-$count"
 	case "$1" in
-		--text)
+		--prompt)
 			shift
 			text=$1
 			;;

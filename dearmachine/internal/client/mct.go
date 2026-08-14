@@ -112,7 +112,7 @@ func (r *MCTRunner) Run(
 	}
 	args := []string{
 		"run",
-		"--text", text,
+		"--prompt", text,
 	}
 	if !session.IsNew {
 		args = append(args, "--session-id", session.SessionID)

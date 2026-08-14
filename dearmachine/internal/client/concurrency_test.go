@@ -547,7 +547,7 @@ func gatedRunInvoker(started chan<- gatedRun, release <-chan struct{}) func(*exe
 }
 
 func parseGatedRun(args []string) (gatedRun, error) {
-	prompt := commandArgument(args, "--text")
+	prompt := commandArgument(args, "--prompt")
 	match := promptSessionLine.FindStringSubmatch(prompt)
 	if len(match) != 3 {
 		return gatedRun{}, fmt.Errorf("prompt session line not found in %q", prompt)
