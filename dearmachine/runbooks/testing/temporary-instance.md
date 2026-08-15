@@ -27,7 +27,7 @@ Preserve all pre-existing tracked and untracked workspace state.
 Live integration protocols use the containerized production path in this
 document by default. That path exercises the Nix-built OCI image, packaged
 Agent Manager, real rootless Compose lifecycle, mounts, secret boundary,
-mct-agent, and configured backend without requiring systemd. Use the native diagnostic exception only
+machtiani, and configured backend without requiring systemd. Use the native diagnostic exception only
 when a protocol explicitly scopes the test to direct binary behavior that does
 not claim container or deployment coverage.
 
@@ -44,7 +44,7 @@ Identify or ask the tester for:
 - the ordered backend list;
 - the AgentMail API credential location;
 - one or more email accounts authorized to send the live messages;
-- the mct-agent executable or source revision; and
+- the machtiani executable or source revision; and
 - authorization to create and permanently delete a temporary AgentMail inbox
   and to send the protocol's messages; and
 - authorization to create and delete exact temporary mail-list entries when an
@@ -119,15 +119,15 @@ Compose, mount, secret, or container-health paths.
    go build -o "$runtime_root/agent-manager" ./cmd/agent-manager
    ```
 
-   Resolve mct-agent to an absolute path and record its version or revision. If
+   Resolve machtiani to an absolute path and record its version or revision. If
    local mct changes are under test, build that revision beneath the runtime
    root too.
 
 3. Create the project arrangement named by the protocol:
 
    - For an ordinary isolated project, create a temporary Git repository and
-     run `mct-agent init --no-interactive --json` followed by
-     `mct-agent project show --json`.
+     run `machtiani init --no-interactive --json` followed by
+     `machtiani project show --json`.
    - For entry-point initialization, run the freshly built DearMachine Client's
      `init` command against an empty directory beneath the runtime root. Pass a
      snapshot directory when the protocol needs the initialization boundaries.
@@ -153,7 +153,7 @@ Compose, mount, secret, or container-health paths.
    inbox with a read operation. Do not invent or reuse an inbox ID.
 
 > **Warning: MACHTIANI_SESSION_ID collision.** If this test runs from within
-> an existing mct-agent session, the inherited `MACHTIANI_SESSION_ID`
+> an existing machtiani session, the inherited `MACHTIANI_SESSION_ID`
 > environment variable causes the temporary dearmachine to collide with
 > the parent session lock. The client will fail with an error matching
 > `session already active for .../session.lock`. Prevent this by either:
@@ -177,7 +177,7 @@ Compose, mount, secret, or container-health paths.
      --project <protocol-project>
      --config <runtime-root>/dearmachine.toml
      --agent-manager <runtime-root>/agent-manager
-     --mct-agent <absolute-mct-agent-path>
+     --agent-bin <absolute-machtiani-path>
      --db <runtime-root>/dearmachine.db
      --pidfile <runtime-root>/dearmachine.pid
      --entry-point-repo <empty-or-disposable-entry-point>
@@ -241,7 +241,7 @@ install -d -m 0700 \
 ```
 
 Initialize the disposable project and copy or symlink the exact tested
-Linux/Nix `mct-agent` and selected backend executables into
+Linux/Nix `machtiani` and selected backend executables into
 `$DEARMACHINE_TOOLS_DIR`. Provision only that backend's necessary credential
 files beneath `$DEARMACHINE_CLIENT_HOME`; never mount
 or copy the ambient home wholesale. Write its version-1 backend configuration
@@ -305,7 +305,7 @@ Depending on the protocol, inspect:
 - DearMachine Client process health and verbose logs;
 - pending, processed, skipped, and thread-session rows in the disposable
   SQLite database;
-- mct-agent session status, conversation data, and trajectories;
+- machtiani session status, conversation data, and trajectories;
 - Agent Manager health and ticket state through its CLI;
 - source and artifact Git history, hashes, and status;
 - session-sync checkpoint contents and modification times; and
@@ -350,7 +350,7 @@ that no evidence entered version control.
 Treat teardown as part of every pass or failure:
 
 1. Stop the temporary DearMachine Client gracefully. Confirm its PID and PID file
-   are gone and no child mct-agent, Agent Manager, or backend process remains.
+   are gone and no child machtiani, Agent Manager, or backend process remains.
 2. Preserve the approved evidence before deleting runtime data.
 3. Delete only the exact mail-list entries created for the run, and confirm
    each is absent without disturbing pre-existing entries. Never remove the
@@ -359,7 +359,7 @@ Treat teardown as part of every pass or failure:
    metadata, delete each through AgentMail, and confirm subsequent lookups
    report them absent. Inbox deletion is permanent.
 5. Resolve the disposable project's UUID-backed store with
-   `mct-agent project show --json`. Delete that exact store only after proving
+   `machtiani project show --json`. Delete that exact store only after proving
    its project root equals the disposable project and no process uses it.
 6. Validate that the runtime root is non-empty, owned by the current user, has
    the expected test basename, and is not a symlink. Remove only that exact

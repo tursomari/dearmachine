@@ -428,7 +428,7 @@ func sessionStatus(kind ResultKind) string {
 func recoveryResultPath(sessionID, messageID string) string {
 	return filepath.Join(
 		os.TempDir(),
-		"dearmachine-mct-results",
+		"dearmachine-machtiani-results",
 		idempotencyKey(sessionID, messageID)+".md",
 	)
 }

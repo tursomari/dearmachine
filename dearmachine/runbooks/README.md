@@ -8,7 +8,7 @@ Go test suite.
 
 - [`native-install.md`](./native-install.md) is the default portable install
   and foreground execution path. It packages DearMachine and Agent Manager
-  while using `mct-agent` and configured backends from the host `PATH`.
+  while using `machtiani` and configured backends from the host `PATH`.
 - [`host-install.md`](./host-install.md) is the optional Linux container-stack
   installation, secret-provisioning, upgrade/rollback, and systemd-user path.
 - [`operate-entrypoint-client.md`](./operate-entrypoint-client.md) operates and
@@ -38,4 +38,4 @@ Go test suite.
   checkpoints and entry-point update sync.
 
 Never point an isolated live-test protocol at the normal inbox, database,
-entry point, Agent Manager state, or mct-agent project store.
+entry point, Agent Manager state, or machtiani project store.

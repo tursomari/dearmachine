@@ -43,7 +43,7 @@ These invariants remain in force:
   not add a final poll.
 
 Entry-point maintenance defaults to `--maintenance-min-turns 20`. Before session detection,
-`mct-agent session list`, or Git-boundary lookup, `OrchestrateSync` returns when the accumulated
+`machtiani session list`, or Git-boundary lookup, `OrchestrateSync` returns when the accumulated
 count is below threshold. One `processed_messages` row is one completed inbound turn. The count is
 derived with `Store.CountProcessedSince(checkpoint.UpdatedAt)`, equivalent to:
 
@@ -61,7 +61,7 @@ does not alter the rolling rule: review the oldest eligible source and hold the 
 ### Provision the protocol-specific instance
 
 1. Record the source revision, complete source worktree status, backend order,
-   mct-agent revision, normal processes, and normal runtime paths as required
+   machtiani revision, normal processes, and normal runtime paths as required
    by the shared reference. Preserve every pre-existing tracked and untracked
    path.
 2. Create and secure a unique runtime root exactly as follows, retaining its
@@ -75,7 +75,7 @@ does not alter the rolling rule: review the oldest eligible source and hold the 
 3. Build the Nix OCI image from the recorded source revision and use its
    packaged DearMachine Client and Agent Manager. Set the mounted
    `DEARMACHINE_HOME` to isolated state beneath the scratch roots. Resolve
-   mct-agent to the read-only mounted tool path. Unset `MACHTIANI_SESSION_ID` and
+   machtiani to the read-only mounted tool path. Unset `MACHTIANI_SESSION_ID` and
    `MACHTIANI_SESSION_TEMP_ROOT` before initialization, inspection, and cleanup
    commands.
 4. Create a temporary AgentMail sender and receiver. Verify both by exact ID,
@@ -115,7 +115,7 @@ dearmachine # effective command inside the Compose container
   --inbox-id <temporary-receiver-id>
   --project <phase-1-disposable-project>
   --config <runtime-root>/dearmachine.toml
-  --mct-agent /opt/dearmachine/bin/mct-agent
+  --agent-bin /opt/dearmachine/bin/machtiani
   --db <mounted-runtime-root>/phase-1-dearmachine.db
   --pidfile <mounted-runtime-root>/phase-1-dearmachine.pid
   --entry-point-repo ""
@@ -134,11 +134,11 @@ of competing receiver pollers before sending.
 Use two new receiver-side threads, A and B, with safe versioned case IDs and no confidential content.
 
 1. Send A a substantial research, repository-analysis, or comparison task
-   known to keep the selected mct-agent backend working for several minutes.
-   Record the exact prompt privately. Poll `mct-agent session list --json`
+   known to keep the selected machtiani backend working for several minutes.
+   Record the exact prompt privately. Poll `machtiani session list --json`
    until A's mapped session reports `state='running'`. Cross-check that
    A's `pending_messages` row is `running` and a descendant
-   `mct-agent ... run` process exists. If A completes before B can be observed,
+   `machtiani ... run` process exists. If A completes before B can be observed,
    classify the attempt inconclusive and retry with new thread IDs and a
    suitably longer task.
 2. While A is still running, send a concise, independent B request. B must be
@@ -151,9 +151,9 @@ Use two new receiver-side threads, A and B, with safe versioned case IDs and no 
    - the full B row from `pending_messages`, including `message_id`,
      `thread_id`, `sequence`, and `state`;
    - `SELECT COUNT(*) FROM pending_messages WHERE state = 'running'`;
-   - A and B session IDs and states from mct-agent's session list;
+   - A and B session IDs and states from machtiani's session list;
    - a full recursive `/proc` descendant walk from the recorded DearMachine Client
-     PID, counting every descendant whose command line is `mct-agent ... run`;
+     PID, counting every descendant whose command line is `machtiani ... run`;
      do not stop at a fixed generation, and distinguish maintenance sync/run
      children by arguments; and
    - new verbose DearMachine Client poll lines and sender-side AgentMail reply
@@ -210,7 +210,7 @@ poll.
 Stop Phase 1 cleanly and record its final boundary. Initialize a fresh disposable entry point
 beneath the runtime root. Set both `--project` and `--entry-point-repo` to it and pass its seeded
 `documentation/update-prompt-template.md` as `--entry-point-prompt`. Keep the explicit receiver,
-config, Agent Manager, and mct-agent paths; substitute `<runtime-root>/phase-2-dearmachine.db`
+config, Agent Manager, and machtiani paths; substitute `<runtime-root>/phase-2-dearmachine.db`
 and `<runtime-root>/phase-2-dearmachine.pid`; and preserve `--poll-interval 10s`, `--verbose`,
 and the recorded concurrency.
 
@@ -260,7 +260,7 @@ threshold:
   threshold M; skipping maintenance`, with the observed N and configured M;
 - confirm no review fork, maintenance run, delete, sync, source commit, or
   artifact revision occurred;
-- confirm session detection was skipped: no `mct-agent session list` or
+- confirm session detection was skipped: no `machtiani session list` or
   Git-boundary lookup belongs to that gate cycle, and no `reviewing source`
   line appears; and
 - preserve `state/sync-trigger.json` as absent or unchanged. If present, its
@@ -277,7 +277,7 @@ from an independently captured session-list sample used by the tester.
 Once the count reaches or crosses the threshold, require exactly one pipeline
 for that crossing: one fork of the oldest eligible source session, one update
 prompt run on the fork, one fork delete, and one
-`mct-agent sync --include-docs`. Confirm the fork is absent after cleanup,
+`machtiani sync --include-docs`. Confirm the fork is absent after cleanup,
 `state/sync-trigger.json` advances to the reviewed source session with its
 exact `updated_at`, and `turns_accumulated` is reset to `0` only after the full
 pipeline succeeds. The newest source session must not be forked, checkpointed,

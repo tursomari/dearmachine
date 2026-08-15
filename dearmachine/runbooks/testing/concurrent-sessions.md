@@ -22,9 +22,9 @@ workspace state and retain no credentials.
 Apply these details in addition to the shared temporary-instance reference:
 
 1. Unset `MACHTIANI_SESSION_ID` and `MACHTIANI_SESSION_TEMP_ROOT` before every
-   mct-agent invocation, including initialization, inspection, and cleanup.
-2. In the new disposable Git project, run `mct-agent init` before creating the
-   initial commit. Then create that commit before the first `mct-agent sync`;
+   machtiani invocation, including initialization, inspection, and cleanup.
+2. In the new disposable Git project, run `machtiani init` before creating the
+   initial commit. Then create that commit before the first `machtiani sync`;
    otherwise sync fails with `no commits yet`.
 3. Inspect the organization, pod, and inbox receive/reply allow-lists before
    sending. Ensure the temporary receiver address is present in the applicable
@@ -49,7 +49,7 @@ receiver-side message/thread IDs privately.
 2. Send the three baseline emails back-to-back, confirm all three are unread,
    then launch the isolated client with `--concurrency 1` and the explicit paths
    required by the shared reference. A bounded `--once` run is preferred.
-3. Observe each email through claim, mct-agent run, reply, completion, and remote
+3. Observe each email through claim, machtiani run, reply, completion, and remote
    processed marking. A follow-up is outside this protocol; each new thread must
    advance cleanly from sequence zero to sequence one without a gap or reorder.
 4. Confirm all of the following before stopping the phase:
@@ -77,7 +77,7 @@ and reply proof without retaining credentials or unnecessary message content.
    primary worker-slot measure. Record the maximum simultaneous `running` row
    count. At the same samples, cross-check it with a full recursive walk of all
    descendants in `/proc` from the DearMachine Client PID, counting descendants whose
-   command line is `mct-agent ... run`; do not cap the walk at a fixed generation
+   command line is `machtiani ... run`; do not cap the walk at a fixed generation
    depth. Classify transient sync/run children by their arguments.
 4. Repeat every sequential-phase assertion for the three new thread/message IDs:
    exactly three new sessions, one mapping and ordered sequence advancement per
@@ -85,12 +85,12 @@ and reply proof without retaining credentials or unnecessary message content.
    and zero pending rows at shutdown.
 5. Additionally assert that the observed active email worker count never exceeds
    three: the maximum SQLite `state = 'running'` row count is at most three, and
-   the full descendant-process-walk `mct-agent ... run` maximum is also at most
+   the full descendant-process-walk `machtiani ... run` maximum is also at most
    three as a cross-check. Concurrent completion order across the three threads
    is unconstrained.
 
 The phase fails if the pool exceeds three active threads, one session has two
-active mct-agent children, any message or reply is duplicated, a sequence has a
+active machtiani children, any message or reply is duplicated, a sequence has a
 gap, a reply is absent, or a pending row remains. A timeout is inconclusive only
 after retaining the last process, database, session, and inbox state.
 
@@ -98,7 +98,7 @@ after retaining the last process, database, session, and inbox state.
 
 Follow the shared teardown exactly, for both success and failure:
 
-1. Stop the client gracefully and prove its PID, PID file, mct-agent children,
+1. Stop the client gracefully and prove its PID, PID file, machtiani children,
    Agent Manager children, and backend workers are gone.
 2. Preserve the concise approved evidence report first. It may contain private
    temporary IDs and timestamps, but no credentials.

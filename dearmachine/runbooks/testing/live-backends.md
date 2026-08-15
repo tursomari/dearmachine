@@ -3,7 +3,7 @@
 This document is a prompt for a capable local agent, not an executable test
 script. Give the section below to an agent that can inspect the DearMachine
 workspace, run local commands, use an authorized email transport, and observe
-`mct-agent` session data.
+`machtiani` session data.
 
 The protocol exercises the real DearMachine Client, AgentMail inbox and reply path,
 agent-managed shell session, backend health checks, delegated ticket, and
@@ -61,13 +61,13 @@ Before the first test:
 4. Check whether another DearMachine Client is polling the target inbox. Do not run
    competing pollers. If one is active and you cannot safely conduct the test
    through it, stop and ask the tester how to proceed.
-5. Confirm that `forge`, `codex`, and `mct-agent` are present. Do not pre-run the
+5. Confirm that `forge`, `codex`, and `machtiani` are present. Do not pre-run the
    functional backend probes: each managed email trajectory must perform and
    record the health check for the backend under test. A binary merely being
    present on `PATH` is not evidence that its test passed.
 
 Use bounded polling based on observed state changes rather than fixed long
-sleeps. Poll DearMachine Client output, AgentMail state, `mct-agent` session state,
+sleeps. Poll DearMachine Client output, AgentMail state, `machtiani` session state,
 and Agent Manager ticket status every few seconds while work is active, backing
 off to a longer interval when appropriate. Set a reasonable deadline for each
 test and report a timeout with the last observed state.
@@ -90,7 +90,7 @@ For each test, retain evidence of:
 - the Agent Manager ticket ID and its status transitions;
 - the worker recorded for the closed ticket;
 - the final email reply and its thread relationship;
-- the relevant `mct-agent` session and shell-agent trajectory; and
+- the relevant `machtiani` session and shell-agent trajectory; and
 - the absence of tracked repository changes caused by the exercise.
 
 Do not count a test as passed based only on a successful email reply. The

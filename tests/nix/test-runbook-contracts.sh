@@ -33,7 +33,7 @@ grep -F '### Native diagnostic exception' "$temporary" >/dev/null
 grep -F 'pending-to-processed transition' "$temporary" >/dev/null
 grep -F 'Native foreground execution is the default' "$native" >/dev/null
 grep -F 'nix profile install .#dearmachine' "$native" >/dev/null
-grep -F 'mct-agent` and the backend commands' "$native" >/dev/null
+grep -F 'machtiani` and the backend commands' "$native" >/dev/null
 if grep -F -- '--agent-manager /bin/agent-manager' "$PROJECT_ROOT/dearmachine/runbooks/testing/continuous-intake.md"; then
   echo 'container protocol must use packaged Agent Manager through the client PATH' >&2
   exit 1

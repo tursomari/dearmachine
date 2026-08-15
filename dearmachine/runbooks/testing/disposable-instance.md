@@ -60,7 +60,7 @@ suppression:
 1. Keep the disposable client stopped and send one meaningful task to its
    temporary inbox. Record the exact inbound message and thread IDs.
 2. Run `dearmachine inbox skip --current` with the temporary inbox, database,
-   PID, project, and mct-agent paths supplied explicitly. Confirm the local skip
+   PID, project, and machtiani paths supplied explicitly. Confirm the local skip
    list contains exactly that message.
 3. Start the client and observe at least two polls. Confirm the message remains
    unread in AgentMail, no mct session or Agent Manager ticket is created, no

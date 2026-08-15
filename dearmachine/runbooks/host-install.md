@@ -49,7 +49,7 @@ printf '%s\n' \
   >"$HOME/.config/dearmachine/stack.env"
 ```
 
-Put Linux-compatible `mct-agent` and configured backend executables or
+Put Linux-compatible `machtiani` and configured backend executables or
 Nix-store symlinks in
 `~/.local/share/dearmachine/tools`. Authenticate backends only in the private
 client home at `~/.local/share/dearmachine/client-home`. The service mounts the

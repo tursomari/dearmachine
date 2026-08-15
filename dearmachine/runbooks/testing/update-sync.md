@@ -35,7 +35,7 @@ D arrives -> review, sync, and checkpoint C; D is held
 ```
 
 A successful review may legitimately make no documentation change. Even then,
-`mct-agent sync --include-docs` must succeed and the reviewed source session
+`machtiani sync --include-docs` must succeed and the reviewed source session
 must be checkpointed. The test therefore reports checkpoint mechanics and
 documentation sensitivity separately.
 
@@ -47,7 +47,7 @@ documentation sensitivity separately.
    for the temporary DearMachine Client and the sender only for test delivery and
    reply observation.
 2. Create an empty entry-point directory beneath the runtime root and initialize
-   it with the tested image/client. Pass the mounted mct-agent path and a
+   it with the tested image/client. Pass the mounted machtiani path and a
    snapshot directory beneath the runtime root.
 3. Resolve and record the disposable entry point's mct UUID, store path,
    source Git history, internal-README artifact repository, artifact Git
@@ -323,7 +323,7 @@ Give separate verdicts:
 When a previous private report exists, compare the stable case outcomes and
 identify any shift toward over-eager or over-conservative documentation. Do not
 call a change in C alone a regression; report it as sensitivity drift with the
-tested prompt set, DearMachine revision, mct-agent revision, and model
+tested prompt set, DearMachine revision, machtiani revision, and model
 selection.
 
 ### Finish and refine

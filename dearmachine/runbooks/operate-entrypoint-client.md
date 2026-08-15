@@ -27,7 +27,7 @@ Inspect the mounted executable boundary without exposing credentials:
 ```bash
 nix run .#dearmachine-container-lifecycle -- exec dearmachine --help
 nix run .#dearmachine-container-lifecycle -- exec sh -c \
-  'command -v mct-agent && command -v agent-manager'
+  'command -v machtiani && command -v agent-manager'
 ```
 
 ## Start, stop, and restart
@@ -58,7 +58,7 @@ sqlite3 -readonly "$HOME/.dearmachine/state/dearmachine.db" '
 
 `updated_at` records state transitions, not a heartbeat. During an agent turn,
 corroborate an old timestamp with the service, exact container process,
-mct-agent session, Agent Manager ticket, and logs.
+machtiani session, Agent Manager ticket, and logs.
 
 ## Monitor active email sessions
 
@@ -96,10 +96,10 @@ project rather than inferring progress from the database timestamp:
 
 ```bash
 nix run .#dearmachine-container-lifecycle -- exec \
-  mct-agent session show <session-id> --json
+  machtiani session show <session-id> --json
 ```
 
-- Healthy processing has one pending row, a corresponding mct-agent/session,
+- Healthy processing has one pending row, a corresponding machtiani session,
   and advancing trajectory or ticket activity.
 - Healthy idle has no pending row and logs polls at approximately the configured
   interval.
@@ -151,7 +151,7 @@ nix run .#dearmachine -- inbox abandon \
   --db "$database" \
   --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
   --project <exact-host-project-path> \
-  --mct-agent "$HOME/.local/share/dearmachine/tools/mct-agent" \
+  --agent-bin "$HOME/.local/share/dearmachine/tools/machtiani" \
   --reason 'operator abandoned stuck follow-up' \
   "$message_id"
 ```

@@ -11,7 +11,7 @@ The container boundary and tool requirements are documented in
 
 Run from the DearMachine repository root. Every durable writable location is
 placed beneath one private temporary root; the wrapper's `test` mode never
-contacts AgentMail or launches mct-agent, Agent Manager, or a backend.
+contacts AgentMail or launches machtiani, Agent Manager, or a backend.
 
 ```bash
 runtime_root=$(mktemp -d -t dearmachine-container.XXXXXXXX)
@@ -55,7 +55,7 @@ and is not a symlink. Never point these variables at `~/.dearmachine`.
 
 For a real temporary inbox exercise, repeat the isolation setup with
 `DEARMACHINE_STACK_MODE=development`. Create a self-contained Git checkout at
-`DEARMACHINE_PROJECT_DIR`. Put Linux-compatible `mct-agent` and every
+`DEARMACHINE_PROJECT_DIR`. Put Linux-compatible `machtiani` and every
 configured backend executable or symlink in
 `DEARMACHINE_TOOLS_DIR`; Nix-store symlinks work because `/nix/store` is
 mounted read-only. Configure and authenticate those tools only under

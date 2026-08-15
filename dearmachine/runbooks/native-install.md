@@ -2,20 +2,23 @@
 
 Native foreground execution is the default DearMachine deployment. Nix builds
 and installs the DearMachine Client and its matching Agent Manager together;
-`mct-agent` and the backend commands approved in `dearmachine.toml` are
+`machtiani` and the backend commands approved in `dearmachine.toml` are
 resolved from the user's `PATH`. Native deployment does not require an OCI
 runtime, Compose, systemd, or another process supervisor.
 
 ## Prerequisites
 
-Install Nix, install `mct-agent`, and install and authenticate at least one
+Install Nix, install `machtiani`, and install and authenticate at least one
 supported backend. Confirm the commands are available in the environment that
 will launch DearMachine:
 
 ```bash
-command -v mct-agent
+command -v machtiani
 command -v codex # or another configured backend
 ```
+
+The `--agent-bin` flag defaults to `machtiani`; pass an explicit path when the
+executable is not resolved from the launch environment's `PATH`.
 
 DearMachine packages Agent Manager itself. Do not install a separately built
 Agent Manager for normal native operation.
@@ -91,7 +94,7 @@ project="$HOME/.dearmachine/entrypoint/main"
 
 dearmachine init \
   --entry-point-repo "$project" \
-  --mct-agent mct-agent
+  --agent-bin machtiani
 
 dearmachine \
   --inbox-id <inbox-id> \

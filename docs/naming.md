@@ -16,7 +16,7 @@ Use this matrix for source code, documentation, commands, and runtime files.
 | State database | `~/.dearmachine/state/dearmachine.db` | Default SQLite database. |
 | PID file | `~/.dearmachine/run/dearmachine.pid` | Standard supervised-process PID file. |
 | Log | `~/.dearmachine/log/dearmachine.log` | Standard client log. |
-| Temporary results | `dearmachine-mct-results` | Temporary-directory prefix for mct-agent result files. |
+| Temporary results | `dearmachine-machtiani-results` | Temporary-directory prefix for machtiani result files. |
 | Optional container systemd user unit | `dearmachine-stack.service` | Linux container helper; disposable trials use `dearmachine-test-<unique>.service`. Native DearMachine does not assume systemd. |
 
 ## Internal and legacy allow-list
