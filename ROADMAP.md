@@ -7,7 +7,7 @@ cross-repository project-management backlog.
 ## Current baseline
 
 The Go DearMachine Client proves the core loop: poll AgentMail, map email threads to
-durable `mct-agent` sessions in SQLite, recover interrupted work, and send
+durable `machtiani` sessions in SQLite, recover interrupted work, and send
 AnswerUser or AskUser replies. It is single-threaded and has passed two manual
 live-test rounds. The automated suite currently has 14 passing tests and 71.2%
 statement coverage.
@@ -20,7 +20,7 @@ Current behavior and test commands are documented in
 
 - Test CLI flags, required environment, dependency wiring, `--once`, and
   signal cancellation in `cmd/dearmachine`.
-- Extend the AgentMail and fake-`mct-agent` harnesses with injected HTTP,
+- Extend the AgentMail and fake-agent harnesses with injected HTTP,
   subprocess, malformed-status, missing-output, and cancellation failures.
 - Add direct SQLite tests for legacy migration, state transitions, duplicates,
   ordering, sequence conflicts, and reopen/recovery invariants.
@@ -30,13 +30,13 @@ Current behavior and test commands are documented in
 - Add CI for `go test ./...`, `go test -race ./...`, `go vet ./...`, and a
   non-regressing coverage floor.
 - Add a separate opt-in smoke suite for a dedicated AgentMail test inbox and a
-  real installed `mct-agent`.
+  real installed `machtiani`.
 - Split the growing `app_test.go` by responsibility while retaining its shared
   component-test rig.
 
 ## 2. Make local deployment repeatable
 
-- Install and verify Go, `mct-agent`, and the DearMachine Client in the initial
+- Install and verify Go, `machtiani`, and the DearMachine Client in the initial
   alpha WSL environment.
 - Replace or reproducibly provision the local `../.state/agentmail-go` module
   replacement before building on another machine.
@@ -47,16 +47,16 @@ Current behavior and test commands are documented in
 - Exercise process death, machine reboot, network loss, and recovery in a
   documented deployment smoke test.
 - Add enough health reporting to distinguish a live process, a working poll
-  loop, and successful `mct-agent` execution.
+  loop, and successful `machtiani` execution.
 - The root Nix flake now provides the default native `dearmachine` package
   containing both DearMachine and Agent Manager, the `install` development
   app, build and help smoke checks, and a CGO-enabled Go-suite check. Native
-  execution uses `mct-agent` and configured backends from the host `PATH` and
+  execution uses `machtiani` and configured backends from the host `PATH` and
   does not assume a process supervisor.
 - The Stage 2 install path now provides `localhost/dearmachine:nix`, the
   `dearmachine` Compose service, an isolated rootless `dearmachine-stack`
   wrapper, image and Compose checks, and a documented optional host-mount
-  boundary for client state, mct-agent/backend tools, and coding repositories.
+  boundary for client state, machtiani/backend tools, and coding repositories.
   Isolated live integration tests use this container path by default without
   requiring systemd.
 - The optional Linux Stage 3 adapter adds the `dearmachine-stack.service`
@@ -112,7 +112,7 @@ Current behavior and test commands are documented in
   session configuration.
 - Implement attachment inbox/outbox staging per session‑thread with
   timestamped directories (`.attachments-inbox/` and
-  `.attachments-outbox/`). The outbox holds files that `mct-agent` intends to
+  `.attachments-outbox/`). The outbox holds files that `machtiani` intends to
   share as email attachments, since the turn conclusion is the email response.
 - The repository rename is complete: maintain binary `dearmachine`,
   user-facing “DearMachine Client”, Go package `internal/client`, and “Device
@@ -131,7 +131,7 @@ Current behavior and test commands are documented in
 - Support per‑user preference and values imbuing during device initialization,
   starting with Magnifica Humanitas alignment and user‑specific goals for the
   base mode.
-- Wire the attachment inbox/outbox into agent sessions so `mct-agent` can
+- Wire the attachment inbox/outbox into agent sessions so `machtiani` can
   discover inbound attachments and publish outbound artifacts.
 
 ## Alpha milestones

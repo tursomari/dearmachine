@@ -37,7 +37,7 @@ type config struct {
 	dbPath                 string
 	projectDir             string
 	model                  string
-	mctBinary              string
+	agentBinary            string
 	deviceConfig           string
 	managerPath            string
 	entryPointRepo         string
@@ -59,11 +59,11 @@ type application interface {
 type dependencies struct {
 	openStore    func(string) (*client.Store, error)
 	newTransport func(string) (client.Transport, error)
-	newRunner    func(string, string, string) (*client.MCTRunner, error)
+	newRunner    func(string, string, string) (*client.AgentRunner, error)
 	newApp       func(
 		client.Transport,
 		*client.Store,
-		*client.MCTRunner,
+		*client.AgentRunner,
 		*synctrigger.Orchestrator,
 		int,
 		time.Duration,
@@ -88,11 +88,11 @@ func defaultDependencies() dependencies {
 		newTransport: func(inboxID string) (client.Transport, error) {
 			return client.NewAgentMailTransport(inboxID)
 		},
-		newRunner: client.NewMCTRunner,
+		newRunner: client.NewAgentRunner,
 		newApp: func(
 			transport client.Transport,
 			store *client.Store,
-			runner *client.MCTRunner,
+			runner *client.AgentRunner,
 			syncOrchestrator *synctrigger.Orchestrator,
 			concurrency int,
 			pollInterval time.Duration,
@@ -141,19 +141,19 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		&cfg.projectDir,
 		"project",
 		".",
-		"mct-agent session working directory; independent of --entry-point-repo",
+		"machtiani session working directory; independent of --entry-point-repo",
 	)
 	flags.StringVar(
 		&cfg.model,
 		"model",
 		"",
-		"optional mct-agent model alias; project default when omitted",
+		"optional machtiani model alias; project default when omitted",
 	)
 	flags.StringVar(
-		&cfg.mctBinary,
-		"mct-agent",
-		"mct-agent",
-		"path to the mct-agent executable",
+		&cfg.agentBinary,
+		"agent-bin",
+		"machtiani",
+		"path to the machtiani executable",
 	)
 	flags.StringVar(
 		&cfg.deviceConfig,
@@ -266,7 +266,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
-	runner, err := deps.newRunner(cfg.mctBinary, cfg.projectDir, cfg.model)
+	runner, err := deps.newRunner(cfg.agentBinary, cfg.projectDir, cfg.model)
 	if err != nil {
 		return err
 	}
@@ -366,7 +366,7 @@ func runInit(args []string, deps dependencies) error {
 		"~/.dearmachine/entrypoint/main",
 		"entry-point repository to initialize",
 	)
-	mctBinary := flags.String("mct-agent", "mct-agent", "path to the mct-agent executable")
+	agentBinary := flags.String("agent-bin", "machtiani", "path to the machtiani executable")
 	snapshotDir := flags.String(
 		"snapshot-dir",
 		"",
@@ -391,7 +391,7 @@ func runInit(args []string, deps dependencies) error {
 	}
 	result, err := entrypoint.Initialize(context.Background(), entrypoint.Options{
 		RepoPath:    resolvedRepo,
-		MCTBinary:   *mctBinary,
+		AgentBinary: *agentBinary,
 		SnapshotDir: resolvedSnapshots,
 	})
 	if err != nil {
@@ -475,7 +475,7 @@ func buildOrchestrator(
 	}
 	return &synctrigger.Orchestrator{
 		RepoPath:            resolvedRepo,
-		MCTBinary:           cfg.mctBinary,
+		AgentBinary:         cfg.agentBinary,
 		AgentManagerPath:    managerPath,
 		Backends:            append([]string(nil), backends...),
 		CustomBackends:      append([]backendcatalog.Backend(nil), customBackends...),

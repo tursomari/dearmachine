@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// SessionInfo holds the minimal info about an mct-agent session needed
+// SessionInfo holds the minimal info about a machtiani session needed
 // for the sync trigger decision.
 type SessionInfo struct {
 	SessionID string
@@ -34,7 +34,7 @@ type DetectionResult struct {
 	ReviewBoundaryTime time.Time
 }
 
-// SessionLister returns mct-agent sessions for a repo.
+// SessionLister returns machtiani sessions for a repo.
 type SessionLister func(ctx context.Context, repoDir string) ([]SessionInfo, error)
 
 // GitLastCommitTime returns the timestamp of the project commit most recently
@@ -55,7 +55,7 @@ type sessionRecord struct {
 
 // DetectSessions returns detection context for determining whether a sync fork is needed.
 //
-// lister controls how mct-agent sessions are discovered (for tests).
+// lister controls how machtiani sessions are discovered (for tests).
 // gitLastCommitTime controls how the last sync commit timestamp is fetched.
 // If gitLastCommitTime is not supplied, DefaultGitLastCommitTime is used.
 func DetectSessions(
@@ -69,7 +69,7 @@ func DetectSessions(
 		resolver = gitLastCommitTime[0]
 	}
 	if lister == nil {
-		lister = DefaultSessionLister
+		lister = DefaultSessionLister("machtiani")
 	}
 
 	lastSyncTime, err := resolver(entryPointRepo)
@@ -124,48 +124,50 @@ func sessionAfterCursor(session SessionInfo, boundary sessionCursor) bool {
 		session.SessionID > boundary.SessionID
 }
 
-// DefaultSessionLister lists sessions using `mct-agent session list --json`.
-func DefaultSessionLister(ctx context.Context, repoDir string) ([]SessionInfo, error) {
-	command := exec.CommandContext(ctx, "mct-agent", "session", "list", "--json")
-	command.Dir = repoDir
+// DefaultSessionLister lists sessions using the configured agent binary.
+func DefaultSessionLister(agentBinary string) SessionLister {
+	return func(ctx context.Context, repoDir string) ([]SessionInfo, error) {
+		command := exec.CommandContext(ctx, agentBinary, "session", "list", "--json")
+		command.Dir = repoDir
 
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"mct-agent session list: %w: %s",
-			err,
-			strings.TrimSpace(string(output)),
-		)
-	}
-
-	var sessions []sessionRecord
-	if err := json.Unmarshal(output, &sessions); err != nil {
-		var wrapped struct {
-			Sessions []sessionRecord `json:"sessions"`
-		}
-		if err := json.Unmarshal(output, &wrapped); err != nil {
-			return nil, fmt.Errorf("parse session list output: %w", err)
-		}
-		sessions = wrapped.Sessions
-	}
-
-	decoded := make([]SessionInfo, 0, len(sessions))
-	for _, raw := range sessions {
-		parsedTime, err := time.Parse(time.RFC3339, raw.UpdatedAt)
+		output, err := command.CombinedOutput()
 		if err != nil {
-			return nil, fmt.Errorf("parse session updated_at %q: %w", raw.UpdatedAt, err)
+			return nil, fmt.Errorf(
+				"machtiani session list: %w: %s",
+				err,
+				strings.TrimSpace(string(output)),
+			)
 		}
-		decoded = append(decoded, SessionInfo{
-			SessionID: raw.SessionID,
-			UpdatedAt: parsedTime,
-			Goal:      raw.Goal,
-		})
+
+		var sessions []sessionRecord
+		if err := json.Unmarshal(output, &sessions); err != nil {
+			var wrapped struct {
+				Sessions []sessionRecord `json:"sessions"`
+			}
+			if err := json.Unmarshal(output, &wrapped); err != nil {
+				return nil, fmt.Errorf("parse session list output: %w", err)
+			}
+			sessions = wrapped.Sessions
+		}
+
+		decoded := make([]SessionInfo, 0, len(sessions))
+		for _, raw := range sessions {
+			parsedTime, err := time.Parse(time.RFC3339, raw.UpdatedAt)
+			if err != nil {
+				return nil, fmt.Errorf("parse session updated_at %q: %w", raw.UpdatedAt, err)
+			}
+			decoded = append(decoded, SessionInfo{
+				SessionID: raw.SessionID,
+				UpdatedAt: parsedTime,
+				Goal:      raw.Goal,
+			})
+		}
+		return decoded, nil
 	}
-	return decoded, nil
 }
 
 // DefaultGitLastCommitTime returns the timestamp of the project commit most
-// recently processed by mct-agent's internal-README sync. If the project has
+// recently processed by machtiani's internal-README sync. If the project has
 // not been synced yet, it returns the first commit timestamp so later project
 // commits do not erase unsummarized session activity.
 func DefaultGitLastCommitTime(repoDir string) (time.Time, error) {

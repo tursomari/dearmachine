@@ -390,7 +390,7 @@ func (s *Store) PrepareAbandon(messageID string) (AbandonPlan, error) {
 }
 
 // CommitAbandon atomically remaps a thread to a clean fork of its committed
-// mct history, records the partial message as locally skipped, and removes its
+// agent history, records the partial message as locally skipped, and removes its
 // durable pending row. The plan is revalidated so a stale plan cannot rewrite
 // newer state.
 func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
@@ -472,11 +472,11 @@ func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
 		plan.CommittedSequence,
 	)
 	if err != nil {
-		return fmt.Errorf("replace abandoned mct session: %w", err)
+		return fmt.Errorf("replace abandoned agent session: %w", err)
 	}
 	changed, err := update.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("check abandoned mct session replacement: %w", err)
+		return fmt.Errorf("check abandoned agent session replacement: %w", err)
 	}
 	if changed != 1 {
 		return fmt.Errorf("thread session changed before abandonment")
@@ -830,14 +830,14 @@ func (s *Store) StoreResult(messageID string, result RunResult) error {
 		messageRunning,
 	)
 	if err != nil {
-		return fmt.Errorf("store mct result: %w", err)
+		return fmt.Errorf("store agent result: %w", err)
 	}
 	changed, err := update.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("check mct result state change: %w", err)
+		return fmt.Errorf("check agent result state change: %w", err)
 	}
 	if changed != 1 {
-		return fmt.Errorf("store mct result: message is not running")
+		return fmt.Errorf("store agent result: message is not running")
 	}
 	return nil
 }

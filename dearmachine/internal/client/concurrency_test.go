@@ -98,7 +98,7 @@ func TestProcessOnceLimitsConcurrentThreadsAndPreservesThreadFIFO(t *testing.T) 
 		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "delete":
 			return nil
 		default:
-			return fmt.Errorf("unexpected mct-agent invocation: %v", command.Args)
+			return fmt.Errorf("unexpected machtiani invocation: %v", command.Args)
 		}
 	})
 
@@ -243,7 +243,7 @@ observe:
 		t.Errorf("thread B was not durably claimed while thread A was running")
 	}
 	if !startedB {
-		t.Errorf("thread B's mct-agent run did not start before thread A was released")
+		t.Errorf("thread B's machtiani run did not start before thread A was released")
 	}
 }
 
@@ -361,7 +361,7 @@ observe:
 		t.Errorf("thread B was not durably claimed while thread A was running")
 	}
 	if !startedB {
-		t.Errorf("thread B's mct-agent run did not start before thread A was released")
+		t.Errorf("thread B's machtiani run did not start before thread A was released")
 	}
 }
 
@@ -433,7 +433,7 @@ func TestSkippedMessageIsNotProcessedDuringDispatchContention(t *testing.T) {
 			_, err := io.WriteString(command.Stdout, `{"status":"success"}`)
 			return err
 		default:
-			return fmt.Errorf("unexpected mct-agent invocation: %v", command.Args)
+			return fmt.Errorf("unexpected machtiani invocation: %v", command.Args)
 		}
 	})
 
@@ -461,7 +461,7 @@ func TestSkippedMessageIsNotProcessedDuringDispatchContention(t *testing.T) {
 	}
 	select {
 	case invocation := <-started:
-		t.Fatalf("skipped message reached mct-agent: %+v", invocation)
+		t.Fatalf("skipped message reached machtiani: %+v", invocation)
 	default:
 	}
 	if skipped, err := store.IsSkipped("skip-me"); err != nil || !skipped {
@@ -490,9 +490,9 @@ func newInMemoryApp(
 ) (*App, *Store) {
 	t.Helper()
 	store := openTestStore(t)
-	runner, err := NewMCTRunner("mct-agent", t.TempDir(), "")
+	runner, err := NewAgentRunner("machtiani", t.TempDir(), "")
 	if err != nil {
-		t.Fatalf("NewMCTRunner: %v", err)
+		t.Fatalf("NewAgentRunner: %v", err)
 	}
 	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager", nil); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
@@ -541,7 +541,7 @@ func gatedRunInvoker(started chan<- gatedRun, release <-chan struct{}) func(*exe
 		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "delete":
 			return nil
 		default:
-			return fmt.Errorf("unexpected mct-agent invocation: %v", command.Args)
+			return fmt.Errorf("unexpected machtiani invocation: %v", command.Args)
 		}
 	}
 }
@@ -574,7 +574,7 @@ func awaitGatedRun(t *testing.T, started <-chan gatedRun) gatedRun {
 	case invocation := <-started:
 		return invocation
 	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for mct-agent run")
+		t.Fatal("timed out waiting for machtiani run")
 		return gatedRun{}
 	}
 }

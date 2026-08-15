@@ -15,15 +15,15 @@ import (
 
 func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	for _, test := range []struct {
-		args []string
-		want string
+		args  []string
+		wants []string
 	}{
-		{args: []string{"--help"}, want: "dearmachine inbox <command>"},
-		{args: []string{"help", "skip"}, want: "dearmachine inbox skip --current"},
-		{args: []string{"skip", "--help"}, want: "without changing AgentMail"},
-		{args: []string{"abandon", "--help"}, want: "clean pre-run session checkpoint"},
-		{args: []string{"unskip", "--help"}, want: "dearmachine inbox unskip"},
-		{args: []string{"skipped", "--help"}, want: "dearmachine inbox skipped"},
+		{args: []string{"--help"}, wants: []string{"dearmachine inbox <command>"}},
+		{args: []string{"help", "skip"}, wants: []string{"dearmachine inbox skip --current", "--agent-bin <path>"}},
+		{args: []string{"skip", "--help"}, wants: []string{"without changing AgentMail", "--agent-bin <path>"}},
+		{args: []string{"abandon", "--help"}, wants: []string{"clean pre-run session checkpoint", "--agent-bin <path>"}},
+		{args: []string{"unskip", "--help"}, wants: []string{"dearmachine inbox unskip"}},
+		{args: []string{"skipped", "--help"}, wants: []string{"dearmachine inbox skipped"}},
 	} {
 		t.Run(strings.Join(test.args, "_"), func(t *testing.T) {
 			var output strings.Builder
@@ -35,8 +35,10 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 			if err != nil && !errors.Is(err, flag.ErrHelp) {
 				t.Fatalf("runInbox(%v): %v", test.args, err)
 			}
-			if !strings.Contains(output.String(), test.want) {
-				t.Fatalf("help output missing %q:\n%s", test.want, output.String())
+			for _, want := range test.wants {
+				if !strings.Contains(output.String(), want) {
+					t.Fatalf("help output missing %q:\n%s", want, output.String())
+				}
 			}
 		})
 	}
@@ -81,24 +83,24 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	}
 
 	fixturePath, err := filepath.Abs(filepath.Join(
-		"..", "..", "internal", "client", "testdata", "fake-mct-agent.sh",
+		"..", "..", "internal", "client", "testdata", "fake-agent.sh",
 	))
 	if err != nil {
 		t.Fatal(err)
 	}
 	captureDir := t.TempDir()
-	t.Setenv("FAKE_MCT_CAPTURE", captureDir)
-	t.Setenv("FAKE_MCT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
-	t.Setenv("FAKE_MCT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
-	t.Setenv("FAKE_MCT_FORK_ID", "replacement-session")
-	runner, err := client.NewMCTRunner(fixturePath, home, "")
+	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
+	t.Setenv("FAKE_AGENT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
+	t.Setenv("FAKE_AGENT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
+	t.Setenv("FAKE_AGENT_FORK_ID", "replacement-session")
+	runner, err := client.NewAgentRunner(fixturePath, home, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var stdout strings.Builder
 	deps := dependencies{
 		openStore: client.OpenStore,
-		newRunner: func(string, string, string) (*client.MCTRunner, error) {
+		newRunner: func(string, string, string) (*client.AgentRunner, error) {
 			return runner, nil
 		},
 		stdout:      &stdout,

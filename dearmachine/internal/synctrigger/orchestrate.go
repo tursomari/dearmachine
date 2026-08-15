@@ -78,7 +78,7 @@ func managedEnvironment(environment []string, managerPath, encodedBackends strin
 // Orchestrator coordinates sync-trigger session orchestration.
 type Orchestrator struct {
 	RepoPath            string
-	MCTBinary           string
+	AgentBinary         string
 	AgentManagerPath    string
 	Backends            []string
 	CustomBackends      []backendcatalog.Backend
@@ -110,7 +110,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	}
 	lister := o.Lister
 	if lister == nil {
-		lister = DefaultSessionLister
+		lister = DefaultSessionLister(o.AgentBinary)
 	}
 	gitLastCommitTime := o.GitLastCommitTime
 	if gitLastCommitTime == nil {
@@ -180,7 +180,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		)
 	}
 
-	forkOutput, err := runCommand(ctx, o.RepoPath, o.MCTBinary, "session", "fork", detected.ForkSessionID)
+	forkOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, "session", "fork", detected.ForkSessionID)
 	if err != nil {
 		return fmt.Errorf("fork session %s: %w: %s", detected.ForkSessionID, err, strings.TrimSpace(string(forkOutput)))
 	}
@@ -192,7 +192,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	runOutput, err := runCommand(
 		ctx,
 		o.RepoPath,
-		o.MCTBinary,
+		o.AgentBinary,
 		"run",
 		"--session-id",
 		forkedSessionID,
@@ -210,7 +210,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		deleteOutput, deleteErr := runCommand(
 			cleanupContext,
 			o.RepoPath,
-			o.MCTBinary,
+			o.AgentBinary,
 			"session",
 			"delete",
 			forkedSessionID,
@@ -233,7 +233,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 	deleteOutput, err := runCommand(
 		ctx,
 		o.RepoPath,
-		o.MCTBinary,
+		o.AgentBinary,
 		"session",
 		"delete",
 		forkedSessionID,
@@ -242,7 +242,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		return fmt.Errorf("delete forked session %s: %w: %s", forkedSessionID, err, strings.TrimSpace(string(deleteOutput)))
 	}
 
-	syncOutput, err := runCommand(ctx, o.RepoPath, o.MCTBinary, "sync", "--include-docs")
+	syncOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, "sync", "--include-docs")
 	if err != nil {
 		return fmt.Errorf("sync: %w: %s", err, strings.TrimSpace(string(syncOutput)))
 	}

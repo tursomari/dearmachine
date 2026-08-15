@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-func TestMCTRunnerInvocationCanBeGated(t *testing.T) {
-	runner, err := NewMCTRunner("mct-agent", t.TempDir(), "")
+func TestAgentRunnerInvocationCanBeGated(t *testing.T) {
+	runner, err := NewAgentRunner("machtiani", t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestMCTRunnerInvocationCanBeGated(t *testing.T) {
 
 	select {
 	case args := <-started:
-		if !slices.Equal(args, []string{"mct-agent", "sync"}) {
+		if !slices.Equal(args, []string{"machtiani", "sync"}) {
 			t.Fatalf("command args = %v", args)
 		}
 	case <-time.After(time.Second):

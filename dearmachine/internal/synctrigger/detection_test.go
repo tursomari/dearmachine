@@ -151,6 +151,27 @@ func TestDetectSessionsNonExistentRepo(t *testing.T) {
 	}
 }
 
+func TestDefaultSessionListerUsesConfiguredAgentBinary(t *testing.T) {
+	repo := t.TempDir()
+	binary := filepath.Join(t.TempDir(), "custom-agent")
+	script := `#!/bin/sh
+set -eu
+[ "$*" = "session list --json" ]
+printf '[{"session_id":"configured","updated_at":"2026-08-15T12:30:00Z","goal":"test"}]\n'
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write configured agent binary: %v", err)
+	}
+
+	sessions, err := DefaultSessionLister(binary)(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("DefaultSessionLister: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "configured" {
+		t.Fatalf("sessions = %+v, want configured binary output", sessions)
+	}
+}
+
 func TestDefaultGitLastCommitTimeUsesInternalReadmeMarker(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -86,7 +86,7 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 		t.Fatalf("DEARMACHINE_BACKENDS = %q", got)
 	}
 	if got := rig.capture("backend-env-1"); got != "" {
-		t.Fatalf("stale DEARMACHINE_BACKEND leaked into mct-agent: %q", got)
+		t.Fatalf("stale DEARMACHINE_BACKEND leaked into machtiani: %q", got)
 	}
 	if got := rig.capture("manager-env-1"); got != "/test/agent-manager" {
 		t.Fatalf("AGENT_MANAGER_PATH = %q", got)
@@ -121,7 +121,7 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 		t.Fatalf("sync count = %q, want 1", got)
 	}
 	if got := rig.capture("events"); got != "sync\nrun\n" {
-		t.Fatalf("mct-agent call order = %q, want sync then run", got)
+		t.Fatalf("machtiani call order = %q, want sync then run", got)
 	}
 }
 
@@ -190,10 +190,10 @@ func TestFollowUpCheckpointFailureLeavesMessageReceived(t *testing.T) {
 	original := rig.session("thread-001")
 
 	rig.mail.add(testMessage("msg-002", "thread-001", "Follow-up request."))
-	t.Setenv("FAKE_MCT_FORK_EXIT", "17")
-	t.Setenv("FAKE_MCT_FORK_ERROR", "checkpoint failed")
+	t.Setenv("FAKE_AGENT_FORK_EXIT", "17")
+	t.Setenv("FAKE_AGENT_FORK_ERROR", "checkpoint failed")
 	err := rig.app.ProcessOnce(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "checkpoint committed mct session") {
+	if err == nil || !strings.Contains(err.Error(), "checkpoint committed agent session") {
 		t.Fatalf("ProcessOnce error = %v", err)
 	}
 	pending, err := rig.store.Pending()
@@ -339,7 +339,7 @@ func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 		t.Fatalf("unexpected recovered session: %+v", session)
 	}
 	if got := rig.capture("count"); got != "2" {
-		t.Fatalf("mct-agent run count = %q, want 2", got)
+		t.Fatalf("machtiani run count = %q, want 2", got)
 	}
 	replayedPrompt := rig.capture("text-2")
 	if count := strings.Count(replayedPrompt, "Prepare the interrupted report."); count != 1 {
@@ -360,7 +360,7 @@ func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 	}
 }
 
-func TestRestartRecoversAcceptedMCTResultWithoutDuplicatePrompt(t *testing.T) {
+func TestRestartRecoversAcceptedAgentResultWithoutDuplicatePrompt(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage(
 		"msg-before-accepted",
@@ -409,7 +409,7 @@ func TestRestartRecoversAcceptedMCTResultWithoutDuplicatePrompt(t *testing.T) {
 		t.Fatalf("unexpected recovered session: %+v", session)
 	}
 	if got := rig.capture("count"); got != "1" {
-		t.Fatalf("mct-agent run count = %q, want initial run only", got)
+		t.Fatalf("machtiani run count = %q, want initial run only", got)
 	}
 	replies := rig.mail.sentReplies()
 	if len(replies) != 2 || replies[1].Text != "Recovered accepted result." {
@@ -454,7 +454,7 @@ func TestRestartRecordsExistingOutboundReceiptWithoutRerun(t *testing.T) {
 		t.Fatalf("unexpected recovered session: %+v", session)
 	}
 	if _, err := os.Stat(filepath.Join(rig.captureDir, "count")); !os.IsNotExist(err) {
-		t.Fatalf("mct-agent unexpectedly ran; stat error = %v", err)
+		t.Fatalf("machtiani unexpectedly ran; stat error = %v", err)
 	}
 	if replies := rig.mail.sentReplies(); len(replies) != 1 {
 		t.Fatalf("reply count = %d, want 1: %+v", len(replies), replies)
@@ -495,7 +495,7 @@ func TestRunPollsAgainAfterConfiguredInterval(t *testing.T) {
 		t.Fatalf("startup sync count = %q, want 1", got)
 	}
 	if got := rig.capture("events"); got != "sync\n" {
-		t.Fatalf("startup mct-agent calls = %q, want one sync", got)
+		t.Fatalf("startup machtiani calls = %q, want one sync", got)
 	}
 }
 
@@ -595,10 +595,10 @@ func TestRunDoesNotWritePIDFileWhenInitialSyncFails(t *testing.T) {
 	rig := newTestRig(t)
 	pidfile := filepath.Join(t.TempDir(), "run", "dearmachine.pid")
 	rig.app.pidfile = pidfile
-	rig.app.runner.binary = filepath.Join(t.TempDir(), "missing-mct-agent")
+	rig.app.runner.binary = filepath.Join(t.TempDir(), "missing-machtiani")
 
 	if err := rig.app.Run(context.Background()); err == nil {
-		t.Fatal("Run succeeded with a missing mct-agent binary")
+		t.Fatal("Run succeeded with a missing machtiani binary")
 	}
 	if _, err := os.Stat(pidfile); !os.IsNotExist(err) {
 		t.Fatalf("pidfile created before successful sync; stat error = %v", err)
@@ -665,7 +665,7 @@ func TestSkippedMessageRemainsUnreadUntilUnskipped(t *testing.T) {
 		t.Fatalf("skipped message received replies: %+v", replies)
 	}
 	if _, err := os.Stat(filepath.Join(rig.captureDir, "count")); !os.IsNotExist(err) {
-		t.Fatalf("mct-agent ran for skipped message; stat error = %v", err)
+		t.Fatalf("machtiani ran for skipped message; stat error = %v", err)
 	}
 	if _, err := rig.store.Session(message.ThreadID); err == nil {
 		t.Fatal("skipped message created a thread session")
@@ -683,7 +683,7 @@ func TestSkippedMessageRemainsUnreadUntilUnskipped(t *testing.T) {
 		t.Fatalf("reply count after unskip = %d, want 1: %+v", len(replies), replies)
 	}
 	if got := rig.capture("count"); got != "1" {
-		t.Fatalf("mct-agent run count = %q, want 1", got)
+		t.Fatalf("machtiani run count = %q, want 1", got)
 	}
 }
 
@@ -726,16 +726,16 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		mail.server.Close()
 	})
 
-	fixture, err := filepath.Abs(filepath.Join("testdata", "fake-mct-agent.sh"))
+	fixture, err := filepath.Abs(filepath.Join("testdata", "fake-agent.sh"))
 	if err != nil {
 		t.Fatalf("fixture path: %v", err)
 	}
 	captureDir := t.TempDir()
 	statusFile := filepath.Join(t.TempDir(), "status.json")
 	answerFile := filepath.Join(t.TempDir(), "answer.md")
-	t.Setenv("FAKE_MCT_CAPTURE", captureDir)
-	t.Setenv("FAKE_MCT_STATUS", statusFile)
-	t.Setenv("FAKE_MCT_ANSWER", answerFile)
+	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
+	t.Setenv("FAKE_AGENT_STATUS", statusFile)
+	t.Setenv("FAKE_AGENT_ANSWER", answerFile)
 	if err := os.WriteFile(statusFile, []byte(`{"status":"success"}`), 0o600); err != nil {
 		t.Fatalf("write status: %v", err)
 	}
@@ -743,9 +743,9 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		t.Fatalf("write answer: %v", err)
 	}
 
-	runner, err := NewMCTRunner(fixture, t.TempDir(), model)
+	runner, err := NewAgentRunner(fixture, t.TempDir(), model)
 	if err != nil {
-		t.Fatalf("NewMCTRunner: %v", err)
+		t.Fatalf("NewAgentRunner: %v", err)
 	}
 	if err := runner.ConfigureAgentManaged([]string{"codex"}, "/test/agent-manager", nil); err != nil {
 		t.Fatalf("ConfigureAgentManaged: %v", err)

@@ -14,7 +14,7 @@ session.
 ## What does not belong here
 
 - Transient notes that will be irrelevant after the next session
-- Full session summaries (those belong to the mct project store)
+- Full session summaries (those belong to the agent project store)
 - Project-specific todos (those belong in their respective projects)
 
 ## Conventions

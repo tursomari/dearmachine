@@ -39,11 +39,11 @@ func (r *fakeCommandRunner) Run(
 			return []byte("skeleton-commit\n"), nil
 		}
 		return []byte("dearmachine-commit\n"), nil
-	case "/fake/mct-agent init --no-interactive --json":
+	case "/fake/machtiani init --no-interactive --json":
 		return []byte(`{"status":"initialized"}`), nil
-	case "/fake/mct-agent project show --json":
+	case "/fake/machtiani project show --json":
 		return []byte(`{"store":"` + r.store + `"}`), nil
-	case "/fake/mct-agent sync --include-docs":
+	case "/fake/machtiani sync --include-docs":
 		r.syncCount++
 		if r.failSync {
 			return []byte("sync diagnostic"), errors.New("sync failed")
@@ -73,7 +73,7 @@ func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
 
 	result, err := Initialize(context.Background(), Options{
 		RepoPath:    repo,
-		MCTBinary:   "/fake/mct-agent",
+		AgentBinary: "/fake/machtiani",
 		SnapshotDir: snapshots,
 		RunCommand:  runner.Run,
 	})
@@ -130,13 +130,13 @@ func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
 		"git add --all",
 		"git commit -m " + skeletonCommitMessage,
 		"git rev-parse HEAD",
-		"/fake/mct-agent init --no-interactive --json",
-		"/fake/mct-agent project show --json",
-		"/fake/mct-agent sync --include-docs",
+		"/fake/machtiani init --no-interactive --json",
+		"/fake/machtiani project show --json",
+		"/fake/machtiani sync --include-docs",
 		"git add --all",
 		"git commit -m " + dearMachineCommitMessage,
 		"git rev-parse HEAD",
-		"/fake/mct-agent sync --include-docs",
+		"/fake/machtiani sync --include-docs",
 	}
 	if !slices.Equal(runner.calls, wantCalls) {
 		t.Fatalf("commands =\n%s\nwant =\n%s", strings.Join(runner.calls, "\n"), strings.Join(wantCalls, "\n"))
@@ -154,9 +154,9 @@ func TestInitializeLeavesExistingRepositoryUntouched(t *testing.T) {
 	}
 	runner := &fakeCommandRunner{}
 	result, err := Initialize(context.Background(), Options{
-		RepoPath:   repo,
-		MCTBinary:  "/fake/mct-agent",
-		RunCommand: runner.Run,
+		RepoPath:    repo,
+		AgentBinary: "/fake/machtiani",
+		RunCommand:  runner.Run,
 	})
 	if err != nil {
 		t.Fatalf("Initialize: %v", err)
@@ -203,8 +203,8 @@ func TestInitializeRejectsNonEmptyNonRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := Initialize(context.Background(), Options{
-		RepoPath:  repo,
-		MCTBinary: "/fake/mct-agent",
+		RepoPath:    repo,
+		AgentBinary: "/fake/machtiani",
 	})
 	if err == nil || !strings.Contains(err.Error(), "not empty") {
 		t.Fatalf("Initialize error = %v, want non-empty rejection", err)
@@ -218,9 +218,9 @@ func TestInitializeFailureLeavesExplicitIncompleteMarker(t *testing.T) {
 	repo := filepath.Join(root, "entrypoint")
 	runner := &fakeCommandRunner{store: filepath.Join(root, "store"), failSync: true}
 	_, err := Initialize(context.Background(), Options{
-		RepoPath:   repo,
-		MCTBinary:  "/fake/mct-agent",
-		RunCommand: runner.Run,
+		RepoPath:    repo,
+		AgentBinary: "/fake/machtiani",
+		RunCommand:  runner.Run,
 	})
 	if err == nil || !strings.Contains(err.Error(), "sync failed") {
 		t.Fatalf("Initialize error = %v, want sync failure", err)
@@ -229,8 +229,8 @@ func TestInitializeFailureLeavesExplicitIncompleteMarker(t *testing.T) {
 		t.Fatalf("incomplete marker missing: %v", err)
 	}
 	_, err = Initialize(context.Background(), Options{
-		RepoPath:  repo,
-		MCTBinary: "/fake/mct-agent",
+		RepoPath:    repo,
+		AgentBinary: "/fake/machtiani",
 	})
 	if err == nil || !strings.Contains(err.Error(), "incomplete bootstrap") {
 		t.Fatalf("retry error = %v, want incomplete-bootstrap diagnostic", err)

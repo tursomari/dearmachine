@@ -219,8 +219,8 @@ manage_secret() {
 
 require_runtime_boundary() {
   [[ $mode == test ]] && return 0
-  [[ -x $DEARMACHINE_TOOLS_DIR/mct-agent ]] || {
-    echo "missing executable boundary: $DEARMACHINE_TOOLS_DIR/mct-agent" >&2
+  [[ -x $DEARMACHINE_TOOLS_DIR/machtiani ]] || {
+    echo "missing executable boundary: $DEARMACHINE_TOOLS_DIR/machtiani" >&2
     echo "place a Linux-compatible executable or Nix-store symlink there" >&2
     return 1
   }

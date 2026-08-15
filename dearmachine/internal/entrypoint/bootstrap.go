@@ -40,7 +40,7 @@ func DefaultCommandRunner(ctx context.Context, dir, name string, args ...string)
 // Options configures a new entry-point repository bootstrap.
 type Options struct {
 	RepoPath    string
-	MCTBinary   string
+	AgentBinary string
 	SnapshotDir string
 	RunCommand  CommandRunner
 }
@@ -66,9 +66,9 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	mctBinary := strings.TrimSpace(options.MCTBinary)
-	if mctBinary == "" {
-		return Result{}, fmt.Errorf("mct-agent executable is required")
+	agentBinary := strings.TrimSpace(options.AgentBinary)
+	if agentBinary == "" {
+		return Result{}, fmt.Errorf("machtiani executable is required")
 	}
 	snapshotDir := ""
 	if strings.TrimSpace(options.SnapshotDir) != "" {
@@ -123,18 +123,18 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		return Result{}, err
 	}
 
-	if _, err := run(ctx, runCommand, repoPath, mctBinary, "init", "--no-interactive", "--json"); err != nil {
+	if _, err := run(ctx, runCommand, repoPath, agentBinary, "init", "--no-interactive", "--json"); err != nil {
 		return Result{}, err
 	}
-	projectOutput, err := run(ctx, runCommand, repoPath, mctBinary, "project", "show", "--json")
+	projectOutput, err := run(ctx, runCommand, repoPath, agentBinary, "project", "show", "--json")
 	if err != nil {
 		return Result{}, err
 	}
 	var project projectDetails
 	if err := json.Unmarshal(projectOutput, &project); err != nil {
-		return Result{}, fmt.Errorf("parse mct-agent project details: %w", err)
+		return Result{}, fmt.Errorf("parse machtiani project details: %w", err)
 	}
-	result.ProjectStore, err = absolutePath(project.Store, "mct-agent project store")
+	result.ProjectStore, err = absolutePath(project.Store, "machtiani project store")
 	if err != nil {
 		return Result{}, err
 	}
@@ -147,7 +147,7 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		}
 		result.Snapshots = append(result.Snapshots, path)
 	}
-	if _, err := run(ctx, runCommand, repoPath, mctBinary, "sync", "--include-docs"); err != nil {
+	if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
 		return Result{}, err
 	}
 	if snapshotDir != "" {
@@ -175,7 +175,7 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		}
 		result.Snapshots = append(result.Snapshots, path)
 	}
-	if _, err := run(ctx, runCommand, repoPath, mctBinary, "sync", "--include-docs"); err != nil {
+	if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
 		return Result{}, err
 	}
 	if snapshotDir != "" {

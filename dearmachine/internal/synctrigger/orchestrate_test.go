@@ -39,7 +39,7 @@ func (m *mockRunner) Run(
 		return nil, err
 	}
 
-	if name == "mct-agent" && len(argsCopy) >= 3 && argsCopy[0] == "session" && argsCopy[1] == "fork" {
+	if name == "machtiani" && len(argsCopy) >= 3 && argsCopy[0] == "session" && argsCopy[1] == "fork" {
 		return []byte("forked-123\n"), nil
 	}
 	return []byte(""), nil
@@ -50,7 +50,7 @@ func TestOrchestrateNoForkNeeded(t *testing.T) {
 	var calls int
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
@@ -85,7 +85,7 @@ func TestOrchestrateSuccess(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		StatePath:          statePath,
 		Logger:             log.New(&logs, "", 0),
@@ -105,10 +105,10 @@ func TestOrchestrateSuccess(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"mct-agent", "session", "fork", "older"},
-		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
-		{"mct-agent", "session", "delete", "forked-123"},
-		{"mct-agent", "sync", "--include-docs"},
+		{"machtiani", "session", "fork", "older"},
+		{"machtiani", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"machtiani", "session", "delete", "forked-123"},
+		{"machtiani", "sync", "--include-docs"},
 	}
 	if len(runner.entries) != len(want) {
 		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))
@@ -161,7 +161,7 @@ func TestOrchestrateDrainsBacklogOldestFirstAndHoldsNewest(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		StatePath:          statePath,
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
@@ -185,7 +185,7 @@ func TestOrchestrateDrainsBacklogOldestFirstAndHoldsNewest(t *testing.T) {
 
 	var forked []string
 	for _, entry := range runner.entries {
-		if entry.name == "mct-agent" && len(entry.args) == 3 &&
+		if entry.name == "machtiani" && len(entry.args) == 3 &&
 			entry.args[0] == "session" && entry.args[1] == "fork" {
 			forked = append(forked, entry.args[2])
 		}
@@ -216,7 +216,7 @@ func TestOrchestrateCheckpointPreventsLaterGitSyncFromHidingHeldSession(t *testi
 	}
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		StatePath:          statePath,
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
@@ -251,11 +251,11 @@ func TestOrchestrateCheckpointPreventsLaterGitSyncFromHidingHeldSession(t *testi
 func TestOrchestrateForkFails(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{
-		errAt: map[string]error{"mct-agent session fork older": errors.New("fork failed")},
+		errAt: map[string]error{"machtiani session fork older": errors.New("fork failed")},
 	}
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
@@ -281,11 +281,11 @@ func TestOrchestrateForkFails(t *testing.T) {
 func TestOrchestrateRunFails(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{
-		errAt: map[string]error{"mct-agent run --session-id forked-123 --file /prompt.md": errors.New("run failed")},
+		errAt: map[string]error{"machtiani run --session-id forked-123 --file /prompt.md": errors.New("run failed")},
 	}
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		StatePath:          filepath.Join(t.TempDir(), "sync-trigger.json"),
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
@@ -308,7 +308,7 @@ func TestOrchestrateRunFails(t *testing.T) {
 		t.Fatalf("command count = %d, want 3", len(runner.entries))
 	}
 	cleanup := runner.entries[2]
-	if cleanup.name != "mct-agent" || strings.Join(cleanup.args, " ") != "session delete forked-123" {
+	if cleanup.name != "machtiani" || strings.Join(cleanup.args, " ") != "session delete forked-123" {
 		t.Fatalf("cleanup command = %s %s, want session delete", cleanup.name, strings.Join(cleanup.args, " "))
 	}
 }
@@ -319,7 +319,7 @@ func TestOrchestrateRunCancellationStillCleansUpFork(t *testing.T) {
 	var cleanupContextErr error
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		StatePath:          filepath.Join(t.TempDir(), "sync-trigger.json"),
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
@@ -390,12 +390,12 @@ func TestAgentManagedCommandRunnerSetsConfiguredEnvironment(t *testing.T) {
 func TestOrchestrateSyncFailureDoesNotAdvanceCheckpoint(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{
-		errAt: map[string]error{"mct-agent sync --include-docs": errors.New("sync failed")},
+		errAt: map[string]error{"machtiani sync --include-docs": errors.New("sync failed")},
 	}
 	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		StatePath:          statePath,
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
@@ -425,11 +425,11 @@ func TestOrchestrateSyncFailureDoesNotAdvanceCheckpoint(t *testing.T) {
 func TestOrchestrateDeleteFails(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{
-		errAt: map[string]error{"mct-agent session delete forked-123": errors.New("delete failed")},
+		errAt: map[string]error{"machtiani session delete forked-123": errors.New("delete failed")},
 	}
 	o := &Orchestrator{
 		RepoPath:           "/repo",
-		MCTBinary:          "mct-agent",
+		AgentBinary:        "machtiani",
 		PromptTemplatePath: "/prompt.md",
 		Logger:             log.New(&bytes.Buffer{}, "", 0),
 		Lister: func(context.Context, string) ([]SessionInfo, error) {
@@ -465,7 +465,7 @@ func TestOrchestrateGateCountsTurnsFromStartWithoutCheckpoint(t *testing.T) {
 	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 	o := &Orchestrator{
 		RepoPath:            "/repo",
-		MCTBinary:           "mct-agent",
+		AgentBinary:         "machtiani",
 		PromptTemplatePath:  "/prompt.md",
 		StatePath:           statePath,
 		MaintenanceMinTurns: 3,
@@ -498,10 +498,10 @@ func TestOrchestrateGateCountsTurnsFromStartWithoutCheckpoint(t *testing.T) {
 		t.Fatalf("turn counter since = %s, want zero time", countedSince)
 	}
 	want := [][]string{
-		{"mct-agent", "session", "fork", "oldest"},
-		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
-		{"mct-agent", "session", "delete", "forked-123"},
-		{"mct-agent", "sync", "--include-docs"},
+		{"machtiani", "session", "fork", "oldest"},
+		{"machtiani", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"machtiani", "session", "delete", "forked-123"},
+		{"machtiani", "sync", "--include-docs"},
 	}
 	if len(runner.entries) != len(want) {
 		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))
@@ -541,7 +541,7 @@ func TestOrchestrateGateNeverRecountsTurnAfterCrossing(t *testing.T) {
 	runner := &mockRunner{}
 	o := &Orchestrator{
 		RepoPath:            "/repo",
-		MCTBinary:           "mct-agent",
+		AgentBinary:         "machtiani",
 		PromptTemplatePath:  "/prompt.md",
 		StatePath:           statePath,
 		MaintenanceMinTurns: 3,
@@ -631,7 +631,7 @@ func TestOrchestrateGateSkipsBelowThresholdWithoutCheckpoint(t *testing.T) {
 	runner := &mockRunner{}
 	o := &Orchestrator{
 		RepoPath:            "/repo",
-		MCTBinary:           "mct-agent",
+		AgentBinary:         "machtiani",
 		PromptTemplatePath:  "/prompt.md",
 		StatePath:           statePath,
 		MaintenanceMinTurns: 3,
@@ -682,7 +682,7 @@ func TestOrchestrateSkippedBelowTurnThreshold(t *testing.T) {
 	runner := &mockRunner{}
 	o := &Orchestrator{
 		RepoPath:            "/repo",
-		MCTBinary:           "mct-agent",
+		AgentBinary:         "machtiani",
 		PromptTemplatePath:  "/prompt.md",
 		StatePath:           statePath,
 		MaintenanceMinTurns: 20,
@@ -723,7 +723,7 @@ func TestOrchestrateRunsAtTurnThreshold(t *testing.T) {
 	runner := &mockRunner{}
 	o := &Orchestrator{
 		RepoPath:            "/repo",
-		MCTBinary:           "mct-agent",
+		AgentBinary:         "machtiani",
 		PromptTemplatePath:  "/prompt.md",
 		StatePath:           statePath,
 		MaintenanceMinTurns: 20,
@@ -742,10 +742,10 @@ func TestOrchestrateRunsAtTurnThreshold(t *testing.T) {
 		t.Fatalf("OrchestrateSync: %v", err)
 	}
 	want := [][]string{
-		{"mct-agent", "session", "fork", "session-b"},
-		{"mct-agent", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
-		{"mct-agent", "session", "delete", "forked-123"},
-		{"mct-agent", "sync", "--include-docs"},
+		{"machtiani", "session", "fork", "session-b"},
+		{"machtiani", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"machtiani", "session", "delete", "forked-123"},
+		{"machtiani", "sync", "--include-docs"},
 	}
 	if len(runner.entries) != len(want) {
 		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))

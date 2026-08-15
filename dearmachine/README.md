@@ -3,10 +3,10 @@
 This module proves the DearMachine Client alpha happy path:
 
 1. Poll an AgentMail inbox through the AgentMail Go SDK.
-2. Map AgentMail thread IDs to durable mct-agent session IDs in SQLite.
-3. Invoke mct-agent with a preallocated session ID for new threads or
+2. Map AgentMail thread IDs to durable machtiani session IDs in SQLite.
+3. Invoke machtiani with a preallocated session ID for new threads or
    `--session-id` for existing threads.
-4. Inspect `mct-agent session show --json`.
+4. Inspect `machtiani session show --json`.
 5. Send either the final answer or an AskUser clarification as an AgentMail
    reply.
 
@@ -28,7 +28,7 @@ nix profile install .#dearmachine
 command -v dearmachine agent-manager
 ```
 
-Install `mct-agent` and backend CLIs separately. Native DearMachine resolves
+Install `machtiani` and backend CLIs separately. Native DearMachine resolves
 them from the inherited host `PATH` and uses their normal host configuration
 and credentials.
 
@@ -53,7 +53,7 @@ backends = ["codex","forge"]
 
 `backends` is an approved list in priority order. DearMachine Client validates and
 loads the complete list at startup, then passes that immutable snapshot to each
-managed mct-agent run. Restart DearMachine Client after changing the configuration.
+managed machtiani run. Restart DearMachine Client after changing the configuration.
 Agent Manager includes `codex`, `codex-yolo`, and `forge`. The ordinary
 `codex` adapter uses Codex's `workspace-write` sandbox. `codex-yolo` is an
 explicit opt-in adapter that passes
@@ -95,15 +95,15 @@ directory with mode `0700` and creates or tightens the database to mode `0600`.
 Pass `--db /absolute/path/to/dearmachine.db` only when an isolated instance
 needs a separate store.
 
-The daemon runs `mct-agent sync` before polling begins and again immediately
-before each `mct-agent run`. Runs use `--mode agent-managed` and receive the
+The daemon runs `machtiani sync` before polling begins and again immediately
+before each `machtiani run`. Runs use `--mode agent-managed` and receive the
 approved order in `DEARMACHINE_BACKENDS` plus the absolute `AGENT_MANAGER_PATH`.
 Pass `--model your-model-alias` to override the project's configured default
 model; when omitted, no model flag is forwarded.
 
 For each inbound email, DearMachine Client passes the sender/thread metadata and the
 newly authored text reported by AgentMail. Follow-ups resume the mapped
-`mct-agent` session with `--session-id`; that persisted session owns prior
+`machtiani` session with `--session-id`; that persisted session owns prior
 conversation context, so DearMachine Client does not replay the email thread.
 
 The first poll runs immediately. Later polls start 60 seconds after the prior
@@ -112,7 +112,7 @@ poll. Each poll claims messages before dispatching them to a worker pool. The
 `--concurrency` flag limits the pool to three active email threads by default;
 set `--concurrency 1` for sequential processing. The value must be at least one.
 Messages from one thread always run one at a time and in sequence, so one
-mct-agent session never has multiple active children.
+machtiani session never has multiple active children.
 
 ## Locally skip inbox messages
 
@@ -148,7 +148,7 @@ visible in each remote poll, but DearMachine Client recognizes its local ID and 
 nothing. After `unskip`, the next poll handles the message normally.
 
 Skipping also removes a provisional first-message queue record left by an
-interrupted run and asks mct-agent to delete that abandoned session. If session
+interrupted run and asks machtiani to delete that abandoned session. If session
 cleanup fails, the message remains safely skipped and the command reports the
 cleanup error. An already-running follow-up in a session with committed history
 is rejected because silently removing it could leave that continuing session
@@ -165,7 +165,7 @@ dearmachine inbox abandon \
 ```
 
 `inbox abandon` is not an alias for ordinary skip. Before every established
-follow-up starts, DearMachine Client forks its committed mct session and records that
+follow-up starts, DearMachine Client forks its committed agent session and records that
 clean checkpoint in the durable pending row. The command requires a `running`
 pending message with that checkpoint, atomically remaps the thread to it,
 records the selected message as locally skipped, removes its pending row, and
@@ -190,7 +190,7 @@ idle polls remain silent by default.
 
 Pass `--pidfile /path/to/dearmachine.pid` when a process supervisor needs a
 PID file. DearMachine Client creates missing parent directories after the initial
-`mct-agent sync`, writes its current PID before polling, and removes the file
+`machtiani sync`, writes its current PID before polling, and removes the file
 on controlled exit. Omit the flag for the previous foreground-without-pidfile
 behavior. This flag does not self-daemonize the process; supervisors that
 require a returning start command must provide a background wrapper.
@@ -202,7 +202,7 @@ needed.
 
 `--project` and `--entry-point-repo` are independent settings:
 
-- `--project` selects the working directory and mct-agent project where email
+- `--project` selects the working directory and machtiani project where email
   sessions are created. Its default is `.`, the directory from which DearMachine Client was launched.
 - `--entry-point-repo` selects only the repository inspected and maintained by
   entry-point documentation sync. Its default is
@@ -233,13 +233,13 @@ user-owned repository:
 ```bash
 dearmachine init \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
-  --mct-agent /absolute/path/to/mct-agent
+  --agent-bin /absolute/path/to/machtiani
 ```
 
 Initialization configures local Git LFS and bootstraps the repository in two
 stages. The first commit contains only a neutral machine-entry-point skeleton:
 the top-level README, directory READMEs, repository rules, and the generic
-maintenance prompt. mct-agent initializes the project identity and syncs that
+maintenance prompt. machtiani initializes the project identity and syncs that
 skeleton before DearMachine-specific material exists. The second commit adds
 the DearMachine architecture reference and configuration runbook, followed by
 a second documentation-aware sync.
@@ -260,7 +260,7 @@ not be mistaken for a complete repository on retry.
 ## Entry-point session-driven sync
 
 When `~/.dearmachine/entrypoint/main` exists, DearMachine Client evaluates its
-mct-agent sessions after every successful poll. Override the paths with
+machtiani sessions after every successful poll. Override the paths with
 `--entry-point-repo` and `--entry-point-prompt`, or pass an empty
 `--entry-point-repo` to disable the trigger.
 
@@ -272,7 +272,7 @@ Passing the turn gate still requires at least two eligible sessions: one to
 review and one newest session to hold.
 
 For email sessions themselves to count toward the trigger, launch DearMachine Client with `--project` set to the entry-point repository. Distinct new threads
-create distinct mct-agent sessions. DearMachine Client deliberately holds the newest
+create distinct machtiani sessions. DearMachine Client deliberately holds the newest
 session until a later session arrives. Once at least two sessions are newer
 than the review boundary, each successful poll reviews the oldest eligible
 session while leaving the newest held:
@@ -280,11 +280,11 @@ session while leaving the newest held:
 1. forks the oldest eligible session;
 2. resumes the fork with the entry-point update prompt;
 3. deletes the temporary fork;
-4. runs `mct-agent sync --include-docs`; and
+4. runs `machtiani sync --include-docs`; and
 5. records that reviewed source session in
    `state/sync-trigger.json`.
 
-Before the first checkpoint, the project commit stored by mct-agent's
+Before the first checkpoint, the project commit stored by machtiani's
 internal-README sync supplies the bootstrap boundary. Afterward, the checkpoint
 is authoritative; a maintenance commit created after a held source session
 must not make that session disappear. The checkpoint prevents an immediate
@@ -299,7 +299,7 @@ newest session remains held. Equal update timestamps use the session ID as a
 stable tie-breaker.
 
 The `state/` checkpoint is host-local and should remain ignored by Git. The
-internal-README marker remains owned by mct-agent under the UUID project store
+internal-README marker remains owned by machtiani under the UUID project store
 in `~/.machtiani/`.
 
 ## Agent Manager help

@@ -25,7 +25,7 @@ use the resulting configuration.
 
 4. Stop the running DearMachine Client gracefully.
 5. Restart it with its normal explicit inbox, project, database, PID, manager,
-   and mct-agent paths.
+   and machtiani paths.
 6. Confirm startup and at least one successful poll.
 7. For a live lifecycle check, follow the disposable-instance runbook in the
    DearMachine source repository rather than sharing the normal inbox or state.

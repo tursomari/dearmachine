@@ -15,14 +15,14 @@ No bots. No dashboards. No new messaging app to learn.
 ## Current Alpha Quick Start
 
 The open-source alpha runs as a portable foreground process. Nix packages the
-DearMachine Client and Agent Manager together; install `mct-agent` and your
+DearMachine Client and Agent Manager together; install `machtiani` and your
 chosen backend separately so they are available on `PATH`.
 
 ### 1. Install the native package
 
 ```bash
 nix profile install .#dearmachine
-command -v dearmachine agent-manager mct-agent
+command -v dearmachine agent-manager machtiani
 ```
 
 ### 2. Configure an installed backend

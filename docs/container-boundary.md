@@ -18,7 +18,7 @@ runtime mounts.
   Podman secret; and
 - a PID-file health probe.
 
-The image contains no inbox identity, API key, backend credential, mct-agent
+The image contains no inbox identity, API key, backend credential, machtiani
 session, coding repository, Agent Manager ticket, or mutable database.
 
 ## Mounted at runtime
@@ -33,9 +33,9 @@ The `dearmachine` Compose service has these host mounts:
 | `DEARMACHINE_CLIENT_RUN_DIR` | `/home/dearmachine/.dearmachine/run` | read/write | PID and other ephemeral run metadata. |
 | `DEARMACHINE_CLIENT_LOG_DIR` | `/home/dearmachine/.dearmachine/log` | read/write | Client logs when file logging is configured. |
 | `DEARMACHINE_CLIENT_AGENT_MANAGER_DIR` | `/home/dearmachine/.dearmachine/agent-manager` | read/write | Canonical Agent Manager tickets and worker state, preserved across container replacement and host rollback. |
-| `DEARMACHINE_MACHTIANI_DIR` | `/home/dearmachine/.machtiani` | read/write | mct-agent session/project stores. |
-| `DEARMACHINE_PROJECT_DIR` | `/workspace` | read/write | The single coding repository in which mct-agent and backend workers operate. |
-| `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `mct-agent`, `codex`, `forge`, and custom-backend executables or symlinks. Agent Manager is packaged in the image. |
+| `DEARMACHINE_MACHTIANI_DIR` | `/home/dearmachine/.machtiani` | read/write | machtiani session/project stores. |
+| `DEARMACHINE_PROJECT_DIR` | `/workspace` | read/write | The single coding repository in which machtiani and backend workers operate. |
+| `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `machtiani`, `codex`, `forge`, and custom-backend executables or symlinks. Agent Manager is packaged in the image. |
 | `/nix/store` | `/nix/store` | read-only | Resolves Nix-store interpreters, libraries, and targets used by mounted Nix-installed tools. |
 
 The explicit client directories default beneath the private client home, while

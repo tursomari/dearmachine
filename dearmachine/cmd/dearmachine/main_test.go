@@ -43,7 +43,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		t.Fatalf("parse defaults: %v", err)
 	}
 	if defaults.dbPath != "" || defaults.projectDir != "." ||
-		defaults.mctBinary != "mct-agent" || defaults.concurrency != 3 ||
+		defaults.agentBinary != "machtiani" || defaults.concurrency != 3 ||
 		defaults.maintenanceMinTurns != 20 ||
 		defaults.pollInterval != time.Minute ||
 		defaults.entryPointRepo != "~/.dearmachine/entrypoint/main" ||
@@ -60,7 +60,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		"--db", "/tmp/state.db",
 		"--project", "/tmp/project",
 		"--model", "fast-model",
-		"--mct-agent", "/tmp/mct-agent",
+		"--agent-bin", "/tmp/machtiani",
 		"--entry-point-repo", "/tmp/entrypoint",
 		"--entry-point-prompt", "/tmp/entrypoint/documentation/update.md",
 		"--concurrency", "5",
@@ -76,7 +76,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 	}
 	if cfg.inboxID != "inbox-123" || cfg.dbPath != "/tmp/state.db" ||
 		cfg.projectDir != "/tmp/project" || cfg.model != "fast-model" ||
-		cfg.mctBinary != "/tmp/mct-agent" || cfg.entryPointRepo != "/tmp/entrypoint" ||
+		cfg.agentBinary != "/tmp/machtiani" || cfg.entryPointRepo != "/tmp/entrypoint" ||
 		cfg.entryPointPrompt != "/tmp/entrypoint/documentation/update.md" ||
 		cfg.concurrency != 5 || cfg.maintenanceMinTurns != 8 ||
 		cfg.pollInterval != 250*time.Millisecond ||
@@ -151,7 +151,7 @@ func TestParseConfigHelp(t *testing.T) {
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseConfig help error = %v", err)
 	}
-	for _, want := range []string{"Usage of dearmachine:", "-concurrency", "-inbox-id", "-maintenance-min-turns", "-once"} {
+	for _, want := range []string{"Usage of dearmachine:", "-agent-bin", "-concurrency", "-inbox-id", "-maintenance-min-turns", "-once"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help output missing %q:\n%s", want, output.String())
 		}
@@ -288,14 +288,14 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 					inboxID = got
 					return client.NewAgentMailTransport(got)
 				},
-				newRunner: func(gotBinary, gotProject, gotModel string) (*client.MCTRunner, error) {
+				newRunner: func(gotBinary, gotProject, gotModel string) (*client.AgentRunner, error) {
 					binary, projectDir, model = gotBinary, gotProject, gotModel
-					return client.NewMCTRunner(gotBinary, gotProject, gotModel)
+					return client.NewAgentRunner(gotBinary, gotProject, gotModel)
 				},
 				newApp: func(
 					_ client.Transport,
 					_ *client.Store,
-					_ *client.MCTRunner,
+					_ *client.AgentRunner,
 					gotOrchestrator *synctrigger.Orchestrator,
 					gotConcurrency int,
 					gotInterval time.Duration,
@@ -321,7 +321,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				"--db", "configured.db",
 				"--project", "/project",
 				"--model", "model-123",
-				"--mct-agent", "/bin/mct-agent",
+				"--agent-bin", "/bin/machtiani",
 				"--concurrency", "7",
 				"--poll-interval", "3s",
 				"--pidfile", "/run/dearmachine.pid",
@@ -339,7 +339,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				t.Fatalf("run: %v", err)
 			}
 			if storePath != "configured.db" || inboxID != "inbox-123" ||
-				binary != "/bin/mct-agent" || projectDir != "/project" || model != "model-123" ||
+				binary != "/bin/machtiani" || projectDir != "/project" || model != "model-123" ||
 				concurrency != 7 || pollInterval != 3*time.Second || !verbose ||
 				pidfile != "/run/dearmachine.pid" {
 				t.Fatalf("unexpected construction: db=%q inbox=%q runner=%q,%q,%q app=%d,%s,%v,%q",
@@ -388,14 +388,14 @@ func TestRunReportsDependencyConstructionFailures(t *testing.T) {
 					return nil, want
 				}
 			case "runner":
-				deps.newRunner = func(string, string, string) (*client.MCTRunner, error) {
+				deps.newRunner = func(string, string, string) (*client.AgentRunner, error) {
 					return nil, want
 				}
 			case "application":
 				deps.newApp = func(
 					client.Transport,
 					*client.Store,
-					*client.MCTRunner,
+					*client.AgentRunner,
 					*synctrigger.Orchestrator,
 					int,
 					time.Duration,
@@ -448,7 +448,7 @@ func TestRunInitDoesNotRequireMailConfigurationAndLeavesExistingRepoUntouched(t 
 		userHomeDir: func() (string, error) { return t.TempDir(), nil },
 	}
 	if err := run(
-		[]string{"init", "--entry-point-repo", repo, "--mct-agent", "/missing/mct-agent"},
+		[]string{"init", "--entry-point-repo", repo, "--agent-bin", "/missing/machtiani"},
 		func(string) string { return "" },
 		deps,
 	); err != nil {
@@ -479,7 +479,7 @@ func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
 		config{
 			entryPointRepo:   repo,
 			entryPointPrompt: prompt,
-			mctBinary:        "/configured/mct-agent",
+			agentBinary:      "/configured/machtiani",
 		},
 		dependencies{userHomeDir: func() (string, error) { return t.TempDir(), nil }},
 		log.New(io.Discard, "", 0),
@@ -560,11 +560,11 @@ func testDependencies(t *testing.T, app application) dependencies {
 		newTransport: func(inboxID string) (client.Transport, error) {
 			return client.NewAgentMailTransport(inboxID)
 		},
-		newRunner: client.NewMCTRunner,
+		newRunner: client.NewAgentRunner,
 		newApp: func(
 			client.Transport,
 			*client.Store,
-			*client.MCTRunner,
+			*client.AgentRunner,
 			*synctrigger.Orchestrator,
 			int,
 			time.Duration,

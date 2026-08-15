@@ -22,8 +22,8 @@ services:
       - /workspace
       - --config
       - /home/dearmachine/.dearmachine/config/dearmachine.toml
-      - --mct-agent
-      - /opt/dearmachine/bin/mct-agent
+      - --agent-bin
+      - /opt/dearmachine/bin/machtiani
       - --db
       - /home/dearmachine/.dearmachine/state/dearmachine.db
       - --pidfile

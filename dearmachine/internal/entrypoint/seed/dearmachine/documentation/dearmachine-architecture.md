@@ -11,9 +11,9 @@ thread. It is one machine-level service documented by this entry point.
 1. An authorized sender emails the DearMachine Client's AgentMail inbox.
 2. DearMachine Client polls the inbox, orders unread messages, and records each
    message in its SQLite store.
-3. Each new email thread maps to a distinct mct-agent session. A later message
+3. Each new email thread maps to a distinct machtiani session. A later message
    in that thread resumes the same session without replaying quoted history.
-4. mct-agent runs in agent-managed mode with the configured backend priority
+4. machtiani runs in agent-managed mode with the configured backend priority
    and Agent Manager executable supplied by DearMachine Client.
 5. Agent Manager health-checks approved backends and supervises the selected
    worker's ticket.
@@ -40,14 +40,14 @@ secret store into its environment.
 Important launch settings include:
 
 - `--inbox-id`: dedicated AgentMail inbox.
-- `--project`: working directory and mct-agent project used for email sessions;
+- `--project`: working directory and machtiani project used for email sessions;
   it defaults to the DearMachine Client launch directory.
 - `--entry-point-repo`: repository used only for entry-point documentation
   sync; it defaults to `~/.dearmachine/entrypoint/main` and does not provide
   entry-point context to a different `--project`.
 - `--config`: backend configuration file.
 - `--agent-manager`: Agent Manager executable.
-- `--mct-agent`: mct-agent executable.
+- `--agent-bin`: machtiani executable.
 - `--db` and `--pidfile`: local runtime state.
 - `--poll-interval`: delay between completed polling cycles.
 
@@ -63,7 +63,7 @@ this entry-point repository:
 - `cmd/dearmachine/main.go` — DearMachine Client entry point and flags.
 - `internal/client/app.go` — polling and processing lifecycle.
 - `internal/client/agentmail.go` — AgentMail integration.
-- `internal/client/mct.go` — mct-agent invocation and session recovery.
+- `internal/client/agent.go` — machtiani invocation and session recovery.
 - `internal/client/store.go` — SQLite persistence.
 - `internal/backends/catalog.go` — supported backend catalog.
 - `cmd/agent-manager/main.go` — Agent Manager command surface.
@@ -73,7 +73,7 @@ this entry-point repository:
 - No polling: verify the process, PID file, inbox ID, credential, and logs.
 - Backend unavailable: inspect approved backend order and run Agent Manager's
   backend health command.
-- Message remains pending: inspect the mapped mct session and worker ticket;
+- Message remains pending: inspect the mapped agent session and worker ticket;
   restarting DearMachine Client can resume recoverable work.
-- Missing reply: verify the AgentMail thread and the final mct answer rather
+- Missing reply: verify the AgentMail thread and the final agent answer rather
   than creating a replacement thread.

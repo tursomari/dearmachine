@@ -69,8 +69,8 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 	inboxID := flags.String("inbox-id", "", "AgentMail inbox ID")
 	dbPath := flags.String("db", "", "SQLite state database path")
 	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
-	projectDir := flags.String("project", ".", "mct-agent project for abandoned-session cleanup")
-	mctBinary := flags.String("mct-agent", "mct-agent", "path to the mct-agent executable")
+	projectDir := flags.String("project", ".", "machtiani project for abandoned-session cleanup")
+	agentBinary := flags.String("agent-bin", "machtiani", "path to the machtiani executable")
 	reason := flags.String("reason", "operator skipped", "local audit reason")
 	flags.Usage = func() { _ = inboxSkipHelp(output) }
 	if err := flags.Parse(args); err != nil {
@@ -151,7 +151,7 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 	}
 
 	var cleanupErrors []error
-	var runner *client.MCTRunner
+	var runner *client.AgentRunner
 	for _, message := range abandoned {
 		if err := client.RemoveRecoveryResult(message.SessionID, message.MessageID); err != nil {
 			cleanupErrors = append(cleanupErrors, err)
@@ -163,7 +163,7 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 					cleanupErrors = append(cleanupErrors, fmt.Errorf("resolve cleanup project: %w", err))
 					continue
 				}
-				runner, err = client.NewMCTRunner(*mctBinary, resolvedProject, "")
+				runner, err = client.NewAgentRunner(*agentBinary, resolvedProject, "")
 				if err != nil {
 					cleanupErrors = append(cleanupErrors, fmt.Errorf("prepare session cleanup: %w", err))
 					continue
@@ -189,8 +189,8 @@ func runInboxAbandon(args []string, deps dependencies) error {
 	flags.SetOutput(output)
 	dbPath := flags.String("db", "", "SQLite state database path")
 	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
-	projectDir := flags.String("project", ".", "mct-agent project containing the session")
-	mctBinary := flags.String("mct-agent", "mct-agent", "path to the mct-agent executable")
+	projectDir := flags.String("project", ".", "machtiani project containing the session")
+	agentBinary := flags.String("agent-bin", "machtiani", "path to the machtiani executable")
 	reason := flags.String(
 		"reason",
 		"operator abandoned in-progress follow-up",
@@ -220,7 +220,7 @@ func runInboxAbandon(args []string, deps dependencies) error {
 	}
 	resolvedProject, err := resolvePath(*projectDir, deps.userHomeDir)
 	if err != nil {
-		return fmt.Errorf("resolve mct project: %w", err)
+		return fmt.Errorf("resolve agent project: %w", err)
 	}
 
 	store, err := deps.openStore(resolvedDB)
@@ -232,9 +232,9 @@ func runInboxAbandon(args []string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
-	runner, err := deps.newRunner(*mctBinary, resolvedProject, "")
+	runner, err := deps.newRunner(*agentBinary, resolvedProject, "")
 	if err != nil {
-		return fmt.Errorf("prepare mct session abandonment: %w", err)
+		return fmt.Errorf("prepare agent session abandonment: %w", err)
 	}
 	ctx := context.Background()
 	if err := store.CommitAbandon(plan, *reason); err != nil {
@@ -444,8 +444,8 @@ Flags:
   --inbox-id <id>    AgentMail inbox ID (required)
   --db <path>        SQLite state database (default: normal DearMachine Client DB)
   --pidfile <path>   PID file to check (default: normal DearMachine Client PID file)
-  --project <path>   mct-agent project for abandoned-session cleanup
-  --mct-agent <path> mct-agent executable
+  --project <path>   machtiani project for abandoned-session cleanup
+  --agent-bin <path> machtiani executable
   --reason <text>    Local audit reason
 `)
 	return err
@@ -465,8 +465,8 @@ started.
 Flags:
   --db <path>        SQLite state database (default: normal DearMachine Client DB)
   --pidfile <path>   PID file to check (default: normal DearMachine Client PID file)
-  --project <path>   mct-agent project containing the session
-  --mct-agent <path> mct-agent executable
+  --project <path>   machtiani project containing the session
+  --agent-bin <path> machtiani executable
   --reason <text>    Local audit reason
 `)
 	return err

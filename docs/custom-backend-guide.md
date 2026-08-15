@@ -161,7 +161,7 @@ See the deepcode‑backend example in the walkthrough above for a working patter
 ## Beware of MACHTIANI_SESSION_ID when testing
 
 If you are testing a temporary dearmachine from within an existing
-mct-agent session, the inherited `MACHTIANI_SESSION_ID` environment
+machtiani session, the inherited `MACHTIANI_SESSION_ID` environment
 variable will cause the temporary client to collide with the parent
 session lock. The client fails with an error matching
 `session already active for .../session.lock`. Either unset the variable

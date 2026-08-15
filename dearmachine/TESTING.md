@@ -58,7 +58,7 @@ The suite favors behavior-level component tests over isolated mocks:
 
 - `httptest.Server` implements a local AgentMail REST fake while production
   mailbox code still uses the AgentMail Go SDK.
-- `internal/client/testdata/fake-mct-agent.sh` is executed as a real
+- `internal/client/testdata/fake-agent.sh` is executed as a real
   subprocess. It simulates `sync`, `run`, and `session show`, and captures
   arguments, environment, prompts, and final-answer files.
 - Tests use real temporary SQLite databases and reopen them for restart and
@@ -66,7 +66,7 @@ The suite favors behavior-level component tests over isolated mocks:
 - `t.TempDir()` and test-only environment variables keep runs isolated and
   credential-free.
 - Follow-up tests verify that AgentMail `extracted_text` supplies only the new
-  user contribution while the existing mct-agent session supplies history.
+  user contribution while the existing machtiani session supplies history.
 
 The automated suite is split by responsibility:
 
@@ -75,7 +75,7 @@ The automated suite is split by responsibility:
 - `internal/client/app_test.go` covers primary email/session workflows
   and supplies the shared AgentMail fake.
 - `internal/client/agentmail_test.go` covers AgentMail error contracts.
-- `internal/client/mct_test.go` covers subprocess and status failures.
+- `internal/client/agent_test.go` covers subprocess and status failures.
 - `internal/client/store_test.go` covers SQLite migrations and durable
   state invariants.
 - `internal/synctrigger/detection_test.go` covers the internal-README commit
@@ -95,7 +95,7 @@ non-versioned pseudocode scenario catalog, not a list of tests that all exist
 today. Add its cases to the executable suite as the corresponding features are
 built.
 
-Live AgentMail and real `mct-agent` checks are deliberately excluded from
+Live AgentMail and real `machtiani` checks are deliberately excluded from
 `go test ./...`. Keep any future live smoke suite opt-in and credential-gated
 so the default test command remains deterministic and safe.
 

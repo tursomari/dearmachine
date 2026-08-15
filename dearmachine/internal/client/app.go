@@ -19,7 +19,7 @@ import (
 type App struct {
 	transport        Transport
 	store            *Store
-	runner           *MCTRunner
+	runner           *AgentRunner
 	syncOrchestrator *synctrigger.Orchestrator
 	concurrency      int
 	pollInterval     time.Duration
@@ -34,7 +34,7 @@ type App struct {
 func New(
 	transport Transport,
 	store *Store,
-	runner *MCTRunner,
+	runner *AgentRunner,
 	syncOrchestrator *synctrigger.Orchestrator,
 	concurrency int,
 	pollInterval time.Duration,
@@ -49,7 +49,7 @@ func New(
 		return nil, fmt.Errorf("store is required")
 	}
 	if runner == nil {
-		return nil, fmt.Errorf("mct runner is required")
+		return nil, fmt.Errorf("agent runner is required")
 	}
 	if concurrency < 1 {
 		return nil, fmt.Errorf("concurrency must be at least 1")
@@ -302,7 +302,7 @@ func (a *App) processPending(
 		if !pending.Session.IsNew {
 			checkpointSessionID, err = a.runner.ForkSession(ctx, pending.Session.SessionID)
 			if err != nil {
-				return fmt.Errorf("checkpoint committed mct session before follow-up: %w", err)
+				return fmt.Errorf("checkpoint committed agent session before follow-up: %w", err)
 			}
 		}
 		if err := a.store.MarkRunningWithCheckpoint(
@@ -314,7 +314,7 @@ func (a *App) processPending(
 				cleanupErr := a.runner.DeleteSession(ctx, checkpointSessionID)
 				if cleanupErr != nil {
 					cleanupErr = fmt.Errorf(
-						"clean unused mct checkpoint %s: %w",
+						"clean unused agent checkpoint %s: %w",
 						checkpointSessionID,
 						cleanupErr,
 					)
@@ -348,7 +348,7 @@ func (a *App) processPending(
 			return err
 		}
 		if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove durable mct result: %w", err)
+			return fmt.Errorf("remove durable agent result: %w", err)
 		}
 	}
 
@@ -372,7 +372,7 @@ func (a *App) processPending(
 	}
 	a.recordProcessed(message.ThreadID)
 	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove durable mct result: %w", err)
+		return fmt.Errorf("remove durable agent result: %w", err)
 	}
 	if err := a.transport.MarkProcessed(ctx, message.MessageID); err != nil {
 		return err

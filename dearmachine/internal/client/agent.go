@@ -25,7 +25,7 @@ type RunResult struct {
 	Text string
 }
 
-type MCTRunner struct {
+type AgentRunner struct {
 	binary         string
 	projectDir     string
 	model          string
@@ -35,7 +35,7 @@ type MCTRunner struct {
 	invoke         func(*exec.Cmd) error
 }
 
-func (r *MCTRunner) ConfigureAgentManaged(backends []string, managerPath string, customCatalog []backendcatalog.Backend) error {
+func (r *AgentRunner) ConfigureAgentManaged(backends []string, managerPath string, customCatalog []backendcatalog.Backend) error {
 	if err := backendcatalog.ValidateIDsWithCustom(backends, customCatalog, false); err != nil {
 		return fmt.Errorf("validate agent backends: %w", err)
 	}
@@ -59,21 +59,21 @@ type suspendedUserInput struct {
 	Context  string `json:"context"`
 }
 
-func NewMCTRunner(binary, projectDir, model string) (*MCTRunner, error) {
+func NewAgentRunner(binary, projectDir, model string) (*AgentRunner, error) {
 	if strings.TrimSpace(binary) == "" {
-		return nil, fmt.Errorf("mct-agent binary is required")
+		return nil, fmt.Errorf("machtiani binary is required")
 	}
 	if strings.TrimSpace(projectDir) == "" {
-		return nil, fmt.Errorf("mct project directory is required")
+		return nil, fmt.Errorf("agent project directory is required")
 	}
-	return &MCTRunner{
+	return &AgentRunner{
 		binary:     binary,
 		projectDir: projectDir,
 		model:      strings.TrimSpace(model),
 	}, nil
 }
 
-func (r *MCTRunner) Sync(ctx context.Context) error {
+func (r *AgentRunner) Sync(ctx context.Context) error {
 	command := exec.CommandContext(ctx, r.binary, "sync")
 	command.Dir = r.projectDir
 	var output bytes.Buffer
@@ -84,7 +84,7 @@ func (r *MCTRunner) Sync(ctx context.Context) error {
 			err = ctx.Err()
 		}
 		return fmt.Errorf(
-			"mct-agent sync failed: %w: %s",
+			"machtiani sync failed: %w: %s",
 			err,
 			strings.TrimSpace(output.String()),
 		)
@@ -92,7 +92,7 @@ func (r *MCTRunner) Sync(ctx context.Context) error {
 	return nil
 }
 
-func (r *MCTRunner) Run(
+func (r *AgentRunner) Run(
 	ctx context.Context,
 	session Session,
 	text,
@@ -102,13 +102,13 @@ func (r *MCTRunner) Run(
 		return RunResult{}, err
 	}
 	if strings.TrimSpace(finalPath) == "" {
-		return RunResult{}, fmt.Errorf("mct final answer path is required")
+		return RunResult{}, fmt.Errorf("agent final answer path is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
-		return RunResult{}, fmt.Errorf("create mct output directory: %w", err)
+		return RunResult{}, fmt.Errorf("create agent output directory: %w", err)
 	}
 	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
-		return RunResult{}, fmt.Errorf("clear prior mct final answer: %w", err)
+		return RunResult{}, fmt.Errorf("clear prior agent final answer: %w", err)
 	}
 	args := []string{
 		"run",
@@ -153,7 +153,7 @@ func (r *MCTRunner) Run(
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return RunResult{}, fmt.Errorf("mct-agent run failed: %w: %s", err, strings.TrimSpace(runOutput.String()))
+		return RunResult{}, fmt.Errorf("machtiani run failed: %w: %s", err, strings.TrimSpace(runOutput.String()))
 	}
 
 	state, err := r.showSession(ctx, session.SessionID)
@@ -166,14 +166,14 @@ func (r *MCTRunner) Run(
 	}
 	if !ready {
 		if state.Status == "success" {
-			return RunResult{}, fmt.Errorf("mct-agent reported success without a final answer file")
+			return RunResult{}, fmt.Errorf("machtiani reported success without a final answer file")
 		}
-		return RunResult{}, fmt.Errorf("mct-agent returned unsupported status %q", state.Status)
+		return RunResult{}, fmt.Errorf("machtiani returned unsupported status %q", state.Status)
 	}
 	return result, nil
 }
 
-func (r *MCTRunner) Recover(
+func (r *AgentRunner) Recover(
 	ctx context.Context,
 	session Session,
 	originalPrompt,
@@ -199,10 +199,10 @@ func (r *MCTRunner) Recover(
 	return r.Run(ctx, resumed, recoveryPrompt, finalPath)
 }
 
-func (r *MCTRunner) DeleteSession(ctx context.Context, sessionID string) error {
+func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return fmt.Errorf("mct session ID is required")
+		return fmt.Errorf("agent session ID is required")
 	}
 	command := exec.CommandContext(
 		ctx,
@@ -218,7 +218,7 @@ func (r *MCTRunner) DeleteSession(ctx context.Context, sessionID string) error {
 			err = ctx.Err()
 		}
 		return fmt.Errorf(
-			"mct-agent session delete failed: %w: %s",
+			"machtiani session delete failed: %w: %s",
 			err,
 			strings.TrimSpace(output.String()),
 		)
@@ -227,12 +227,12 @@ func (r *MCTRunner) DeleteSession(ctx context.Context, sessionID string) error {
 }
 
 // ForkSession creates a clean continuation from the committed state of an
-// inactive mct session. mct-agent excludes disposable shell-agent state from
+// inactive agent session. machtiani excludes disposable shell-agent state from
 // the fork, which makes this suitable for abandoning an interrupted turn.
-func (r *MCTRunner) ForkSession(ctx context.Context, sessionID string) (string, error) {
+func (r *AgentRunner) ForkSession(ctx context.Context, sessionID string) (string, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return "", fmt.Errorf("mct session ID is required")
+		return "", fmt.Errorf("agent session ID is required")
 	}
 	command := exec.CommandContext(
 		ctx,
@@ -249,17 +249,17 @@ func (r *MCTRunner) ForkSession(ctx context.Context, sessionID string) (string, 
 			err = ctx.Err()
 		}
 		return "", fmt.Errorf(
-			"mct-agent session fork failed: %w: %s",
+			"machtiani session fork failed: %w: %s",
 			err,
 			strings.TrimSpace(stderr.String()),
 		)
 	}
 	forkedID := strings.TrimSpace(stdout.String())
 	if forkedID == "" || len(strings.Fields(forkedID)) != 1 {
-		return "", fmt.Errorf("mct-agent session fork returned an invalid session ID")
+		return "", fmt.Errorf("machtiani session fork returned an invalid session ID")
 	}
 	if forkedID == sessionID {
-		return "", fmt.Errorf("mct-agent session fork returned the source session ID")
+		return "", fmt.Errorf("machtiani session fork returned the source session ID")
 	}
 	return forkedID, nil
 }
@@ -267,7 +267,7 @@ func (r *MCTRunner) ForkSession(ctx context.Context, sessionID string) (string, 
 func RemoveRecoveryResult(sessionID, messageID string) error {
 	path := recoveryResultPath(sessionID, messageID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove abandoned mct result: %w", err)
+		return fmt.Errorf("remove abandoned agent result: %w", err)
 	}
 	return nil
 }
@@ -283,19 +283,19 @@ func resultFromState(
 			return RunResult{}, false, nil
 		}
 		if err != nil {
-			return RunResult{}, false, fmt.Errorf("read mct final answer: %w", err)
+			return RunResult{}, false, fmt.Errorf("read agent final answer: %w", err)
 		}
 		text := strings.TrimSpace(string(answer))
 		if text == "" {
 			return RunResult{}, false, fmt.Errorf(
-				"mct-agent reported success with an empty final answer",
+				"machtiani reported success with an empty final answer",
 			)
 		}
 		return RunResult{Kind: ResultAnswer, Text: text}, true, nil
 	case "suspended_user_input":
 		if state.SuspendedUserInput == nil ||
 			strings.TrimSpace(state.SuspendedUserInput.Question) == "" {
-			return RunResult{}, false, fmt.Errorf("mct-agent suspended without a question")
+			return RunResult{}, false, fmt.Errorf("machtiani suspended without a question")
 		}
 		return RunResult{
 			Kind: ResultQuestion,
@@ -309,7 +309,7 @@ func resultFromState(
 	}
 }
 
-func (r *MCTRunner) showSession(ctx context.Context, sessionID string) (sessionState, error) {
+func (r *AgentRunner) showSession(ctx context.Context, sessionID string) (sessionState, error) {
 	command := exec.CommandContext(
 		ctx,
 		r.binary,
@@ -325,7 +325,7 @@ func (r *MCTRunner) showSession(ctx context.Context, sessionID string) (sessionS
 			err = ctx.Err()
 		}
 		return sessionState{}, fmt.Errorf(
-			"mct-agent session show failed: %w: %s",
+			"machtiani session show failed: %w: %s",
 			err,
 			strings.TrimSpace(stderr.String()),
 		)
@@ -333,12 +333,12 @@ func (r *MCTRunner) showSession(ctx context.Context, sessionID string) (sessionS
 
 	var state sessionState
 	if err := json.Unmarshal(stdout.Bytes(), &state); err != nil {
-		return sessionState{}, fmt.Errorf("parse mct-agent session status: %w", err)
+		return sessionState{}, fmt.Errorf("parse machtiani session status: %w", err)
 	}
 	return state, nil
 }
 
-func (r *MCTRunner) runCommand(command *exec.Cmd) error {
+func (r *AgentRunner) runCommand(command *exec.Cmd) error {
 	if r.invoke != nil {
 		return r.invoke(command)
 	}
