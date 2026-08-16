@@ -215,7 +215,11 @@ func (f *fakeTransport) MarkProcessed(_ context.Context, messageID string) error
 	return nil
 }
 
-func (f *fakeTransport) FetchAttachment(_ context.Context, attachmentID string) ([]byte, error) {
+func (f *fakeTransport) FetchAttachment(
+	_ context.Context,
+	attachmentID string,
+	maxBytes int64,
+) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.attachmentErrors[attachmentID]; err != nil {
@@ -224,6 +228,9 @@ func (f *fakeTransport) FetchAttachment(_ context.Context, attachmentID string) 
 	contents, ok := f.attachments[attachmentID]
 	if !ok {
 		return nil, errors.New("attachment not found")
+	}
+	if int64(len(contents)) > maxBytes {
+		return nil, fmt.Errorf("fetch attachment %s: %w", attachmentID, ErrAttachmentTooLarge)
 	}
 	return append([]byte(nil), contents...), nil
 }

@@ -79,14 +79,17 @@ func TestFakeTransportContractMarkProcessedAppliesReadState(t *testing.T) {
 
 func TestFakeTransportContractFetchAttachmentReturnsBytesAndErrors(t *testing.T) {
 	transport := newFakeTransportFixture()
-	contents, err := transport.FetchAttachment(context.Background(), "attachment-1")
+	contents, err := transport.FetchAttachment(context.Background(), "attachment-1", 7)
 	if err != nil || string(contents) != "payload" {
 		t.Fatalf("FetchAttachment = %q, %v", contents, err)
+	}
+	if _, err := transport.FetchAttachment(context.Background(), "attachment-1", 6); !errors.Is(err, ErrAttachmentTooLarge) {
+		t.Fatalf("FetchAttachment error = %v, want %v", err, ErrAttachmentTooLarge)
 	}
 
 	want := errors.New("injected attachment failure")
 	transport.attachmentErrors["attachment-2"] = want
-	if _, err := transport.FetchAttachment(context.Background(), "attachment-2"); !errors.Is(err, want) {
+	if _, err := transport.FetchAttachment(context.Background(), "attachment-2", 7); !errors.Is(err, want) {
 		t.Fatalf("FetchAttachment error = %v, want %v", err, want)
 	}
 }

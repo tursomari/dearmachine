@@ -2,10 +2,13 @@ package client
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
 )
+
+var ErrAttachmentTooLarge = errors.New("attachment too large")
 
 // Message is the transport-neutral representation of an email message.
 type Message struct {
@@ -39,7 +42,7 @@ type Transport interface {
 	Reply(ctx context.Context, messageID, text, idempotencyKey string) (string, error)
 	ReplyReceipt(ctx context.Context, message Message) (string, bool, error)
 	MarkProcessed(ctx context.Context, messageID string) error
-	FetchAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error)
 }
 
 func sortMessages(messages []Message) {

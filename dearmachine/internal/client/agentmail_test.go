@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -198,6 +200,44 @@ func TestMailboxReplyRequiresReceiptMessageID(t *testing.T) {
 	_, err := mailbox.Reply(context.Background(), "message-1", "answer", "key-1")
 	if err == nil || !strings.Contains(err.Error(), "returned no receipt") {
 		t.Fatalf("Reply missing receipt error = %v", err)
+	}
+}
+
+func TestMailboxFetchAttachmentEnforcesMaxBytes(t *testing.T) {
+	const contents = "payload"
+	download := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(contents))
+	}))
+	t.Cleanup(download.Close)
+
+	fake, mailbox := newMailboxTestPair(t)
+	message := testMessage("message-1", "thread-1", "body")
+	message.Attachments = []agentmail.AttachmentFile{{
+		AttachmentID: "attachment-1",
+		Filename:     "payload.txt",
+		ContentType:  "text/plain",
+		Size:         int64(len(contents)),
+	}}
+	fake.add(message)
+	fake.fail(
+		http.MethodGet,
+		fakeInboxPrefix+"messages/message-1/attachments/attachment-1",
+		fakeHTTPResponse{
+			status: http.StatusOK,
+			body: `{"attachment_id":"attachment-1","download_url":"` + download.URL +
+				`","expires_at":"2026-08-16T00:00:00Z","size":7}`,
+		},
+	)
+	if _, err := mailbox.Message(context.Background(), "message-1"); err != nil {
+		t.Fatalf("Message: %v", err)
+	}
+
+	got, err := mailbox.FetchAttachment(context.Background(), "attachment-1", int64(len(contents)))
+	if err != nil || string(got) != contents {
+		t.Fatalf("FetchAttachment = %q, %v", got, err)
+	}
+	if _, err := mailbox.FetchAttachment(context.Background(), "attachment-1", int64(len(contents)-1)); !errors.Is(err, ErrAttachmentTooLarge) {
+		t.Fatalf("FetchAttachment error = %v, want %v", err, ErrAttachmentTooLarge)
 	}
 }
 

@@ -162,7 +162,11 @@ func (m *Mailbox) ReplyReceipt(
 	return "", false, nil
 }
 
-func (m *Mailbox) FetchAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+func (m *Mailbox) FetchAttachment(
+	ctx context.Context,
+	attachmentID string,
+	maxBytes int64,
+) ([]byte, error) {
 	m.attachmentMu.RLock()
 	messageID, ok := m.attachmentMessages[attachmentID]
 	m.attachmentMu.RUnlock()
@@ -197,9 +201,16 @@ func (m *Mailbox) FetchAttachment(ctx context.Context, attachmentID string) ([]b
 			response.Status,
 		)
 	}
-	contents, err := io.ReadAll(response.Body)
+	contents, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read AgentMail attachment %s: %w", attachmentID, err)
+	}
+	if int64(len(contents)) > maxBytes {
+		return nil, fmt.Errorf(
+			"download AgentMail attachment %s: %w",
+			attachmentID,
+			ErrAttachmentTooLarge,
+		)
 	}
 	return contents, nil
 }
