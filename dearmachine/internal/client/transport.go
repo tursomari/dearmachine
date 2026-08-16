@@ -34,12 +34,24 @@ type AttachmentRef struct {
 	SizeBytes    int64
 }
 
+type OutboundFile struct {
+	Filename    string
+	ContentType string
+	Contents    []byte
+}
+
+type ReplyPayload struct {
+	Text  string
+	HTML  string
+	Files []OutboundFile
+}
+
 // Transport is the email surface used by the dearmachine orchestrator.
 type Transport interface {
 	Poll(ctx context.Context) ([]Message, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
 	Message(ctx context.Context, messageID string) (Message, error)
-	Reply(ctx context.Context, messageID, text, idempotencyKey string) (string, error)
+	Reply(ctx context.Context, messageID string, payload ReplyPayload, idempotencyKey string) (string, error)
 	ReplyReceipt(ctx context.Context, message Message) (string, bool, error)
 	MarkProcessed(ctx context.Context, messageID string) error
 	FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error)

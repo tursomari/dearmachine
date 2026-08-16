@@ -356,7 +356,7 @@ func (a *App) processPending(
 	outboundMessageID, err := a.transport.Reply(
 		ctx,
 		message.MessageID,
-		result.Text,
+		ReplyPayload{Text: result.Text},
 		key,
 	)
 	if err != nil {

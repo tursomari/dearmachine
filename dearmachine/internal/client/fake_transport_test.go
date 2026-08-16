@@ -22,6 +22,8 @@ type fakeTransportErrors struct {
 type fakeTransportReply struct {
 	MessageID      string
 	Text           string
+	HTML           string
+	Files          []OutboundFile
 	IdempotencyKey string
 	ReceiptID      string
 }
@@ -123,8 +125,8 @@ func (f *fakeTransport) Message(_ context.Context, messageID string) (Message, e
 
 func (f *fakeTransport) Reply(
 	_ context.Context,
-	messageID,
-	text,
+	messageID string,
+	payload ReplyPayload,
 	idempotencyKey string,
 ) (string, error) {
 	f.mu.Lock()
@@ -139,7 +141,9 @@ func (f *fakeTransport) Reply(
 	receiptID := fmt.Sprintf("outbound-%d", len(f.replies)+1)
 	f.replies = append(f.replies, fakeTransportReply{
 		MessageID:      messageID,
-		Text:           text,
+		Text:           payload.Text,
+		HTML:           payload.HTML,
+		Files:          cloneOutboundFiles(payload.Files),
 		IdempotencyKey: idempotencyKey,
 		ReceiptID:      receiptID,
 	})
@@ -149,13 +153,25 @@ func (f *fakeTransport) Reply(
 		From:      "device@example.com",
 		To:        []string{inbound.From},
 		Timestamp: time.Now(),
-		Body:      text,
+		Body:      payload.Text,
 		InReplyTo: messageID,
 		Labels:    []string{"sent"},
 	}
 	f.messages[receiptID] = outbound
 	f.threads[inbound.ThreadID] = append(f.threads[inbound.ThreadID], outbound)
 	return receiptID, nil
+}
+
+func cloneOutboundFiles(files []OutboundFile) []OutboundFile {
+	if files == nil {
+		return nil
+	}
+	cloned := make([]OutboundFile, len(files))
+	for index, file := range files {
+		cloned[index] = file
+		cloned[index].Contents = append([]byte(nil), file.Contents...)
+	}
+	return cloned
 }
 
 func (f *fakeTransport) ReplyReceipt(

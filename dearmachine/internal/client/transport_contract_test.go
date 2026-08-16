@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestFakeTransportContractReplyPreservesIdempotencyKey(t *testing.T) {
 	receiptID, err := transport.Reply(
 		context.Background(),
 		"inbound-1",
-		"completed",
+		ReplyPayload{Text: "completed"},
 		"idempotency-1",
 	)
 	if err != nil || receiptID != "outbound-1" {
@@ -40,6 +41,36 @@ func TestFakeTransportContractReplyPreservesIdempotencyKey(t *testing.T) {
 		transport.replies[0].IdempotencyKey != "idempotency-1" ||
 		transport.replies[0].Text != "completed" {
 		t.Fatalf("reply log = %+v", transport.replies)
+	}
+}
+
+func TestFakeTransportContractReplyPreservesPayload(t *testing.T) {
+	transport := newFakeTransportFixture()
+	payload := ReplyPayload{
+		Text: "completed",
+		HTML: "<p>completed</p>",
+		Files: []OutboundFile{{
+			Filename:    "result.txt",
+			ContentType: "text/plain",
+			Contents:    []byte("result"),
+		}},
+	}
+
+	if _, err := transport.Reply(
+		context.Background(),
+		"inbound-1",
+		payload,
+		"idempotency-1",
+	); err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+	if len(transport.replies) != 1 {
+		t.Fatalf("reply log = %+v", transport.replies)
+	}
+	reply := transport.replies[0]
+	if reply.Text != payload.Text || reply.HTML != payload.HTML ||
+		!reflect.DeepEqual(reply.Files, payload.Files) {
+		t.Fatalf("reply payload = %+v, want %+v", reply, payload)
 	}
 }
 

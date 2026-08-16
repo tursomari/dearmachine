@@ -75,7 +75,12 @@ func TestMailboxAPIErrorContracts(t *testing.T) {
 				fake.add(testMessage("message-1", "thread-1", "body"))
 			},
 			operation: func(ctx context.Context, mailbox *Mailbox) error {
-				_, err := mailbox.Reply(ctx, "message-1", "answer", "key-1")
+				_, err := mailbox.Reply(
+					ctx,
+					"message-1",
+					ReplyPayload{Text: "answer"},
+					"key-1",
+				)
 				return err
 			},
 			want: "reply to AgentMail message message-1",
@@ -152,7 +157,12 @@ func TestMailboxMalformedResponseContracts(t *testing.T) {
 			method: http.MethodPost,
 			path:   fakeInboxPrefix + "messages/message-1/reply",
 			operation: func(ctx context.Context, mailbox *Mailbox) error {
-				_, err := mailbox.Reply(ctx, "message-1", "answer", "key-1")
+				_, err := mailbox.Reply(
+					ctx,
+					"message-1",
+					ReplyPayload{Text: "answer"},
+					"key-1",
+				)
 				return err
 			},
 			want: "reply to AgentMail message message-1",
@@ -197,9 +207,33 @@ func TestMailboxReplyRequiresReceiptMessageID(t *testing.T) {
 		body:   `{"thread_id":"thread-1"}`,
 	})
 
-	_, err := mailbox.Reply(context.Background(), "message-1", "answer", "key-1")
+	_, err := mailbox.Reply(
+		context.Background(),
+		"message-1",
+		ReplyPayload{Text: "answer"},
+		"key-1",
+	)
 	if err == nil || !strings.Contains(err.Error(), "returned no receipt") {
 		t.Fatalf("Reply missing receipt error = %v", err)
+	}
+}
+
+func TestMailboxReplyMapsPayloadText(t *testing.T) {
+	fake, mailbox := newMailboxTestPair(t)
+	fake.add(testMessage("message-1", "thread-1", "body"))
+
+	receiptID, err := mailbox.Reply(
+		context.Background(),
+		"message-1",
+		ReplyPayload{Text: "answer"},
+		"key-1",
+	)
+	if err != nil || receiptID != "reply-message-1" {
+		t.Fatalf("Reply = %q, %v", receiptID, err)
+	}
+	replies := fake.sentReplies()
+	if len(replies) != 1 || replies[0].Text != "answer" {
+		t.Fatalf("replies = %+v", replies)
 	}
 }
 

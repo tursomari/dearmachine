@@ -119,8 +119,8 @@ func (m *Mailbox) Message(ctx context.Context, messageID string) (Message, error
 
 func (m *Mailbox) Reply(
 	ctx context.Context,
-	messageID,
-	text,
+	messageID string,
+	payload ReplyPayload,
 	idempotencyKey string,
 ) (string, error) {
 	receipt, err := m.client.Inboxes.Messages.Reply(
@@ -128,7 +128,7 @@ func (m *Mailbox) Reply(
 		messageID,
 		agentmail.InboxMessageReplyParams{
 			InboxID: m.inboxID,
-			Text:    agentmail.String(text),
+			Text:    agentmail.String(payload.Text),
 		},
 		option.WithHeader("Idempotency-Key", idempotencyKey),
 	)

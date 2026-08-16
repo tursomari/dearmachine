@@ -440,7 +440,7 @@ func TestRestartRecordsExistingOutboundReceiptWithoutRerun(t *testing.T) {
 	if _, err := rig.app.transport.Reply(
 		context.Background(),
 		message.MessageID,
-		result.Text,
+		ReplyPayload{Text: result.Text},
 		idempotencyKey(pending.Session.SessionID, message.MessageID),
 	); err != nil {
 		t.Fatalf("Reply: %v", err)
