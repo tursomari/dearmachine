@@ -245,6 +245,17 @@ func runInboxAbandon(args []string, deps dependencies) error {
 	if err := client.RemoveRecoveryResult(plan.SessionID, plan.MessageID); err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	}
+	if err := client.RemoveStagingDirs(
+		resolvedProject,
+		client.TurnKey(plan.PendingSequence, plan.MessageID),
+	); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf(
+			"message %s remains abandoned, but clean attachment staging for sequence %d: %w",
+			plan.MessageID,
+			plan.PendingSequence,
+			err,
+		))
+	}
 	if err := runner.DeleteSession(ctx, plan.SessionID); err != nil {
 		cleanupErrors = append(cleanupErrors, fmt.Errorf(
 			"message %s remains abandoned, but clean partial session %s: %w",

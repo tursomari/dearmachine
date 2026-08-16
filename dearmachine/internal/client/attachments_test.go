@@ -628,6 +628,55 @@ func TestVerifyAndLoadOutboxRoundTripsAndDetectsTamper(t *testing.T) {
 	}
 }
 
+func TestRemoveStagingDirsRemovesOnlyTheRequestedTurn(t *testing.T) {
+	projectDir := t.TempDir()
+	turnKey := TurnKey(1, "cleanup")
+	dirs, err := stagePaths(projectDir, turnKey)
+	if err != nil {
+		t.Fatalf("stagePaths: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirs.Inbox, "a.txt"), []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirs.Outbox, "b.txt"), []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dirs.Outbox, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveStagingDirs(projectDir, turnKey); err != nil {
+		t.Fatalf("RemoveStagingDirs: %v", err)
+	}
+	assertStagingRemoved(t, projectDir, turnKey)
+
+	if err := RemoveStagingDirs(projectDir, turnKey); err != nil {
+		t.Fatalf("RemoveStagingDirs on absent dirs: %v", err)
+	}
+
+	otherKey := TurnKey(2, "other")
+	other, err := stagePaths(projectDir, otherKey)
+	if err != nil {
+		t.Fatalf("stagePaths other: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(other.Outbox, "keep.txt"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveStagingDirs(projectDir, turnKey); err != nil {
+		t.Fatalf("RemoveStagingDirs again: %v", err)
+	}
+	if _, err := os.Stat(other.Outbox); err != nil {
+		t.Fatalf("unrelated turn outbox was removed: %v", err)
+	}
+
+	if err := RemoveStagingDirs("", turnKey); err == nil || !strings.Contains(err.Error(), "project directory") {
+		t.Fatalf("RemoveStagingDirs empty project error = %v", err)
+	}
+	if err := RemoveStagingDirs(projectDir, " "); err == nil || !strings.Contains(err.Error(), "turn key") {
+		t.Fatalf("RemoveStagingDirs empty turn key error = %v", err)
+	}
+}
+
 func sha256Hex(contents []byte) string {
 	sum := sha256.Sum256(contents)
 	return hex.EncodeToString(sum[:])

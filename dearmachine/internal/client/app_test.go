@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"log"
@@ -492,6 +493,200 @@ func TestRestartRecordsExistingOutboundReceiptWithoutRerun(t *testing.T) {
 	}
 	if replies := rig.mail.sentReplies(); len(replies) != 1 {
 		t.Fatalf("reply count = %d, want 1: %+v", len(replies), replies)
+	}
+}
+
+func TestRestartResumesAttachmentTurnWithoutDuplicateRun(t *testing.T) {
+	fake := newFakeTransportFixture()
+	rig := newTestRigTransport(t, TierFormatted, fake, "test-model")
+	message := fake.poll[0]
+	rig.setAnswer("Formatted answer.")
+	t.Setenv("FAKE_AGENT_OUTBOX_FILE", "out.txt")
+	t.Setenv("FAKE_AGENT_OUTBOX_CONTENT", "frozen outbox data")
+
+	fake.errors.Reply = errors.New("simulated outage")
+	err := rig.app.ProcessOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "simulated outage") {
+		t.Fatalf("first ProcessOnce error = %v, want simulated outage", err)
+	}
+
+	pending, found, err := rig.store.PendingByID(message.MessageID)
+	if err != nil || !found {
+		t.Fatalf("PendingByID = %+v, %v; want found pending", pending, err)
+	}
+	if pending.State != messageResultReady {
+		t.Fatalf("pending state = %q, want %q", pending.State, messageResultReady)
+	}
+	if strings.TrimSpace(pending.ResultManifest) == "" {
+		t.Fatal("pending result manifest is empty after the simulated crash")
+	}
+	if got := rig.capture("count"); got != "1" {
+		t.Fatalf("machtiani run count = %q, want 1", got)
+	}
+
+	turnKey := TurnKey(pending.Session.Sequence, message.MessageID)
+	inbox := filepath.Join(rig.app.runner.projectDir, ".attachments-inbox", turnKey)
+	stagedReport, err := os.ReadFile(filepath.Join(inbox, "request.txt"))
+	if err != nil {
+		t.Fatalf("read staged request.txt: %v", err)
+	}
+	if string(stagedReport) != "payload" {
+		t.Fatalf("staged request.txt = %q, want %q", stagedReport, "payload")
+	}
+	if _, err := os.Stat(filepath.Join(inbox, InboundManifestName())); err != nil {
+		t.Fatalf("staged inbound manifest: %v", err)
+	}
+
+	fake.errors.Reply = nil
+	rig.restartStore(t)
+	mustProcess(t, rig)
+
+	if len(fake.replies) != 1 {
+		t.Fatalf("replies = %+v, want exactly 1", fake.replies)
+	}
+	reply := fake.replies[0]
+	if len(reply.Files) != 1 {
+		t.Fatalf("reply files = %+v, want 1", reply.Files)
+	}
+	if reply.Files[0].Filename != "out.txt" {
+		t.Fatalf("outbound filename = %q, want out.txt", reply.Files[0].Filename)
+	}
+	if string(reply.Files[0].Contents) != "frozen outbox data" {
+		t.Fatalf("outbound contents = %q, want %q", reply.Files[0].Contents, "frozen outbox data")
+	}
+	if got := rig.capture("count"); got != "1" {
+		t.Fatalf("machtiani run count after restart = %q, want 1", got)
+	}
+	session := rig.session(message.ThreadID)
+	if session.Sequence != 1 || session.Status != "completed" {
+		t.Fatalf("recovered session = %+v, want sequence 1 completed", session)
+	}
+	if _, err := os.Stat(filepath.Join(rig.app.runner.projectDir, ".attachments-inbox", turnKey)); !os.IsNotExist(err) {
+		t.Fatalf("inbox staging dir remains after completion; stat error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rig.app.runner.projectDir, ".attachments-outbox", turnKey)); !os.IsNotExist(err) {
+		t.Fatalf("outbox staging dir remains after completion; stat error = %v", err)
+	}
+}
+
+func TestRestartFailsClosedOnTamperedOutbox(t *testing.T) {
+	fake := newFakeTransportFixture()
+	rig := newTestRigTransport(t, TierFormatted, fake, "test-model")
+	message := fake.poll[0]
+	rig.setAnswer("Formatted answer.")
+	t.Setenv("FAKE_AGENT_OUTBOX_FILE", "out.txt")
+	t.Setenv("FAKE_AGENT_OUTBOX_CONTENT", "frozen outbox data")
+
+	fake.errors.Reply = errors.New("simulated outage")
+	if err := rig.app.ProcessOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "simulated outage") {
+		t.Fatalf("first ProcessOnce error = %v, want simulated outage", err)
+	}
+	pending, found, err := rig.store.PendingByID(message.MessageID)
+	if err != nil || !found || pending.State != messageResultReady {
+		t.Fatalf("PendingByID = %+v, %v; want result_ready pending", pending, err)
+	}
+	if strings.TrimSpace(pending.ResultManifest) == "" {
+		t.Fatal("pending result manifest is empty after the simulated crash")
+	}
+
+	turnKey := TurnKey(pending.Session.Sequence, message.MessageID)
+	outboxFile := filepath.Join(
+		rig.app.runner.projectDir,
+		".attachments-outbox",
+		turnKey,
+		"out.txt",
+	)
+	if err := os.WriteFile(outboxFile, []byte("tampered"), 0o600); err != nil {
+		t.Fatalf("tamper staged outbox file: %v", err)
+	}
+
+	fake.errors.Reply = nil
+	rig.restartStore(t)
+	err = rig.app.ProcessOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("recovery ProcessOnce error = %v, want outbox verification failure", err)
+	}
+	if len(fake.replies) != 0 {
+		t.Fatalf("replies = %+v, want none after tampered outbox", fake.replies)
+	}
+	pending, found, err = rig.store.PendingByID(message.MessageID)
+	if err != nil || !found || pending.State != messageResultReady {
+		t.Fatalf("PendingByID after failed recovery = %+v, %v; want still result_ready", pending, err)
+	}
+}
+
+func TestRestartReceiptPathSkipsRerunAndCleansStaging(t *testing.T) {
+	fake := newFakeTransportFixture()
+	rig := newTestRigTransport(t, TierFormatted, fake, "test-model")
+	message := fake.poll[0]
+
+	pending, _, err := rig.store.BeginMessage(message.MessageID, message.ThreadID, TierFormatted)
+	if err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	turnKey := TurnKey(pending.Session.Sequence, message.MessageID)
+	dirs, err := stagePaths(rig.app.runner.projectDir, turnKey)
+	if err != nil {
+		t.Fatalf("stagePaths: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirs.Inbox, "request.txt"), []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outbound := []byte("frozen outbox data")
+	if err := os.WriteFile(filepath.Join(dirs.Outbox, "out.txt"), outbound, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := OutboundManifest{
+		TurnKey: turnKey,
+		Files: []StagedArtifact{{
+			Filename:    "out.txt",
+			ContentType: "text/plain",
+			SizeBytes:   int64(len(outbound)),
+			SHA256:      sha256Hex(outbound),
+		}},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal outbound manifest: %v", err)
+	}
+	if err := rig.store.MarkRunningWithCheckpoint(message.MessageID, "persisted prompt", "checkpoint-session"); err != nil {
+		t.Fatalf("MarkRunningWithCheckpoint: %v", err)
+	}
+	result := RunResult{Kind: ResultAnswer, Text: "Already sent report."}
+	if err := rig.store.StoreResultWithManifest(message.MessageID, result, string(manifestJSON)); err != nil {
+		t.Fatalf("StoreResultWithManifest: %v", err)
+	}
+	if _, err := rig.app.transport.Reply(
+		context.Background(),
+		message.MessageID,
+		ReplyPayload{
+			Text:  result.Text,
+			HTML:  replyHTML(result.Text),
+			Files: []OutboundFile{{Filename: "out.txt", ContentType: "text/plain", Contents: outbound}},
+		},
+		idempotencyKey(pending.Session.SessionID, message.MessageID),
+	); err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+
+	rig.restartStore(t)
+	mustProcess(t, rig)
+
+	session := rig.session(message.ThreadID)
+	if session.Sequence != 1 || session.Status != "completed" {
+		t.Fatalf("recovered session = %+v, want sequence 1 completed", session)
+	}
+	if len(fake.replies) != 1 {
+		t.Fatalf("reply count = %d, want 1: %+v", len(fake.replies), fake.replies)
+	}
+	if _, err := os.Stat(filepath.Join(rig.captureDir, "count")); !os.IsNotExist(err) {
+		t.Fatalf("machtiani ran during receipt recovery; stat error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rig.app.runner.projectDir, ".attachments-inbox", turnKey)); !os.IsNotExist(err) {
+		t.Fatalf("inbox staging dir remains after receipt recovery; stat error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rig.app.runner.projectDir, ".attachments-outbox", turnKey)); !os.IsNotExist(err) {
+		t.Fatalf("outbox staging dir remains after receipt recovery; stat error = %v", err)
 	}
 }
 

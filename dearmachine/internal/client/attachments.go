@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -134,6 +135,27 @@ func stagePaths(projectDir, turnKey string) (StagingDirs, error) {
 	}
 
 	return StagingDirs{ProjectDir: projectAbs, Inbox: inbox, Outbox: outbox}, nil
+}
+
+// RemoveStagingDirs removes the turn-scoped inbound and outbox staging
+// directories for turnKey below projectDir. Absent directories are not an
+// error, so it is safe to call for turns that never staged attachments.
+func RemoveStagingDirs(projectDir, turnKey string) error {
+	if strings.TrimSpace(projectDir) == "" {
+		return fmt.Errorf("project directory is empty")
+	}
+	if strings.TrimSpace(turnKey) == "" {
+		return fmt.Errorf("turn key is empty")
+	}
+	inbox := filepath.Join(projectDir, ".attachments-inbox", turnKey)
+	outbox := filepath.Join(projectDir, ".attachments-outbox", turnKey)
+	var first error
+	for _, path := range []string{inbox, outbox} {
+		if err := os.RemoveAll(path); err != nil {
+			first = errors.Join(first, fmt.Errorf("remove staging dir %s: %w", path, err))
+		}
+	}
+	return first
 }
 
 func pathInside(parent, child string) bool {

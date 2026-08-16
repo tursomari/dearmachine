@@ -140,6 +140,135 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	}
 }
 
+func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
+	home := t.TempDir()
+	dbPath := filepath.Join(home, "state", "dearmachine.db")
+	store, err := client.OpenStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := store.BeginMessage("message-1", "thread-1", client.TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunning(first.MessageID, "first prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(
+		first.MessageID,
+		client.RunResult{Kind: client.ResultAnswer, Text: "done"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.BeginMessage("message-2", "thread-1", client.TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunningWithCheckpoint(
+		second.MessageID,
+		"partial follow-up",
+		"replacement-session",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	turnKey := client.TurnKey(second.Session.Sequence, second.MessageID)
+	abandonInbox := filepath.Join(home, ".attachments-inbox", turnKey)
+	abandonOutbox := filepath.Join(home, ".attachments-outbox", turnKey)
+	if err := os.MkdirAll(abandonInbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(abandonInbox, "request.txt"), []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(abandonOutbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(abandonOutbox, "out.txt"), []byte("frozen"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bogusTurnKey := client.TurnKey(second.Session.Sequence, "unrelated-message")
+	bogusDir := filepath.Join(home, ".attachments-inbox", bogusTurnKey)
+	if err := os.MkdirAll(bogusDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bogusDir, "keep.txt"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	fixturePath, err := filepath.Abs(filepath.Join(
+		"..", "..", "internal", "client", "testdata", "fake-agent.sh",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureDir := t.TempDir()
+	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
+	t.Setenv("FAKE_AGENT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
+	t.Setenv("FAKE_AGENT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
+	t.Setenv("FAKE_AGENT_FORK_ID", "replacement-session")
+	runner, err := client.NewAgentRunner(fixturePath, home, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout strings.Builder
+	deps := dependencies{
+		openStore: client.OpenStore,
+		newRunner: func(string, string, string) (*client.AgentRunner, error) {
+			return runner, nil
+		},
+		stdout:      &stdout,
+		flagOutput:  io.Discard,
+		userHomeDir: func() (string, error) { return home, nil },
+	}
+	if err := runInboxAbandon(
+		[]string{
+			"--db", dbPath,
+			"--pidfile", filepath.Join(home, "missing.pid"),
+			"--project", home,
+			"--reason", "stuck disposable test",
+			second.MessageID,
+		},
+		deps,
+	); err != nil {
+		t.Fatalf("runInboxAbandon: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Abandoned message message-2 locally") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	deleted, err := os.ReadFile(filepath.Join(captureDir, "deleted-sessions"))
+	if err != nil || string(deleted) != first.Session.SessionID+"\n" {
+		t.Fatalf("deleted sessions = %q, %v", deleted, err)
+	}
+	store, err = client.OpenStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if skipped, err := store.IsSkipped(second.MessageID); err != nil || !skipped {
+		t.Fatalf("IsSkipped = %v, %v", skipped, err)
+	}
+	session, err := store.Session(second.ThreadID)
+	if err != nil || session.SessionID != "replacement-session" || session.Sequence != 1 {
+		t.Fatalf("Session = %+v, %v", session, err)
+	}
+	if _, err := os.Stat(abandonInbox); !os.IsNotExist(err) {
+		t.Fatalf("abandoned turn inbox staging dir remains: %v", err)
+	}
+	if _, err := os.Stat(abandonOutbox); !os.IsNotExist(err) {
+		t.Fatalf("abandoned turn outbox staging dir remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(bogusDir, "keep.txt")); err != nil {
+		t.Fatalf("unrelated staging dir was removed: %v", err)
+	}
+}
+
 func TestInboxAbandonRejectsLegacyRunningFollowupWithoutCheckpoint(t *testing.T) {
 	home := t.TempDir()
 	dbPath := filepath.Join(home, "state", "dearmachine.db")
