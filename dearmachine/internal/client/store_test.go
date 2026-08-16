@@ -3,6 +3,7 @@ package client
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -905,6 +906,171 @@ INSERT INTO thread_sessions VALUES
 	}
 	if session.ResponseTier != TierPlain {
 		t.Fatalf("session response tier = %q, want %q", session.ResponseTier, TierPlain)
+	}
+}
+
+func TestStoreResultWithManifestPersistsManifest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil || existed {
+		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
+	}
+	if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	manifestJSON := `{"turn_key":"s1-abc","files":[{"filename":"a.txt","sha256":"..","size_bytes":1}]}`
+	if err := store.StoreResultWithManifest(
+		pending.MessageID,
+		RunResult{Kind: ResultAnswer, Text: "X"},
+		manifestJSON,
+	); err != nil {
+		t.Fatalf("StoreResultWithManifest: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	got, found, err := reopened.PendingByID(pending.MessageID)
+	if err != nil || !found {
+		t.Fatalf("PendingByID = %+v, %v, %v", got, found, err)
+	}
+	if got.State != messageResultReady {
+		t.Fatalf("state = %q, want %q", got.State, messageResultReady)
+	}
+	if got.ResultKind != ResultAnswer || got.ResultText != "X" {
+		t.Fatalf("result = kind %q text %q, want answer/X", got.ResultKind, got.ResultText)
+	}
+	if got.ResultManifest != manifestJSON {
+		t.Fatalf("ResultManifest = %q, want %q", got.ResultManifest, manifestJSON)
+	}
+	if err := reopened.Complete(pending.MessageID, "completed", "reply-1"); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+}
+
+func TestStoreMigratesPreResultManifestSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	legacySchema := `
+CREATE TABLE thread_sessions (
+    thread_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    sequence INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    response_tier TEXT NOT NULL DEFAULT 'plain',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE processed_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    outbound_message_id TEXT NOT NULL DEFAULT '',
+    processed_at TEXT NOT NULL
+);
+CREATE TABLE pending_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    prompt TEXT NOT NULL DEFAULT '',
+    result_kind TEXT NOT NULL DEFAULT '',
+    result_text TEXT NOT NULL DEFAULT '',
+    checkpoint_session_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(thread_id, sequence)
+);
+CREATE TABLE skipped_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    skipped_at TEXT NOT NULL
+);`
+	if _, err := db.Exec(legacySchema); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("migrate legacy store: %v", err)
+	}
+	defer store.Close()
+
+	rows, err := store.db.Query(`PRAGMA table_info(pending_messages)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	found := false
+	var defaultVal any
+	for rows.Next() {
+		var (
+			index      int
+			name       string
+			columnType string
+			notNull    int
+			value      any
+			primaryKey int
+		)
+		if err := rows.Scan(&index, &name, &columnType, &notNull, &value, &primaryKey); err != nil {
+			_ = rows.Close()
+			t.Fatalf("scan table info: %v", err)
+		}
+		if name == "result_manifest" {
+			found = true
+			defaultVal = value
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		t.Fatalf("iterate table info: %v", err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close table info: %v", err)
+	}
+	if !found {
+		t.Fatal("pending_messages missing result_manifest column after migration")
+	}
+	if got := fmt.Sprint(defaultVal); got != "''" && got != "" {
+		t.Fatalf("result_manifest default = %#v, want empty string", defaultVal)
+	}
+
+	pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil || existed {
+		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
+	}
+	if pending.ResultManifest != "" {
+		t.Fatalf("BeginMessage ResultManifest = %q, want empty", pending.ResultManifest)
+	}
+	if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	if err := store.StoreResult(pending.MessageID, RunResult{Kind: ResultAnswer, Text: "answer"}); err != nil {
+		t.Fatalf("StoreResult: %v", err)
+	}
+	got, foundPending, err := store.PendingByID(pending.MessageID)
+	if err != nil || !foundPending {
+		t.Fatalf("PendingByID = %+v, %v, %v", got, foundPending, err)
+	}
+	if got.ResultManifest != "" {
+		t.Fatalf("ResultManifest after StoreResult = %q, want empty", got.ResultManifest)
+	}
+	if got.State != messageResultReady || got.ResultText != "answer" {
+		t.Fatalf("round-trip pending = %+v", got)
 	}
 }
 

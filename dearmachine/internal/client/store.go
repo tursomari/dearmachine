@@ -35,6 +35,7 @@ type PendingMessage struct {
 	Prompt              string
 	ResultKind          ResultKind
 	ResultText          string
+	ResultManifest      string
 }
 
 type MessageRef struct {
@@ -155,6 +156,7 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     prompt TEXT NOT NULL DEFAULT '',
     result_kind TEXT NOT NULL DEFAULT '',
     result_text TEXT NOT NULL DEFAULT '',
+    result_manifest TEXT NOT NULL DEFAULT '',
     checkpoint_session_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -187,6 +189,13 @@ CREATE TABLE IF NOT EXISTS skipped_messages (
 	if err := s.addColumnIfMissing(
 		"pending_messages",
 		"checkpoint_session_id",
+		`TEXT NOT NULL DEFAULT ''`,
+	); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(
+		"pending_messages",
+		"result_manifest",
 		`TEXT NOT NULL DEFAULT ''`,
 	); err != nil {
 		return err
@@ -837,14 +846,19 @@ func (s *Store) MarkRunningWithCheckpoint(messageID, prompt, checkpointSessionID
 }
 
 func (s *Store) StoreResult(messageID string, result RunResult) error {
+	return s.StoreResultWithManifest(messageID, result, "")
+}
+
+func (s *Store) StoreResultWithManifest(messageID string, result RunResult, manifestJSON string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	update, err := s.db.Exec(
 		`UPDATE pending_messages
-		    SET state = ?, result_kind = ?, result_text = ?, updated_at = ?
+		    SET state = ?, result_kind = ?, result_text = ?, result_manifest = ?, updated_at = ?
 		  WHERE message_id = ? AND state = ?`,
 		messageResultReady,
 		result.Kind,
 		result.Text,
+		manifestJSON,
 		now,
 		messageID,
 		messageRunning,
@@ -965,6 +979,7 @@ SELECT p.message_id,
        p.prompt,
        p.result_kind,
        p.result_text,
+       p.result_manifest,
        t.sequence
   FROM pending_messages p
   JOIN thread_sessions t ON t.thread_id = p.thread_id`
@@ -989,6 +1004,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.Prompt,
 		&pending.ResultKind,
 		&pending.ResultText,
+		&pending.ResultManifest,
 		&committedSequence,
 	)
 	if err != nil {

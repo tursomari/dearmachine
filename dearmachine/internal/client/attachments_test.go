@@ -1,16 +1,20 @@
 package client
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultAttachmentLimits(t *testing.T) {
@@ -442,6 +446,185 @@ func TestStageInboxPreparesStagingTwiceIdempotently(t *testing.T) {
 	got, err := os.ReadFile(marker)
 	if err != nil || string(got) != "keep" {
 		t.Fatalf("existing file = %q, %v; want keep", got, err)
+	}
+}
+
+func TestBuildArchiveIsDeterministic(t *testing.T) {
+	a := []byte("# a\n")
+	b := []byte("hello")
+	manifest := OutboundManifest{
+		TurnKey: "s1-abc",
+		Files: []StagedArtifact{
+			{Filename: "a.md", ContentType: "text/markdown", SizeBytes: int64(len(a)), SHA256: sha256Hex(a)},
+			{Filename: "b.txt", ContentType: "text/plain", SizeBytes: int64(len(b)), SHA256: sha256Hex(b)},
+		},
+	}
+	files := []OutboundFile{
+		{Filename: "a.md", ContentType: "text/markdown", Contents: a},
+		{Filename: "b.txt", ContentType: "text/plain", Contents: b},
+	}
+
+	first, err := BuildArchive(manifest, files)
+	if err != nil {
+		t.Fatalf("BuildArchive first: %v", err)
+	}
+	second, err := BuildArchive(manifest, files)
+	if err != nil {
+		t.Fatalf("BuildArchive second: %v", err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatalf("BuildArchive outputs are not byte-identical")
+	}
+	if sha256Hex(first) != sha256Hex(second) {
+		t.Fatalf("BuildArchive sha256 mismatch: %s vs %s", sha256Hex(first), sha256Hex(second))
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(first), int64(len(first)))
+	if err != nil {
+		t.Fatalf("zip.NewReader: %v", err)
+	}
+	wantNames := []string{"manifest.json", "a.md", "b.txt"}
+	if len(reader.File) != len(wantNames) {
+		t.Fatalf("archive entries = %d, want %d", len(reader.File), len(wantNames))
+	}
+	wantTime := time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
+	wantContents := map[string][]byte{
+		"a.md":  a,
+		"b.txt": b,
+	}
+	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal expected manifest: %v", err)
+	}
+	manifestJSON = append(manifestJSON, '\n')
+	wantContents["manifest.json"] = manifestJSON
+
+	for i, file := range reader.File {
+		if file.Name != wantNames[i] {
+			t.Fatalf("entry[%d] = %q, want %q", i, file.Name, wantNames[i])
+		}
+		if !file.Modified.Equal(wantTime) {
+			t.Fatalf("entry %s Modified = %v, want %v", file.Name, file.Modified, wantTime)
+		}
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", file.Name, err)
+		}
+		got, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", file.Name, err)
+		}
+		want := wantContents[file.Name]
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s contents = %q, want %q", file.Name, got, want)
+		}
+		if file.CRC32 != crc32.ChecksumIEEE(want) {
+			t.Fatalf("%s CRC32 = %08x, want %08x", file.Name, file.CRC32, crc32.ChecksumIEEE(want))
+		}
+		if file.Name == "manifest.json" {
+			var parsed OutboundManifest
+			if err := json.Unmarshal(got, &parsed); err != nil {
+				t.Fatalf("parse manifest.json: %v", err)
+			}
+			if parsed.TurnKey != manifest.TurnKey || len(parsed.Files) != len(manifest.Files) {
+				t.Fatalf("parsed manifest = %+v, want %+v", parsed, manifest)
+			}
+			for index, artifact := range manifest.Files {
+				if parsed.Files[index] != artifact {
+					t.Fatalf("parsed artifact[%d] = %+v, want %+v", index, parsed.Files[index], artifact)
+				}
+			}
+		}
+	}
+}
+
+func TestBuildArchiveRejectsMismatchedManifest(t *testing.T) {
+	files := []OutboundFile{{Filename: "a.txt", Contents: []byte("x")}}
+	manifest := OutboundManifest{
+		TurnKey: "s1-abc",
+		Files:   []StagedArtifact{{Filename: "x.txt", SizeBytes: 1, SHA256: sha256Hex([]byte("x"))}},
+	}
+	if _, err := BuildArchive(manifest, files); err == nil || !strings.Contains(err.Error(), "archive manifest mismatch") {
+		t.Fatalf("missing file error = %v, want archive manifest mismatch", err)
+	}
+
+	emptyManifest := OutboundManifest{TurnKey: "s1-abc"}
+	if _, err := BuildArchive(emptyManifest, files); err == nil || !strings.Contains(err.Error(), "archive manifest mismatch") {
+		t.Fatalf("empty manifest error = %v, want archive manifest mismatch", err)
+	}
+
+	if _, err := BuildArchive(manifest, nil); err == nil || !strings.Contains(err.Error(), "archive needs files") {
+		t.Fatalf("empty files error = %v, want archive needs files", err)
+	}
+}
+
+func TestVerifyAndLoadOutboxRoundTripsAndDetectsTamper(t *testing.T) {
+	projectDir := t.TempDir()
+	turnKey := TurnKey(1, "verify-outbox")
+	staging, err := stagePaths(projectDir, turnKey)
+	if err != nil {
+		t.Fatalf("stagePaths: %v", err)
+	}
+	a := []byte("alpha")
+	b := []byte("bravo")
+	if err := os.WriteFile(filepath.Join(staging.Outbox, "a.md"), a, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging.Outbox, "b.txt"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := OutboundManifest{
+		TurnKey: turnKey,
+		Files: []StagedArtifact{
+			{Filename: "a.md", ContentType: "text/markdown", SizeBytes: int64(len(a)), SHA256: sha256Hex(a)},
+			{Filename: "b.txt", ContentType: "text/plain", SizeBytes: int64(len(b)), SHA256: sha256Hex(b)},
+		},
+	}
+
+	files, err := VerifyAndLoadOutbox(context.Background(), staging, manifest)
+	if err != nil {
+		t.Fatalf("VerifyAndLoadOutbox: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %d, want 2", len(files))
+	}
+	if files[0].Filename != "a.md" || files[1].Filename != "b.txt" {
+		t.Fatalf("order = %q, %q; want a.md, b.txt", files[0].Filename, files[1].Filename)
+	}
+	if !bytes.Equal(files[0].Contents, a) || !bytes.Equal(files[1].Contents, b) {
+		t.Fatalf("contents = %q, %q", files[0].Contents, files[1].Contents)
+	}
+	if files[0].ContentType != "text/markdown" || files[1].ContentType != "text/plain" {
+		t.Fatalf("content types = %q, %q", files[0].ContentType, files[1].ContentType)
+	}
+
+	if err := os.WriteFile(filepath.Join(staging.Outbox, "extra.bin"), []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	extra, err := VerifyAndLoadOutbox(context.Background(), staging, manifest)
+	if err != nil {
+		t.Fatalf("VerifyAndLoadOutbox with extra file: %v", err)
+	}
+	if len(extra) != 2 || extra[0].Filename != "a.md" || extra[1].Filename != "b.txt" {
+		t.Fatalf("extra outbox file was not ignored: %+v", extra)
+	}
+
+	if err := os.WriteFile(filepath.Join(staging.Outbox, "a.md"), []byte("ALPHX"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyAndLoadOutbox(context.Background(), staging, manifest); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("tampered bytes error = %v, want changed", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(staging.Outbox, "a.md"), a, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging.Outbox, "b.txt"), []byte("b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyAndLoadOutbox(context.Background(), staging, manifest); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("truncated file error = %v, want changed", err)
 	}
 }
 

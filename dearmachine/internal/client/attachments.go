@@ -1,6 +1,8 @@
 package client
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,15 +14,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
-	inboundManifestName  = "inbound-manifest.json"
-	outboundManifestName = "outbound-manifest.json"
+	inboundManifestName   = "inbound-manifest.json"
+	outboundManifestName  = "outbound-manifest.json"
+	attachmentArchiveName = "attachments.zip"
+	outboundManifestEntry = "manifest.json"
 )
 
-func InboundManifestName() string  { return inboundManifestName }
-func OutboundManifestName() string { return outboundManifestName }
+func InboundManifestName() string   { return inboundManifestName }
+func OutboundManifestName() string  { return outboundManifestName }
+func AttachmentArchiveName() string { return attachmentArchiveName }
 
 type AttachmentLimits struct {
 	MaxFileBytes  int64
@@ -342,6 +348,94 @@ func CollectOutbox(ctx context.Context, staging StagingDirs, limits AttachmentLi
 		Files:   artifacts,
 	}
 	return files, manifest, nil
+}
+
+func BuildArchive(manifest OutboundManifest, files []OutboundFile) ([]byte, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("archive needs files")
+	}
+	if len(manifest.Files) == 0 {
+		return nil, fmt.Errorf("archive manifest mismatch")
+	}
+
+	byName := make(map[string]OutboundFile, len(files))
+	for _, file := range files {
+		byName[file.Filename] = file
+	}
+
+	payload, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal outbound manifest: %w", err)
+	}
+	payload = append(payload, '\n')
+
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	if err := writeArchiveEntry(writer, outboundManifestEntry, payload); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	for _, artifact := range manifest.Files {
+		file, ok := byName[artifact.Filename]
+		if !ok {
+			_ = writer.Close()
+			return nil, fmt.Errorf("archive manifest mismatch")
+		}
+		if err := writeArchiveEntry(writer, artifact.Filename, file.Contents); err != nil {
+			_ = writer.Close()
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close attachment archive: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func writeArchiveEntry(writer *zip.Writer, name string, contents []byte) error {
+	header := &zip.FileHeader{
+		Name:   name,
+		Method: zip.Deflate,
+	}
+	header.Modified = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
+	header.SetMode(0o644)
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		return fmt.Errorf("create archive entry %s: %w", name, err)
+	}
+	if _, err := entry.Write(contents); err != nil {
+		return fmt.Errorf("write archive entry %s: %w", name, err)
+	}
+	return nil
+}
+
+func VerifyAndLoadOutbox(ctx context.Context, staging StagingDirs, manifest OutboundManifest) ([]OutboundFile, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	files := make([]OutboundFile, 0, len(manifest.Files))
+	for _, artifact := range manifest.Files {
+		path := filepath.Join(staging.Outbox, artifact.Filename)
+		contents, err := readRegularFile(path)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(contents)
+		if int64(len(contents)) != artifact.SizeBytes || hex.EncodeToString(sum[:]) != artifact.SHA256 {
+			return nil, fmt.Errorf("outbox file %s changed", artifact.Filename)
+		}
+		contentType := artifact.ContentType
+		if contentType == "" {
+			contentType = storedContentType("", contents)
+		}
+		files = append(files, OutboundFile{
+			Filename:    artifact.Filename,
+			ContentType: contentType,
+			Contents:    contents,
+		})
+	}
+	return files, nil
 }
 
 func readRegularFile(path string) ([]byte, error) {
