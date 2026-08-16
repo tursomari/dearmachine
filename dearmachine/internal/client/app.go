@@ -26,6 +26,7 @@ type App struct {
 	logger           *log.Logger
 	verbose          bool
 	pidfile          string
+	responseTier     ResponseTier
 	statsMu          sync.Mutex
 	processed        int
 	threads          map[string]struct{}
@@ -41,6 +42,7 @@ func New(
 	logger *log.Logger,
 	verbose bool,
 	pidfile string,
+	responseTier ResponseTier,
 ) (*App, error) {
 	if transport == nil {
 		return nil, fmt.Errorf("transport is required")
@@ -60,6 +62,12 @@ func New(
 	if logger == nil {
 		return nil, fmt.Errorf("logger is required")
 	}
+	if responseTier == "" {
+		responseTier = TierPlain
+	}
+	if _, err := ParseResponseTier(string(responseTier)); err != nil {
+		return nil, err
+	}
 	return &App{
 		transport:        transport,
 		store:            store,
@@ -70,6 +78,7 @@ func New(
 		logger:           logger,
 		verbose:          verbose,
 		pidfile:          pidfile,
+		responseTier:     responseTier,
 		threads:          make(map[string]struct{}),
 	}, nil
 }
@@ -182,7 +191,7 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			}
 			continue
 		}
-		pending, existed, err := a.store.BeginMessage(message.MessageID, message.ThreadID)
+		pending, existed, err := a.store.BeginMessage(message.MessageID, message.ThreadID, a.responseTier)
 		if errors.Is(err, errMessageSkipped) {
 			if a.verbose {
 				a.logger.Printf(

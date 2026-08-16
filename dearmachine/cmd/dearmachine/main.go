@@ -70,6 +70,7 @@ type dependencies struct {
 		*log.Logger,
 		bool,
 		string,
+		client.ResponseTier,
 	) (application, error)
 	newLogger     func() *log.Logger
 	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
@@ -99,6 +100,7 @@ func defaultDependencies() dependencies {
 			logger *log.Logger,
 			verbose bool,
 			pidfile string,
+			responseTier client.ResponseTier,
 		) (application, error) {
 			return client.New(
 				transport,
@@ -110,6 +112,7 @@ func defaultDependencies() dependencies {
 				logger,
 				verbose,
 				pidfile,
+				responseTier,
 			)
 		},
 		newLogger: func() *log.Logger {
@@ -244,7 +247,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err := loadAgentMailCredential(getenv, deps); err != nil {
 		return err
 	}
-	backends, managerPath, customBackends, err := loadAgentManagedConfig(cfg, deps)
+	backends, managerPath, customBackends, responseTier, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {
 		return err
 	}
@@ -304,6 +307,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		logger,
 		cfg.verbose,
 		cfg.pidfile,
+		responseTier,
 	)
 	if err != nil {
 		return err
@@ -419,35 +423,35 @@ func runInit(args []string, deps dependencies) error {
 	return nil
 }
 
-func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, []backendcatalog.Backend, error) {
+func loadAgentManagedConfig(cfg config, deps dependencies) ([]string, string, []backendcatalog.Backend, client.ResponseTier, error) {
 	configPath := cfg.deviceConfig
 	var err error
 	if configPath == "" {
 		configPath, err = client.DefaultDeviceConfigPath(deps.userHomeDir)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", nil, "", err
 		}
 	}
 	managerPath := cfg.managerPath
 	if managerPath == "" {
 		managerPath, err = deps.lookPath("agent-manager")
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("find packaged agent-manager on PATH: %w", err)
+			return nil, "", nil, "", fmt.Errorf("find packaged agent-manager on PATH: %w", err)
 		}
 	}
 	managerPath, err = filepath.Abs(managerPath)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("resolve agent-manager path: %w", err)
+		return nil, "", nil, "", fmt.Errorf("resolve agent-manager path: %w", err)
 	}
 	customBackendCatalog, err := client.LoadCustomBackendsFromManager(configPath)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, "", err
 	}
 	deviceConfig, err := client.LoadDeviceConfigWithCustom(configPath, customBackendCatalog...)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, "", err
 	}
-	return append([]string(nil), deviceConfig.Backends...), managerPath, customBackendCatalog, nil
+	return append([]string(nil), deviceConfig.Backends...), managerPath, customBackendCatalog, deviceConfig.ResponseTier, nil
 }
 
 func buildOrchestrator(

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -272,6 +273,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 				pollInterval time.Duration
 				verbose      bool
 				pidfile      string
+				responseTier client.ResponseTier
 				signals      []os.Signal
 				stopped      bool
 				orchestrator *synctrigger.Orchestrator
@@ -302,10 +304,11 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 					_ *log.Logger,
 					gotVerbose bool,
 					gotPIDFile string,
+					gotResponseTier client.ResponseTier,
 				) (application, error) {
 					orchestrator = gotOrchestrator
 					concurrency = gotConcurrency
-					pollInterval, verbose, pidfile = gotInterval, gotVerbose, gotPIDFile
+					pollInterval, verbose, pidfile, responseTier = gotInterval, gotVerbose, gotPIDFile, gotResponseTier
 					return app, nil
 				},
 				newLogger: func() *log.Logger { return log.New(io.Discard, "", 0) },
@@ -341,10 +344,10 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 			if storePath != "configured.db" || inboxID != "inbox-123" ||
 				binary != "/bin/machtiani" || projectDir != "/project" || model != "model-123" ||
 				concurrency != 7 || pollInterval != 3*time.Second || !verbose ||
-				pidfile != "/run/dearmachine.pid" {
-				t.Fatalf("unexpected construction: db=%q inbox=%q runner=%q,%q,%q app=%d,%s,%v,%q",
+				pidfile != "/run/dearmachine.pid" || responseTier != client.TierPlain {
+				t.Fatalf("unexpected construction: db=%q inbox=%q runner=%q,%q,%q app=%d,%s,%v,%q,%q",
 					storePath, inboxID, binary, projectDir, model, concurrency,
-					pollInterval, verbose, pidfile)
+					pollInterval, verbose, pidfile, responseTier)
 			}
 			if orchestrator != nil {
 				t.Fatal("expected orchestrator to be nil when entry-point repo is missing")
@@ -402,6 +405,7 @@ func TestRunReportsDependencyConstructionFailures(t *testing.T) {
 					*log.Logger,
 					bool,
 					string,
+					client.ResponseTier,
 				) (application, error) {
 					return nil, want
 				}
@@ -511,7 +515,7 @@ func TestBuildOrchestratorReceivesAgentManagedConfiguration(t *testing.T) {
 func TestLoadAgentManagedConfigFindsPackagedManagerOnPath(t *testing.T) {
 	deps := dependencies{}
 	configureAgentTestDeps(t, &deps)
-	backends, manager, _, err := loadAgentManagedConfig(config{}, deps)
+	backends, manager, _, tier, err := loadAgentManagedConfig(config{}, deps)
 	if err != nil {
 		t.Fatalf("loadAgentManagedConfig: %v", err)
 	}
@@ -520,6 +524,109 @@ func TestLoadAgentManagedConfigFindsPackagedManagerOnPath(t *testing.T) {
 	}
 	if !slices.Equal(backends, []string{"codex"}) {
 		t.Fatalf("backends = %v", backends)
+	}
+	if tier != client.TierPlain {
+		t.Fatalf("response tier = %q, want %q", tier, client.TierPlain)
+	}
+}
+
+func TestRunWiresConfiguredResponseTierToApp(t *testing.T) {
+	tests := []struct {
+		name        string
+		writeConfig func(t *testing.T, path string)
+		want        client.ResponseTier
+	}{
+		{
+			name: "formatted tier from config",
+			writeConfig: func(t *testing.T, path string) {
+				t.Helper()
+				if err := client.SaveDeviceConfig(path, client.DeviceConfig{
+					Version:      client.DeviceConfigVersion,
+					Backends:     []string{"codex"},
+					ResponseTier: client.TierFormatted,
+				}); err != nil {
+					t.Fatalf("save device config: %v", err)
+				}
+			},
+			want: client.TierFormatted,
+		},
+		{
+			name: "missing tier key defaults to plain",
+			writeConfig: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				content := fmt.Sprintf(
+					"version = %d\nbackends = [\"codex\"]\n",
+					client.DeviceConfigVersion,
+				)
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: client.TierPlain,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var gotTier client.ResponseTier
+			app := &fakeApplication{}
+			deps := dependencies{
+				openStore: func(string) (*client.Store, error) {
+					return client.OpenStore(filepath.Join(t.TempDir(), "state.db"))
+				},
+				newTransport: func(inboxID string) (client.Transport, error) {
+					return client.NewAgentMailTransport(inboxID)
+				},
+				newRunner: client.NewAgentRunner,
+				newApp: func(
+					_ client.Transport,
+					_ *client.Store,
+					_ *client.AgentRunner,
+					_ *synctrigger.Orchestrator,
+					_ int,
+					_ time.Duration,
+					_ *log.Logger,
+					_ bool,
+					_ string,
+					tier client.ResponseTier,
+				) (application, error) {
+					gotTier = tier
+					return app, nil
+				},
+				newLogger: func() *log.Logger { return log.New(io.Discard, "", 0) },
+				notifyContext: func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
+					return context.WithCancel(parent)
+				},
+				flagOutput: io.Discard,
+				readFile:   os.ReadFile,
+				setenv:     os.Setenv,
+			}
+			home := t.TempDir()
+			configPath := filepath.Join(home, ".dearmachine", "config", "dearmachine.toml")
+			test.writeConfig(t, configPath)
+			deps.userHomeDir = func() (string, error) { return home, nil }
+			deps.lookPath = func(executable string) (string, error) {
+				switch executable {
+				case "agent-manager":
+					return "/test/bin/agent-manager", nil
+				case "codex":
+					return "/test/bin/codex", nil
+				}
+				return "", os.ErrNotExist
+			}
+			if err := run(
+				[]string{"--inbox-id", "inbox-123", "--once"},
+				func(string) string { return "test-key" },
+				deps,
+			); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if gotTier != test.want {
+				t.Fatalf("newApp response tier = %q, want %q", gotTier, test.want)
+			}
+		})
 	}
 }
 
@@ -571,6 +678,7 @@ func testDependencies(t *testing.T, app application) dependencies {
 			*log.Logger,
 			bool,
 			string,
+			client.ResponseTier,
 		) (application, error) {
 			return app, nil
 		},

@@ -131,7 +131,7 @@ INSERT INTO processed_messages VALUES
 	if seen, err := store.Seen("legacy-message"); err != nil || !seen {
 		t.Fatalf("Seen legacy message = %v, %v", seen, err)
 	}
-	if _, _, err := store.BeginMessage("new-message", "new-thread"); err != nil {
+	if _, _, err := store.BeginMessage("new-message", "new-thread", TierPlain); err != nil {
 		t.Fatalf("pending_messages migration missing: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -150,7 +150,7 @@ INSERT INTO processed_messages VALUES
 
 func TestStoreStateMachineGuards(t *testing.T) {
 	store := openTestStore(t)
-	pending, existed, err := store.BeginMessage("message-1", "thread-1")
+	pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil || existed {
 		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
 	}
@@ -186,7 +186,7 @@ func TestStoreStateMachineGuards(t *testing.T) {
 
 func TestStoreReturnsExistingPendingMessageForDuplicate(t *testing.T) {
 	store := openTestStore(t)
-	first, existed, err := store.BeginMessage("message-1", "thread-1")
+	first, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil || existed {
 		t.Fatalf("first BeginMessage = %+v, %v, %v", first, existed, err)
 	}
@@ -194,7 +194,7 @@ func TestStoreReturnsExistingPendingMessageForDuplicate(t *testing.T) {
 		t.Fatalf("MarkRunning: %v", err)
 	}
 
-	duplicate, existed, err := store.BeginMessage("message-1", "thread-1")
+	duplicate, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil || !existed {
 		t.Fatalf("duplicate BeginMessage = %+v, %v, %v", duplicate, existed, err)
 	}
@@ -224,7 +224,7 @@ func TestStoreBeginMessageAtomicallyClaimsDuplicate(t *testing.T) {
 		go func() {
 			ready.Done()
 			<-start
-			pending, existed, err := store.BeginMessage("message-1", "thread-1")
+			pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 			results <- result{pending: pending, existed: existed, err: err}
 		}()
 	}
@@ -249,12 +249,16 @@ func TestStoreBeginMessageAtomicallyClaimsDuplicate(t *testing.T) {
 	if created.pending != existing.pending {
 		t.Fatalf("claims differ: created %+v, existing %+v", created.pending, existing.pending)
 	}
+	if created.pending.Session.ResponseTier != TierPlain ||
+		existing.pending.Session.ResponseTier != TierPlain {
+		t.Fatalf("claims carry unexpected tier: created %+v, existing %+v", created, existing)
+	}
 }
 
 func TestStorePendingOrdersCreationThenMessageID(t *testing.T) {
 	store := openTestStore(t)
 	for _, id := range []string{"message-b", "message-a", "message-c"} {
-		if _, _, err := store.BeginMessage(id, "thread-"+id); err != nil {
+		if _, _, err := store.BeginMessage(id, "thread-"+id, TierPlain); err != nil {
 			t.Fatalf("BeginMessage(%s): %v", id, err)
 		}
 	}
@@ -282,7 +286,7 @@ func TestStorePendingOrdersCreationThenMessageID(t *testing.T) {
 
 func TestStoreSequenceConflictRollsBackCompletion(t *testing.T) {
 	store := openTestStore(t)
-	pending, _, err := store.BeginMessage("message-1", "thread-1")
+	pending, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage: %v", err)
 	}
@@ -357,7 +361,7 @@ func TestStoreReopenPreservesRecoveryStates(t *testing.T) {
 			if err != nil {
 				t.Fatalf("OpenStore: %v", err)
 			}
-			created, _, err := store.BeginMessage("message-1", "thread-1")
+			created, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 			if err != nil {
 				t.Fatalf("BeginMessage: %v", err)
 			}
@@ -381,6 +385,7 @@ func TestStoreReopenPreservesRecoveryStates(t *testing.T) {
 			if got.State != test.wantState || got.Prompt != test.wantPrompt ||
 				got.ResultKind != test.wantKind || got.ResultText != test.wantText ||
 				got.Session.SessionID != created.Session.SessionID ||
+				got.Session.ResponseTier != TierPlain ||
 				got.Session.Sequence != 1 || !got.Session.IsNew {
 				t.Fatalf("reopened pending = %+v", got)
 			}
@@ -394,7 +399,7 @@ func TestStoreCompletedSessionResumesAtNextSequenceAfterReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStore: %v", err)
 	}
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage first: %v", err)
 	}
@@ -416,12 +421,12 @@ func TestStoreCompletedSessionResumesAtNextSequenceAfterReopen(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer reopened.Close()
-	second, existed, err := reopened.BeginMessage("message-2", "thread-1")
+	second, existed, err := reopened.BeginMessage("message-2", "thread-1", TierPlain)
 	if err != nil || existed {
 		t.Fatalf("BeginMessage second = %+v, %v, %v", second, existed, err)
 	}
 	if second.Session.SessionID != first.Session.SessionID || second.Session.Sequence != 2 ||
-		second.Session.IsNew || second.Session.Status != "completed" {
+		second.Session.ResponseTier != TierPlain || second.Session.IsNew || second.Session.Status != "completed" {
 		t.Fatalf("resumed session = %+v, first = %+v", second.Session, first.Session)
 	}
 }
@@ -470,7 +475,7 @@ func TestStoreSkipAndUnskipPersist(t *testing.T) {
 
 func TestStoreSkipAbandonsInitialPendingSession(t *testing.T) {
 	store := openTestStore(t)
-	pending, _, err := store.BeginMessage("message-1", "thread-1")
+	pending, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage: %v", err)
 	}
@@ -496,7 +501,7 @@ func TestStoreSkipAbandonsInitialPendingSession(t *testing.T) {
 	if err := store.UnskipMessages([]string{pending.MessageID}); err != nil {
 		t.Fatalf("UnskipMessages: %v", err)
 	}
-	restarted, existed, err := store.BeginMessage(pending.MessageID, pending.ThreadID)
+	restarted, existed, err := store.BeginMessage(pending.MessageID, pending.ThreadID, TierPlain)
 	if err != nil || existed {
 		t.Fatalf("BeginMessage after unskip = %+v, %v, %v", restarted, existed, err)
 	}
@@ -507,7 +512,7 @@ func TestStoreSkipAbandonsInitialPendingSession(t *testing.T) {
 
 func TestStoreSkipReceivedFollowupPreservesCommittedSession(t *testing.T) {
 	store := openTestStore(t)
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage first: %v", err)
 	}
@@ -520,7 +525,7 @@ func TestStoreSkipReceivedFollowupPreservesCommittedSession(t *testing.T) {
 	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
 		t.Fatalf("Complete first: %v", err)
 	}
-	second, _, err := store.BeginMessage("message-2", "thread-1")
+	second, _, err := store.BeginMessage("message-2", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage second: %v", err)
 	}
@@ -542,7 +547,7 @@ func TestStoreSkipReceivedFollowupPreservesCommittedSession(t *testing.T) {
 
 func TestStoreRejectsRunningFollowupSkipAtomically(t *testing.T) {
 	store := openTestStore(t)
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage first: %v", err)
 	}
@@ -555,7 +560,7 @@ func TestStoreRejectsRunningFollowupSkipAtomically(t *testing.T) {
 	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := store.BeginMessage("message-2", "thread-1")
+	second, _, err := store.BeginMessage("message-2", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -580,7 +585,7 @@ func TestStoreRejectsRunningFollowupSkipAtomically(t *testing.T) {
 
 func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	store := openTestStore(t)
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +598,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := store.BeginMessage("message-2", "thread-1")
+	second, _, err := store.BeginMessage("message-2", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,7 +641,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	if err := store.UnskipMessages([]string{second.MessageID}); err != nil {
 		t.Fatal(err)
 	}
-	restarted, existed, err := store.BeginMessage(second.MessageID, second.ThreadID)
+	restarted, existed, err := store.BeginMessage(second.MessageID, second.ThreadID, TierPlain)
 	if err != nil || existed {
 		t.Fatalf("BeginMessage after unskip = %+v, %v, %v", restarted, existed, err)
 	}
@@ -648,7 +653,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 
 func TestStoreAbandonRejectsNonRunningOrProvisionalMessage(t *testing.T) {
 	store := openTestStore(t)
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +672,7 @@ func TestStoreAbandonRejectsNonRunningOrProvisionalMessage(t *testing.T) {
 
 func TestStoreAbandonRejectsStalePlanAtomically(t *testing.T) {
 	store := openTestStore(t)
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +685,7 @@ func TestStoreAbandonRejectsStalePlanAtomically(t *testing.T) {
 	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := store.BeginMessage("message-2", "thread-1")
+	second, _, err := store.BeginMessage("message-2", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -711,7 +716,7 @@ func TestStoreAbandonRejectsStalePlanAtomically(t *testing.T) {
 
 func TestStoreRejectsSkipWhenMessageThreadDoesNotMatchPendingState(t *testing.T) {
 	store := openTestStore(t)
-	if _, _, err := store.BeginMessage("message-1", "thread-1"); err != nil {
+	if _, _, err := store.BeginMessage("message-1", "thread-1", TierPlain); err != nil {
 		t.Fatal(err)
 	}
 	_, err := store.SkipMessages(
@@ -738,7 +743,7 @@ func TestStoreClosedDatabaseErrors(t *testing.T) {
 	if _, err := store.Seen("message-1"); err == nil {
 		t.Fatal("Seen succeeded on closed database")
 	}
-	if _, _, err := store.BeginMessage("message-1", "thread-1"); err == nil {
+	if _, _, err := store.BeginMessage("message-1", "thread-1", TierPlain); err == nil {
 		t.Fatal("BeginMessage succeeded on closed database")
 	}
 	if _, err := store.Pending(); err == nil {
@@ -752,6 +757,170 @@ func TestStoreClosedDatabaseErrors(t *testing.T) {
 	}
 	if _, err := store.Session("thread-1"); err == nil || errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("Session closed database error = %v", err)
+	}
+}
+
+func TestBeginMessageSnapshotsResponseTier(t *testing.T) {
+	store := openTestStore(t)
+	first, existed, err := store.BeginMessage("m1", "thread-1", TierFormatted)
+	if err != nil || existed {
+		t.Fatalf("first BeginMessage = %+v, %v, %v", first, existed, err)
+	}
+	if first.Session.ResponseTier != TierFormatted {
+		t.Fatalf("first pending response tier = %q, want %q", first.Session.ResponseTier, TierFormatted)
+	}
+
+	second, existed, err := store.BeginMessage("m2", "thread-1", TierPlain)
+	if err != nil || existed {
+		t.Fatalf("second BeginMessage = %+v, %v, %v", second, existed, err)
+	}
+	if second.Session.ResponseTier != TierFormatted {
+		t.Fatalf(
+			"second pending response tier = %q, want stored %q",
+			second.Session.ResponseTier,
+			TierFormatted,
+		)
+	}
+
+	for _, pending := range []PendingMessage{first, second} {
+		if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
+			t.Fatalf("MarkRunning(%s): %v", pending.MessageID, err)
+		}
+		if err := store.StoreResult(pending.MessageID, RunResult{Kind: ResultAnswer, Text: "answer"}); err != nil {
+			t.Fatalf("StoreResult(%s): %v", pending.MessageID, err)
+		}
+		if err := store.Complete(pending.MessageID, "completed", "reply"); err != nil {
+			t.Fatalf("Complete(%s): %v", pending.MessageID, err)
+		}
+	}
+	if pending, err := store.Pending(); err != nil || len(pending) != 0 {
+		t.Fatalf("Pending after completion = %+v, %v", pending, err)
+	}
+}
+
+func TestBeginMessageDefaultsEmptyResponseTierToPlain(t *testing.T) {
+	store := openTestStore(t)
+	pending, existed, err := store.BeginMessage("m1", "thread-2", "")
+	if err != nil || existed {
+		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
+	}
+	if pending.Session.ResponseTier != TierPlain {
+		t.Fatalf("pending response tier = %q, want %q", pending.Session.ResponseTier, TierPlain)
+	}
+}
+
+func TestBeginMessageRejectsInvalidResponseTierOnNewThread(t *testing.T) {
+	store := openTestStore(t)
+	_, _, err := store.BeginMessage("m1", "thread-3", ResponseTier("fancy"))
+	if err == nil || !strings.Contains(err.Error(), "response tier must be one of plain, formatted, complete") {
+		t.Fatalf("BeginMessage error = %v", err)
+	}
+	var count int
+	if err := store.db.QueryRow(
+		`SELECT COUNT(*) FROM thread_sessions WHERE thread_id = ?`,
+		"thread-3",
+	).Scan(&count); err != nil {
+		t.Fatalf("query thread session: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("thread_sessions rows = %d, want 0", count)
+	}
+}
+
+func TestStoreMigratesPreResponseTierSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	legacySchema := `
+CREATE TABLE thread_sessions (
+    thread_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    sequence INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE processed_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    outbound_message_id TEXT NOT NULL DEFAULT '',
+    processed_at TEXT NOT NULL
+);
+CREATE TABLE pending_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    prompt TEXT NOT NULL DEFAULT '',
+    result_kind TEXT NOT NULL DEFAULT '',
+    result_text TEXT NOT NULL DEFAULT '',
+    checkpoint_session_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(thread_id, sequence)
+);
+CREATE TABLE skipped_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    skipped_at TEXT NOT NULL
+);
+INSERT INTO thread_sessions VALUES
+    ('legacy-thread', 'legacy-session', 1, 'completed', 'created', 'updated');`
+	if _, err := db.Exec(legacySchema); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy database: %v", err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("migrate legacy store: %v", err)
+	}
+	defer store.Close()
+	var tier string
+	if err := store.db.QueryRow(
+		`SELECT response_tier FROM thread_sessions WHERE thread_id = ?`,
+		"legacy-thread",
+	).Scan(&tier); err != nil {
+		t.Fatalf("query migrated response tier: %v", err)
+	}
+	if tier != "plain" {
+		t.Fatalf("migrated response_tier = %q, want plain", tier)
+	}
+
+	pending, existed, err := store.BeginMessage("new", "legacy-thread", TierComplete)
+	if err != nil || existed {
+		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
+	}
+	if pending.Session.ResponseTier != TierPlain {
+		t.Fatalf("pending response tier = %q, want stored %q", pending.Session.ResponseTier, TierPlain)
+	}
+	session, err := store.Session("legacy-thread")
+	if err != nil {
+		t.Fatalf("Session: %v", err)
+	}
+	if session.ResponseTier != TierPlain {
+		t.Fatalf("session response tier = %q, want %q", session.ResponseTier, TierPlain)
+	}
+}
+
+func TestSessionRejectsCorruptStoredResponseTier(t *testing.T) {
+	store := openTestStore(t)
+	if _, _, err := store.BeginMessage("m1", "thread-1", TierPlain); err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	if _, err := store.db.Exec(
+		`UPDATE thread_sessions SET response_tier = 'fancy' WHERE thread_id = 'thread-1'`,
+	); err != nil {
+		t.Fatalf("corrupt stored response tier: %v", err)
+	}
+	if _, err := store.Session("thread-1"); err == nil ||
+		!strings.Contains(err.Error(), "stored response tier") {
+		t.Fatalf("Session corrupt tier error = %v", err)
 	}
 }
 

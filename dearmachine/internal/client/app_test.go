@@ -313,6 +313,7 @@ func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 	pending, existed, err := rig.store.BeginMessage(
 		message.MessageID,
 		message.ThreadID,
+		TierPlain,
 	)
 	if err != nil {
 		t.Fatalf("BeginMessage: %v", err)
@@ -376,7 +377,7 @@ func TestRestartRecoversAcceptedAgentResultWithoutDuplicatePrompt(t *testing.T) 
 		"Add the accepted follow-up.",
 	)
 	rig.mail.add(message)
-	pending, _, err := rig.store.BeginMessage(message.MessageID, message.ThreadID)
+	pending, _, err := rig.store.BeginMessage(message.MessageID, message.ThreadID, TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage: %v", err)
 	}
@@ -426,7 +427,7 @@ func TestRestartRecordsExistingOutboundReceiptWithoutRerun(t *testing.T) {
 	)
 	rig.mail.add(message)
 
-	pending, _, err := rig.store.BeginMessage(message.MessageID, message.ThreadID)
+	pending, _, err := rig.store.BeginMessage(message.MessageID, message.ThreadID, TierPlain)
 	if err != nil {
 		t.Fatalf("BeginMessage: %v", err)
 	}
@@ -760,6 +761,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		log.New(io.Discard, "", 0),
 		false,
 		"",
+		TierPlain,
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -380,7 +380,7 @@ func TestConcurrentDuplicateClaimCreatesOnceAndRereads(t *testing.T) {
 		go func() {
 			ready.Done()
 			<-start
-			pending, existed, err := store.BeginMessage("message-1", "thread-1")
+			pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 			results <- claimResult{pending: pending, existed: existed, err: err}
 		}()
 	}
@@ -396,6 +396,9 @@ func TestConcurrentDuplicateClaimCreatesOnceAndRereads(t *testing.T) {
 	}
 	if claims[0].pending != claims[1].pending {
 		t.Fatalf("reread changed claim: first=%+v second=%+v", claims[0].pending, claims[1].pending)
+	}
+	if claims[0].pending.Session.ResponseTier != TierPlain {
+		t.Fatalf("claim response tier = %q, want %q", claims[0].pending.Session.ResponseTier, TierPlain)
 	}
 	pending, err := store.Pending()
 	if err != nil || len(pending) != 1 {
@@ -508,6 +511,7 @@ func newInMemoryApp(
 		log.New(io.Discard, "", 0),
 		false,
 		"",
+		TierPlain,
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

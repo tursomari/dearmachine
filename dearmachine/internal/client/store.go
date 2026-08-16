@@ -18,11 +18,12 @@ type Store struct {
 }
 
 type Session struct {
-	ThreadID  string
-	SessionID string
-	Sequence  int
-	Status    string
-	IsNew     bool
+	ThreadID     string
+	SessionID    string
+	Sequence     int
+	Status       string
+	IsNew        bool
+	ResponseTier ResponseTier
 }
 
 type PendingMessage struct {
@@ -134,6 +135,7 @@ CREATE TABLE IF NOT EXISTS thread_sessions (
     session_id TEXT NOT NULL UNIQUE,
     sequence INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
+    response_tier TEXT NOT NULL DEFAULT 'plain',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -167,6 +169,13 @@ CREATE TABLE IF NOT EXISTS skipped_messages (
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
+	}
+	if err := s.addColumnIfMissing(
+		"thread_sessions",
+		"response_tier",
+		`TEXT NOT NULL DEFAULT 'plain'`,
+	); err != nil {
+		return err
 	}
 	if err := s.addColumnIfMissing(
 		"processed_messages",
@@ -649,7 +658,10 @@ func (s *Store) CountProcessedSince(since time.Time) (int, error) {
 	return count, nil
 }
 
-func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, error) {
+func (s *Store) BeginMessage(messageID, threadID string, responseTier ResponseTier) (PendingMessage, bool, error) {
+	if responseTier == "" {
+		responseTier = TierPlain
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return PendingMessage{}, false, fmt.Errorf("begin inbound message: %w", err)
@@ -681,30 +693,37 @@ func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, 
 
 	var session Session
 	err = tx.QueryRow(
-		`SELECT thread_id, session_id, sequence, status
+		`SELECT thread_id, session_id, sequence, status, response_tier
 		   FROM thread_sessions
 		  WHERE thread_id = ?`,
 		threadID,
-	).Scan(&session.ThreadID, &session.SessionID, &session.Sequence, &session.Status)
+	).Scan(&session.ThreadID, &session.SessionID, &session.Sequence, &session.Status, &session.ResponseTier)
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
+		var tier ResponseTier
+		tier, err = ParseResponseTier(string(responseTier))
+		if err != nil {
+			return PendingMessage{}, false, fmt.Errorf("prepare thread session: %w", err)
+		}
 		session = Session{
-			ThreadID:  threadID,
-			SessionID: newUUID(),
-			Sequence:  0,
-			Status:    "active",
-			IsNew:     true,
+			ThreadID:     threadID,
+			SessionID:    newUUID(),
+			Sequence:     0,
+			Status:       "active",
+			IsNew:        true,
+			ResponseTier: tier,
 		}
 		_, err = tx.Exec(
 			`INSERT INTO thread_sessions
-			     (thread_id, session_id, sequence, status, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
+			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			session.ThreadID,
 			session.SessionID,
 			session.Sequence,
 			session.Status,
+			session.ResponseTier,
 			now,
 			now,
 		)
@@ -726,11 +745,12 @@ func (s *Store) BeginMessage(messageID, threadID string) (PendingMessage, bool, 
 		MessageID: messageID,
 		ThreadID:  threadID,
 		Session: Session{
-			ThreadID:  threadID,
-			SessionID: session.SessionID,
-			Sequence:  latestSequence + 1,
-			Status:    session.Status,
-			IsNew:     session.Sequence == 0,
+			ThreadID:     threadID,
+			SessionID:    session.SessionID,
+			Sequence:     latestSequence + 1,
+			Status:       session.Status,
+			IsNew:        session.Sequence == 0,
+			ResponseTier: session.ResponseTier,
 		},
 		State: messageReceived,
 	}
@@ -939,6 +959,7 @@ SELECT p.message_id,
        t.session_id,
        p.sequence,
        t.status,
+       t.response_tier,
        p.checkpoint_session_id,
        p.state,
        p.prompt,
@@ -955,12 +976,14 @@ type rowScanner interface {
 func scanPending(row rowScanner) (PendingMessage, error) {
 	var pending PendingMessage
 	var committedSequence int
+	var storedTier string
 	err := row.Scan(
 		&pending.MessageID,
 		&pending.ThreadID,
 		&pending.Session.SessionID,
 		&pending.Session.Sequence,
 		&pending.Session.Status,
+		&storedTier,
 		&pending.CheckpointSessionID,
 		&pending.State,
 		&pending.Prompt,
@@ -968,22 +991,44 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.ResultText,
 		&committedSequence,
 	)
+	if err != nil {
+		return PendingMessage{}, err
+	}
+	tier, err := ParseResponseTier(storedTier)
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf(
+			"stored response tier %q is invalid: %w",
+			storedTier,
+			err,
+		)
+	}
 	pending.Session.ThreadID = pending.ThreadID
 	pending.Session.IsNew = committedSequence == 0
-	return pending, err
+	pending.Session.ResponseTier = tier
+	return pending, nil
 }
 
 func (s *Store) Session(threadID string) (Session, error) {
 	var session Session
+	var storedTier string
 	err := s.db.QueryRow(
-		`SELECT thread_id, session_id, sequence, status
+		`SELECT thread_id, session_id, sequence, status, response_tier
 		   FROM thread_sessions
 		  WHERE thread_id = ?`,
 		threadID,
-	).Scan(&session.ThreadID, &session.SessionID, &session.Sequence, &session.Status)
+	).Scan(&session.ThreadID, &session.SessionID, &session.Sequence, &session.Status, &storedTier)
 	if err != nil {
 		return Session{}, fmt.Errorf("get thread session: %w", err)
 	}
+	tier, err := ParseResponseTier(storedTier)
+	if err != nil {
+		return Session{}, fmt.Errorf(
+			"get thread session: stored response tier %q is invalid: %w",
+			storedTier,
+			err,
+		)
+	}
+	session.ResponseTier = tier
 	return session, nil
 }
 

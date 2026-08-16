@@ -51,7 +51,7 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", client.TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := store.BeginMessage("message-2", "thread-1")
+	second, _, err := store.BeginMessage("message-2", "thread-1", client.TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestInboxAbandonRejectsLegacyRunningFollowupWithoutCheckpoint(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, _, err := store.BeginMessage("message-1", "thread-1")
+	first, _, err := store.BeginMessage("message-1", "thread-1", client.TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestInboxAbandonRejectsLegacyRunningFollowupWithoutCheckpoint(t *testing.T)
 	if err := store.Complete(first.MessageID, "completed", "reply-1"); err != nil {
 		t.Fatal(err)
 	}
-	second, _, err := store.BeginMessage("message-2", "thread-1")
+	second, _, err := store.BeginMessage("message-2", "thread-1", client.TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
