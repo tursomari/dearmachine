@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -64,6 +65,14 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	rig.mail.add(message)
 	rig.setAnswer("Here is the Q3 sales report.")
 
+	var runEnv []string
+	rig.app.runner.invoke = func(command *exec.Cmd) error {
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			runEnv = append([]string(nil), command.Env...)
+		}
+		return command.Run()
+	}
+
 	if err := rig.app.ProcessOnce(context.Background()); err != nil {
 		t.Fatalf("ProcessOnce: %v", err)
 	}
@@ -90,6 +99,25 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	}
 	if got := rig.capture("manager-env-1"); got != "/test/agent-manager" {
 		t.Fatalf("AGENT_MANAGER_PATH = %q", got)
+	}
+	turnKey := TurnKey(session.Sequence, message.MessageID)
+	dirs, err := stagePaths(rig.app.runner.projectDir, turnKey)
+	if err != nil {
+		t.Fatalf("stagePaths: %v", err)
+	}
+	wantInbox := filepath.Join(dirs.Inbox, InboundManifestName())
+	wantOutbox := dirs.Outbox
+	if !strings.HasSuffix(wantInbox, InboundManifestName()) {
+		t.Fatalf("inbox path %q does not end with %s", wantInbox, InboundManifestName())
+	}
+	if got := lookupEnv(runEnv, "DEARMACHINE_ATTACHMENTS_INBOX"); got != wantInbox {
+		t.Fatalf("DEARMACHINE_ATTACHMENTS_INBOX = %q, want %q", got, wantInbox)
+	}
+	if got := lookupEnv(runEnv, "DEARMACHINE_ATTACHMENTS_OUTBOX"); got != wantOutbox {
+		t.Fatalf("DEARMACHINE_ATTACHMENTS_OUTBOX = %q, want %q", got, wantOutbox)
+	}
+	if got := lookupEnv(runEnv, "DEARMACHINE_ATTACHMENTS_MANIFEST"); got != wantInbox {
+		t.Fatalf("DEARMACHINE_ATTACHMENTS_MANIFEST = %q, want %q", got, wantInbox)
 	}
 	for _, flag := range []string{"--no-banner", "--no-cursor"} {
 		if !slices.Contains(args, flag) {
@@ -1024,4 +1052,14 @@ func assertArg(t *testing.T, args []string, flag, value string) {
 			t.Fatalf("%s value in %v, want %q", flag, args, value)
 		}
 	}
+}
+
+func lookupEnv(environment []string, key string) string {
+	prefix := key + "="
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
 }

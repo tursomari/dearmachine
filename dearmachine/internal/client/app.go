@@ -303,8 +303,11 @@ func (a *App) processPending(
 
 	prompt := formatPrompt(message, pending.Session)
 	finalPath := recoveryResultPath(pending.Session.SessionID, message.MessageID)
+	tc, err := a.turnContext(ctx, pending)
+	if err != nil {
+		return err
+	}
 	var result RunResult
-	var err error
 	switch pending.State {
 	case messageReceived:
 		checkpointSessionID := ""
@@ -333,13 +336,14 @@ func (a *App) processPending(
 			return err
 		}
 		pending.CheckpointSessionID = checkpointSessionID
-		result, err = a.runner.Run(ctx, pending.Session, prompt, finalPath)
+		result, err = a.runner.Run(ctx, pending.Session, prompt, finalPath, tc)
 	case messageRunning:
 		result, err = a.runner.Recover(
 			ctx,
 			pending.Session,
 			pending.Prompt,
 			finalPath,
+			tc,
 		)
 	case messageResultReady:
 		result = RunResult{
@@ -406,6 +410,27 @@ func (a *App) processPending(
 		result.Kind,
 	)
 	return nil
+}
+
+func (a *App) turnContext(ctx context.Context, pending PendingMessage) (TurnContext, error) {
+	turnKey := TurnKey(pending.Session.Sequence, pending.MessageID)
+	dirs, err := stagePaths(a.runner.projectDir, turnKey)
+	if err != nil {
+		return TurnContext{}, fmt.Errorf("prepare attachment staging: %w", err)
+	}
+	tier := string(pending.Session.ResponseTier)
+	if tier == "" {
+		tier = string(a.responseTier)
+	}
+	if tier == "" {
+		tier = string(TierPlain)
+	}
+	return TurnContext{
+		InboxPath:    filepath.Join(dirs.Inbox, InboundManifestName()),
+		OutboxPath:   dirs.Outbox,
+		ManifestPath: filepath.Join(dirs.Inbox, InboundManifestName()),
+		Tier:         tier,
+	}, nil
 }
 
 func (a *App) recordProcessed(threadID string) {

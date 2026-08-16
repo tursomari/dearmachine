@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ type agentTestFixture struct {
 	answerFile string
 	finalPath  string
 	session    Session
+	turn       TurnContext
 }
 
 func TestNewAgentRunnerValidation(t *testing.T) {
@@ -53,6 +55,7 @@ func TestAgentRunnerPassesApprovedBackendSnapshot(t *testing.T) {
 		fixture.session,
 		"prompt",
 		fixture.finalPath,
+		fixture.turn,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +82,7 @@ func TestConfigureAgentManaged_BackendSliceImmutability(t *testing.T) {
 		fixture.session,
 		"prompt",
 		fixture.finalPath,
+		fixture.turn,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +119,7 @@ func TestAgentRunnerNonzeroExitContracts(t *testing.T) {
 			diagnostic: "run diagnostic",
 			want:       "machtiani run failed: exit status 17: run diagnostic",
 			operation: func(ctx context.Context, fixture *agentTestFixture) error {
-				_, err := fixture.runner.Run(ctx, fixture.session, "prompt", fixture.finalPath)
+				_, err := fixture.runner.Run(ctx, fixture.session, "prompt", fixture.finalPath, fixture.turn)
 				return err
 			},
 		},
@@ -137,7 +141,7 @@ func TestAgentRunnerNonzeroExitContracts(t *testing.T) {
 			diagnostic: "show diagnostic",
 			want:       "machtiani session show failed: exit status 17: show diagnostic",
 			operation: func(ctx context.Context, fixture *agentTestFixture) error {
-				_, err := fixture.runner.Run(ctx, fixture.session, "prompt", fixture.finalPath)
+				_, err := fixture.runner.Run(ctx, fixture.session, "prompt", fixture.finalPath, fixture.turn)
 				return err
 			},
 		},
@@ -205,7 +209,7 @@ func TestAgentRunnerTimeoutContracts(t *testing.T) {
 			name:     "run",
 			delayEnv: "FAKE_AGENT_RUN_DELAY",
 			operation: func(ctx context.Context, fixture *agentTestFixture) error {
-				_, err := fixture.runner.Run(ctx, fixture.session, "prompt", fixture.finalPath)
+				_, err := fixture.runner.Run(ctx, fixture.session, "prompt", fixture.finalPath, fixture.turn)
 				return err
 			},
 			want: "machtiani run failed",
@@ -294,6 +298,7 @@ func TestAgentRunnerSessionResponseContracts(t *testing.T) {
 				fixture.session,
 				"prompt",
 				fixture.finalPath,
+				fixture.turn,
 			)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Run error = %v, want %q", err, test.want)
@@ -304,7 +309,7 @@ func TestAgentRunnerSessionResponseContracts(t *testing.T) {
 
 func TestAgentRunnerRequiresFinalAnswerPath(t *testing.T) {
 	fixture := newAgentTestFixture(t)
-	_, err := fixture.runner.Run(context.Background(), fixture.session, "prompt", " ")
+	_, err := fixture.runner.Run(context.Background(), fixture.session, "prompt", " ", fixture.turn)
 	if err == nil || !strings.Contains(err.Error(), "agent final answer path is required") {
 		t.Fatalf("Run empty final path error = %v", err)
 	}
@@ -327,6 +332,7 @@ func TestAgentRunnerRecoverRerunsAfterUnusableSessionState(t *testing.T) {
 				fixture.session,
 				"original prompt",
 				fixture.finalPath,
+				fixture.turn,
 			)
 			if test.name == "malformed status" {
 				if err == nil || !strings.Contains(err.Error(), "parse machtiani session status") {
@@ -339,6 +345,173 @@ func TestAgentRunnerRecoverRerunsAfterUnusableSessionState(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateTurnContextRejectsInvalidInputs(t *testing.T) {
+	runner, err := NewAgentRunner("machtiani", t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*TurnContext)
+		want   string
+	}{
+		{
+			name:   "empty inbox",
+			mutate: func(tc *TurnContext) { tc.InboxPath = "" },
+			want:   "turn context inbox path",
+		},
+		{
+			name:   "empty outbox",
+			mutate: func(tc *TurnContext) { tc.OutboxPath = "" },
+			want:   "turn context outbox path",
+		},
+		{
+			name:   "empty manifest",
+			mutate: func(tc *TurnContext) { tc.ManifestPath = "" },
+			want:   "turn context manifest path",
+		},
+		{
+			name:   "empty tier",
+			mutate: func(tc *TurnContext) { tc.Tier = "" },
+			want:   "turn context tier",
+		},
+		{
+			name:   "tier fancy",
+			mutate: func(tc *TurnContext) { tc.Tier = "fancy" },
+			want:   "turn context tier",
+		},
+		{
+			name:   "relative inbox path",
+			mutate: func(tc *TurnContext) { tc.InboxPath = "relative/inbox" },
+			want:   "turn context inbox path",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tc := validTurnContext()
+			test.mutate(&tc)
+			err := runner.ValidateTurnContext(tc)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ValidateTurnContext error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateTurnContextAcceptsValidAbsolutePaths(t *testing.T) {
+	runner, err := NewAgentRunner("machtiani", t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := TurnContext{
+		InboxPath:    "/tmp/in",
+		OutboxPath:   "/tmp/out",
+		ManifestPath: "/tmp/manifest.json",
+		Tier:         "formatted",
+	}
+	if err := runner.ValidateTurnContext(tc); err != nil {
+		t.Fatalf("ValidateTurnContext valid context error = %v", err)
+	}
+}
+
+func TestRunExposesAttachmentEnvironmentExactly(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	t.Setenv("DEARMACHINE_ATTACHMENTS_INBOX", "stale-inbox")
+	t.Setenv("DEARMACHINE_ATTACHMENTS_OUTBOX", "stale-outbox")
+	t.Setenv("DEARMACHINE_ATTACHMENTS_MANIFEST", "stale-manifest")
+	t.Setenv("DEARMACHINE_BACKEND", "stale-parent-value")
+
+	var captured [][]string
+	fixture.runner.invoke = func(command *exec.Cmd) error {
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			captured = append(captured, append([]string(nil), command.Env...))
+		}
+		return command.Run()
+	}
+
+	if _, err := fixture.runner.Run(
+		context.Background(),
+		fixture.session,
+		"prompt",
+		fixture.finalPath,
+		fixture.turn,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("captured run envs = %d, want 1", len(captured))
+	}
+	env := captured[0]
+	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_INBOX", fixture.turn.InboxPath)
+	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_OUTBOX", fixture.turn.OutboxPath)
+	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_MANIFEST", fixture.turn.ManifestPath)
+	requireUniqueEnv(t, env, "MACHTIANI_SESSION_ID", fixture.session.SessionID)
+	requireUniqueEnv(t, env, "AGENT_MANAGER_PATH", "/test/agent-manager")
+	if values := envValues(env, "DEARMACHINE_BACKEND"); len(values) != 0 {
+		t.Fatalf("DEARMACHINE_BACKEND = %q, want unset", values)
+	}
+
+	captureDir := os.Getenv("FAKE_AGENT_CAPTURE")
+	sessionID, err := os.ReadFile(filepath.Join(captureDir, "session-env-1"))
+	if err != nil || string(sessionID) != fixture.session.SessionID {
+		t.Fatalf("MACHTIANI_SESSION_ID = %q, %v", sessionID, err)
+	}
+	backend, err := os.ReadFile(filepath.Join(captureDir, "backend-env-1"))
+	if err != nil || len(backend) != 0 {
+		t.Fatalf("DEARMACHINE_BACKEND = %q, %v", backend, err)
+	}
+	manager, err := os.ReadFile(filepath.Join(captureDir, "manager-env-1"))
+	if err != nil || string(manager) != "/test/agent-manager" {
+		t.Fatalf("AGENT_MANAGER_PATH = %q, %v", manager, err)
+	}
+}
+
+func TestRunRejectsUnvalidatedTurnContext(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	_, err := fixture.runner.Run(
+		context.Background(),
+		fixture.session,
+		"prompt",
+		fixture.finalPath,
+		TurnContext{},
+	)
+	if err == nil || !strings.Contains(err.Error(), "validate turn context") {
+		t.Fatalf("Run empty turn context error = %v", err)
+	}
+}
+
+func TestRecoverForwardsSameTurnContext(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	writeTestFile(t, fixture.statusFile, `{"status":"in_progress","goal":"original prompt"}`)
+
+	var captured [][]string
+	fixture.runner.invoke = func(command *exec.Cmd) error {
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			captured = append(captured, append([]string(nil), command.Env...))
+		}
+		return command.Run()
+	}
+
+	_, err := fixture.runner.Recover(
+		context.Background(),
+		fixture.session,
+		"original prompt",
+		fixture.finalPath,
+		fixture.turn,
+	)
+	if len(captured) != 1 {
+		t.Fatalf("captured recovery run envs = %d, want 1 (err=%v)", len(captured), err)
+	}
+	prompt, readErr := os.ReadFile(filepath.Join(os.Getenv("FAKE_AGENT_CAPTURE"), "text-1"))
+	if readErr != nil || !strings.Contains(string(prompt), "recovery:") {
+		t.Fatalf("recovery prompt = %q, %v", prompt, readErr)
+	}
+	env := captured[0]
+	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_INBOX", fixture.turn.InboxPath)
+	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_OUTBOX", fixture.turn.OutboxPath)
+	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_MANIFEST", fixture.turn.ManifestPath)
 }
 
 func newAgentTestFixture(t *testing.T) *agentTestFixture {
@@ -374,6 +547,35 @@ func newAgentTestFixture(t *testing.T) *agentTestFixture {
 			Status:    "active",
 			IsNew:     true,
 		},
+		turn: validTurnContext(),
+	}
+}
+
+func validTurnContext() TurnContext {
+	return TurnContext{
+		InboxPath:    "/tmp/in",
+		OutboxPath:   "/tmp/out",
+		ManifestPath: "/tmp/manifest.json",
+		Tier:         "formatted",
+	}
+}
+
+func envValues(environment []string, key string) []string {
+	prefix := key + "="
+	var values []string
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			values = append(values, strings.TrimPrefix(entry, prefix))
+		}
+	}
+	return values
+}
+
+func requireUniqueEnv(t *testing.T, environment []string, key, want string) {
+	t.Helper()
+	values := envValues(environment, key)
+	if len(values) != 1 || values[0] != want {
+		t.Fatalf("%s = %q, want exactly [%q]", key, values, want)
 	}
 }
 

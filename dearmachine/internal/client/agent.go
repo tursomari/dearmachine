@@ -25,6 +25,13 @@ type RunResult struct {
 	Text string
 }
 
+type TurnContext struct {
+	InboxPath    string
+	OutboxPath   string
+	ManifestPath string
+	Tier         string
+}
+
 type AgentRunner struct {
 	binary         string
 	projectDir     string
@@ -92,12 +99,47 @@ func (r *AgentRunner) Sync(ctx context.Context) error {
 	return nil
 }
 
+func (r *AgentRunner) ValidateTurnContext(tc TurnContext) error {
+	if err := validateTurnContextPath("inbox path", tc.InboxPath); err != nil {
+		return err
+	}
+	if err := validateTurnContextPath("outbox path", tc.OutboxPath); err != nil {
+		return err
+	}
+	if err := validateTurnContextPath("manifest path", tc.ManifestPath); err != nil {
+		return err
+	}
+	if strings.TrimSpace(tc.Tier) == "" {
+		return fmt.Errorf("turn context tier is required")
+	}
+	switch tc.Tier {
+	case "plain", "formatted", "complete":
+		return nil
+	default:
+		return fmt.Errorf("turn context tier %q is not supported", tc.Tier)
+	}
+}
+
+func validateTurnContextPath(label, path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("turn context %s is required", label)
+	}
+	if !filepath.IsAbs(filepath.Clean(path)) {
+		return fmt.Errorf("turn context %s must be absolute", label)
+	}
+	return nil
+}
+
 func (r *AgentRunner) Run(
 	ctx context.Context,
 	session Session,
 	text,
 	finalPath string,
+	tc TurnContext,
 ) (RunResult, error) {
+	if err := r.ValidateTurnContext(tc); err != nil {
+		return RunResult{}, fmt.Errorf("validate turn context: %w", err)
+	}
 	if err := r.Sync(ctx); err != nil {
 		return RunResult{}, err
 	}
@@ -137,12 +179,18 @@ func (r *AgentRunner) Run(
 
 	command := exec.CommandContext(ctx, r.binary, args...)
 	command.Dir = r.projectDir
-	command.Env = unsetEnv(os.Environ(), "MACHTIANI_SESSION_ID")
+	command.Env = unsetEnv(os.Environ(), "DEARMACHINE_ATTACHMENTS_INBOX")
+	command.Env = unsetEnv(command.Env, "DEARMACHINE_ATTACHMENTS_OUTBOX")
+	command.Env = unsetEnv(command.Env, "DEARMACHINE_ATTACHMENTS_MANIFEST")
+	command.Env = unsetEnv(command.Env, "MACHTIANI_SESSION_ID")
 	command.Env = unsetEnv(command.Env, "DEARMACHINE_BACKEND")
 	command.Env = unsetEnv(command.Env, backendcatalog.EnvironmentVariable)
 	command.Env = unsetEnv(command.Env, "AGENT_MANAGER_PATH")
 	command.Env = setEnv(command.Env, backendcatalog.EnvironmentVariable, encodedBackends)
 	command.Env = setEnv(command.Env, "AGENT_MANAGER_PATH", r.manager)
+	command.Env = setEnv(command.Env, "DEARMACHINE_ATTACHMENTS_INBOX", tc.InboxPath)
+	command.Env = setEnv(command.Env, "DEARMACHINE_ATTACHMENTS_OUTBOX", tc.OutboxPath)
+	command.Env = setEnv(command.Env, "DEARMACHINE_ATTACHMENTS_MANIFEST", tc.ManifestPath)
 	if session.IsNew {
 		command.Env = setEnv(command.Env, "MACHTIANI_SESSION_ID", session.SessionID)
 	}
@@ -178,10 +226,14 @@ func (r *AgentRunner) Recover(
 	session Session,
 	originalPrompt,
 	finalPath string,
+	tc TurnContext,
 ) (RunResult, error) {
+	if err := r.ValidateTurnContext(tc); err != nil {
+		return RunResult{}, fmt.Errorf("validate turn context: %w", err)
+	}
 	state, err := r.showSession(ctx, session.SessionID)
 	if err != nil || state.Goal != originalPrompt {
-		return r.Run(ctx, session, originalPrompt, finalPath)
+		return r.Run(ctx, session, originalPrompt, finalPath, tc)
 	}
 	result, ready, err := resultFromState(state, finalPath)
 	if err != nil {
@@ -196,7 +248,7 @@ func (r *AgentRunner) Recover(
 	const recoveryPrompt = "[Dear Machine, recovery: continue the interrupted email request " +
 		"already present in this session. Do not repeat completed work or add the " +
 		"original email prompt again. Return the pending answer.]"
-	return r.Run(ctx, resumed, recoveryPrompt, finalPath)
+	return r.Run(ctx, resumed, recoveryPrompt, finalPath, tc)
 }
 
 func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error {
