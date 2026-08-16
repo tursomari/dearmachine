@@ -25,8 +25,26 @@ type BackendDetection struct {
 }
 
 type DeviceConfig struct {
-	Version  int
-	Backends []string
+	Version      int
+	Backends     []string
+	ResponseTier ResponseTier
+}
+
+type ResponseTier string
+
+const (
+	TierPlain     ResponseTier = "plain"
+	TierFormatted ResponseTier = "formatted"
+	TierComplete  ResponseTier = "complete"
+)
+
+func ParseResponseTier(value string) (ResponseTier, error) {
+	switch ResponseTier(value) {
+	case TierPlain, TierFormatted, TierComplete:
+		return ResponseTier(value), nil
+	default:
+		return "", fmt.Errorf("response tier must be one of plain, formatted, complete")
+	}
 }
 
 func Backends() []Backend {
@@ -89,6 +107,7 @@ func loadDeviceConfig(path string, custom ...backendcatalog.Backend) (DeviceConf
 	config := DeviceConfig{}
 	seenVersion := false
 	seenBackends := false
+	seenResponseTier := false
 	for lineNumber, raw := range strings.Split(string(content), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -111,6 +130,16 @@ func loadDeviceConfig(path string, custom ...backendcatalog.Backend) (DeviceConf
 			}
 			err = json.Unmarshal([]byte(strings.TrimSpace(value)), &config.Backends)
 			seenBackends = true
+		case "response_tier":
+			if seenResponseTier {
+				return DeviceConfig{}, fmt.Errorf("device config contains duplicate response_tier")
+			}
+			value = strings.TrimSpace(value)
+			if len(value) >= 2 && strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+				value = value[1 : len(value)-1]
+			}
+			config.ResponseTier, err = ParseResponseTier(value)
+			seenResponseTier = true
 		default:
 			return DeviceConfig{}, fmt.Errorf("device config contains unknown key %q", strings.TrimSpace(key))
 		}
@@ -131,6 +160,9 @@ func loadDeviceConfig(path string, custom ...backendcatalog.Backend) (DeviceConf
 			err,
 		)
 	}
+	if config.ResponseTier == "" {
+		config.ResponseTier = TierPlain
+	}
 	return config, nil
 }
 
@@ -144,6 +176,12 @@ func SaveDeviceConfig(path string, config DeviceConfig) error {
 	if err := validateBackendIDs(config.Backends, false); err != nil {
 		return fmt.Errorf("validate device config: %w", err)
 	}
+	if config.ResponseTier == "" {
+		config.ResponseTier = TierPlain
+	}
+	if _, err := ParseResponseTier(string(config.ResponseTier)); err != nil {
+		return fmt.Errorf("validate device config: %w", err)
+	}
 	encodedBackends, err := json.Marshal(config.Backends)
 	if err != nil {
 		return fmt.Errorf("encode device config backends: %w", err)
@@ -152,7 +190,7 @@ func SaveDeviceConfig(path string, config DeviceConfig) error {
 		"version = %d\nbackends = %s\n",
 		config.Version,
 		encodedBackends,
-	))
+	) + fmt.Sprintf("response_tier = \"%s\"\n", config.ResponseTier))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create device config directory: %w", err)
 	}

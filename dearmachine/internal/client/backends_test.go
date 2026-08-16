@@ -63,12 +63,76 @@ func TestDeviceConfigRoundTripAndDefaultPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if got := string(content); got != "version = 1\nbackends = [\"codex\",\"forge\"]\n" {
+	if got := string(content); got != "version = 1\nbackends = [\"codex\",\"forge\"]\nresponse_tier = \"plain\"\n" {
 		t.Fatalf("config content = %q", got)
+	}
+	loaded, err := LoadDeviceConfig(path)
+	want := config
+	want.ResponseTier = TierPlain
+	if err != nil || !reflect.DeepEqual(loaded, want) {
+		t.Fatalf("LoadDeviceConfig = %+v, %v", loaded, err)
+	}
+}
+
+func TestDeviceConfigResponseTierRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dearmachine.toml")
+	config := DeviceConfig{
+		Version:      DeviceConfigVersion,
+		Backends:     []string{"codex", "forge"},
+		ResponseTier: TierFormatted,
+	}
+	if err := SaveDeviceConfig(path, config); err != nil {
+		t.Fatalf("SaveDeviceConfig: %v", err)
 	}
 	loaded, err := LoadDeviceConfig(path)
 	if err != nil || !reflect.DeepEqual(loaded, config) {
 		t.Fatalf("LoadDeviceConfig = %+v, %v", loaded, err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, `response_tier = "formatted"`) {
+		t.Fatalf("config content = %q", got)
+	}
+}
+
+func TestDeviceConfigDefaultsMissingResponseTierToPlain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dearmachine.toml")
+	content := []byte("version = 1\nbackends = [\"codex\"]\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	loaded, err := LoadDeviceConfig(path)
+	if err != nil {
+		t.Fatalf("LoadDeviceConfig: %v", err)
+	}
+	if loaded.ResponseTier != TierPlain {
+		t.Fatalf("ResponseTier = %q, want %q", loaded.ResponseTier, TierPlain)
+	}
+}
+
+func TestDeviceConfigRejectsInvalidResponseTier(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dearmachine.toml")
+	content := []byte("version = 1\nbackends = [\"codex\"]\nresponse_tier = \"fancy\"\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadDeviceConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "response tier must be one of plain, formatted, complete") {
+		t.Fatalf("LoadDeviceConfig error = %v, want response tier parse failure", err)
+	}
+}
+
+func TestDeviceConfigRejectsDuplicateResponseTier(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dearmachine.toml")
+	content := []byte("version = 1\nbackends = [\"codex\"]\nresponse_tier = \"plain\"\nresponse_tier = \"plain\"\n")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	_, err := LoadDeviceConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "duplicate response_tier") {
+		t.Fatalf("LoadDeviceConfig error = %v, want duplicate response_tier", err)
 	}
 }
 
