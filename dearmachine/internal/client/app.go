@@ -3,8 +3,10 @@ package client
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"os"
 	"path/filepath"
@@ -297,6 +299,14 @@ func (a *App) processPending(
 				pending.Session.SessionID,
 				outboundMessageID,
 			)
+			if err := a.cleanupStagingDirs(pending); err != nil {
+				a.logger.Printf(
+					"staging cleanup failed message=%s thread=%s error=%v",
+					message.MessageID,
+					message.ThreadID,
+					err,
+				)
+			}
 			return nil
 		}
 	}
@@ -306,6 +316,24 @@ func (a *App) processPending(
 	tc, err := a.turnContext(ctx, pending)
 	if err != nil {
 		return err
+	}
+	if pending.State == messageReceived {
+		if err := a.resetTurnDirs(pending); err != nil {
+			return err
+		}
+		tier := a.tierFor(pending)
+		if tier != TierPlain && len(message.Attachments) > 0 {
+			if _, _, err := StageInbox(
+				ctx,
+				a.transport,
+				a.runner.projectDir,
+				TurnKey(pending.Session.Sequence, message.MessageID),
+				message.Attachments,
+				DefaultAttachmentLimits(),
+			); err != nil {
+				return fmt.Errorf("stage inbound attachments: %w", err)
+			}
+		}
 	}
 	var result RunResult
 	switch pending.State {
@@ -356,8 +384,12 @@ func (a *App) processPending(
 	if err != nil {
 		return err
 	}
+	outboundFiles, outboundManifest, manifestJSON, err := a.outboundForState(ctx, pending, tc)
+	if err != nil {
+		return err
+	}
 	if pending.State != messageResultReady {
-		if err := a.store.StoreResult(message.MessageID, result); err != nil {
+		if err := a.store.StoreResultWithManifest(message.MessageID, result, manifestJSON); err != nil {
 			return err
 		}
 		if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
@@ -365,13 +397,29 @@ func (a *App) processPending(
 		}
 	}
 
+	payload := ReplyPayload{Text: result.Text}
+	tier := a.tierFor(pending)
+	if tier != TierPlain {
+		payload.HTML = replyHTML(result.Text)
+	}
+	switch tier {
+	case TierFormatted:
+		payload.Files = outboundFiles
+	case TierComplete:
+		if outboundManifest != nil && len(outboundFiles) > 0 {
+			archive, err := BuildArchive(*outboundManifest, outboundFiles)
+			if err != nil {
+				return fmt.Errorf("build attachment archive: %w", err)
+			}
+			payload.Files = []OutboundFile{{
+				Filename:    AttachmentArchiveName(),
+				ContentType: "application/zip",
+				Contents:    archive,
+			}}
+		}
+	}
 	key := idempotencyKey(pending.Session.SessionID, message.MessageID)
-	outboundMessageID, err := a.transport.Reply(
-		ctx,
-		message.MessageID,
-		ReplyPayload{Text: result.Text},
-		key,
-	)
+	outboundMessageID, err := a.transport.Reply(ctx, message.MessageID, payload, key)
 	if err != nil {
 		return err
 	}
@@ -382,6 +430,14 @@ func (a *App) processPending(
 		outboundMessageID,
 	); err != nil {
 		return err
+	}
+	if err := a.cleanupStagingDirs(pending); err != nil {
+		a.logger.Printf(
+			"staging cleanup failed message=%s thread=%s error=%v",
+			message.MessageID,
+			message.ThreadID,
+			err,
+		)
 	}
 	a.recordProcessed(message.ThreadID)
 	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
@@ -418,19 +474,97 @@ func (a *App) turnContext(ctx context.Context, pending PendingMessage) (TurnCont
 	if err != nil {
 		return TurnContext{}, fmt.Errorf("prepare attachment staging: %w", err)
 	}
-	tier := string(pending.Session.ResponseTier)
-	if tier == "" {
-		tier = string(a.responseTier)
-	}
-	if tier == "" {
-		tier = string(TierPlain)
-	}
 	return TurnContext{
 		InboxPath:    filepath.Join(dirs.Inbox, InboundManifestName()),
 		OutboxPath:   dirs.Outbox,
 		ManifestPath: filepath.Join(dirs.Inbox, InboundManifestName()),
-		Tier:         tier,
+		Tier:         string(a.tierFor(pending)),
 	}, nil
+}
+
+func (a *App) tierFor(pending PendingMessage) ResponseTier {
+	tier := pending.Session.ResponseTier
+	if tier == "" {
+		tier = a.responseTier
+	}
+	if tier == "" {
+		tier = TierPlain
+	}
+	return tier
+}
+
+func (a *App) resetTurnDirs(pending PendingMessage) error {
+	turnKey := TurnKey(pending.Session.Sequence, pending.MessageID)
+	inbox := filepath.Join(a.runner.projectDir, ".attachments-inbox", turnKey)
+	outbox := filepath.Join(a.runner.projectDir, ".attachments-outbox", turnKey)
+	if err := os.RemoveAll(inbox); err != nil {
+		return fmt.Errorf("reset inbound staging: %w", err)
+	}
+	if err := os.RemoveAll(outbox); err != nil {
+		return fmt.Errorf("reset outbound staging: %w", err)
+	}
+	_, err := stagePaths(a.runner.projectDir, turnKey)
+	return err
+}
+
+func (a *App) outboundForState(
+	ctx context.Context,
+	pending PendingMessage,
+	tc TurnContext,
+) ([]OutboundFile, *OutboundManifest, string, error) {
+	tier := a.tierFor(pending)
+	if tier == TierPlain {
+		return nil, nil, "", nil
+	}
+	switch pending.State {
+	case messageReceived, messageRunning:
+		files, manifest, err := CollectOutbox(
+			ctx,
+			StagingDirs{Outbox: tc.OutboxPath},
+			DefaultAttachmentLimits(),
+		)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("collect outbox: %w", err)
+		}
+		payload, err := json.Marshal(manifest)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("encode outbound manifest: %w", err)
+		}
+		return files, manifest, string(payload), nil
+	case messageResultReady:
+		if strings.TrimSpace(pending.ResultManifest) == "" {
+			return nil, nil, "", nil
+		}
+		var manifest OutboundManifest
+		if err := json.Unmarshal([]byte(pending.ResultManifest), &manifest); err != nil {
+			return nil, nil, "", fmt.Errorf("parse persisted outbound manifest: %w", err)
+		}
+		files, err := VerifyAndLoadOutbox(ctx, StagingDirs{Outbox: tc.OutboxPath}, manifest)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("verify outbound files: %w", err)
+		}
+		return files, &manifest, pending.ResultManifest, nil
+	default:
+		return nil, nil, "", fmt.Errorf("unsupported pending message state %q", pending.State)
+	}
+}
+
+func (a *App) cleanupStagingDirs(pending PendingMessage) error {
+	turnKey := TurnKey(pending.Session.Sequence, pending.MessageID)
+	inbox := filepath.Join(a.runner.projectDir, ".attachments-inbox", turnKey)
+	outbox := filepath.Join(a.runner.projectDir, ".attachments-outbox", turnKey)
+	var first error
+	for _, path := range []string{inbox, outbox} {
+		if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
+			first = errors.Join(first, err)
+		}
+	}
+	return first
+}
+
+func replyHTML(text string) string {
+	return "<!DOCTYPE html>\n<html><body><p style=\"white-space: pre-wrap\">" +
+		html.EscapeString(text) + "</p></body></html>\n"
 }
 
 func (a *App) recordProcessed(threadID string) {
@@ -485,7 +619,25 @@ func formatPrompt(
 		session.SessionID,
 		session.Sequence,
 	)
-
+	tier := session.ResponseTier
+	if tier == "" {
+		tier = TierPlain
+	}
+	fmt.Fprintf(&prompt, "[Response tier: %s]\n", tier)
+	if len(message.Attachments) > 0 {
+		for _, ref := range message.Attachments {
+			fmt.Fprintf(
+				&prompt,
+				"[Attachment: %s (%s, %d bytes)]\n",
+				ref.Filename,
+				ref.ContentType,
+				ref.SizeBytes,
+			)
+		}
+		if tier == TierPlain {
+			fmt.Fprintln(&prompt, "[Attachment bodies are not staged for the plain response tier]")
+		}
+	}
 	prompt.WriteString("\n")
 	prompt.WriteString(messageBody(message))
 	prompt.WriteString("\n\n[End of email]")

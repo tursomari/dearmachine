@@ -1,9 +1,14 @@
 package client
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -716,8 +721,354 @@ func TestSkippedMessageRemainsUnreadUntilUnskipped(t *testing.T) {
 	}
 }
 
+func TestFormatPromptIncludesTierAndAttachmentMetadata(t *testing.T) {
+	message := Message{
+		From:     "sender@example.com",
+		ThreadID: "thread-1",
+		Subject:  "Request",
+		Body:     "Please review.",
+		Attachments: []AttachmentRef{{
+			AttachmentID: "a-1",
+			Filename:     "report.pdf",
+			ContentType:  "application/pdf",
+			SizeBytes:    42,
+		}},
+	}
+	session := Session{
+		ThreadID:     "thread-1",
+		SessionID:    "sess-1",
+		Sequence:     2,
+		ResponseTier: TierFormatted,
+	}
+	prompt := formatPrompt(message, session)
+	for _, want := range []string{
+		"[Response tier: formatted]",
+		"[Attachment: report.pdf (application/pdf, 42 bytes)]",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("formatted prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "not staged") {
+		t.Errorf("formatted prompt unexpectedly mentions unstaged bodies:\n%s", prompt)
+	}
+
+	session.ResponseTier = TierPlain
+	plain := formatPrompt(message, session)
+	if !strings.Contains(plain, "[Attachment bodies are not staged for the plain response tier]") {
+		t.Fatalf("plain prompt missing unstaged-body note:\n%s", plain)
+	}
+}
+
+func TestReplyHTMLEscapesContent(t *testing.T) {
+	got := replyHTML(`Hello & goodbye <script>alert("x")</script>`)
+	if !strings.HasPrefix(got, "<!DOCTYPE html>") {
+		t.Fatalf("replyHTML did not start with <!DOCTYPE html>:\n%s", got)
+	}
+	if !strings.Contains(got, "white-space: pre-wrap") {
+		t.Fatalf("replyHTML missing white-space: pre-wrap:\n%s", got)
+	}
+	if !strings.Contains(got, "Hello &amp; goodbye") {
+		t.Fatalf("replyHTML missing escaped ampersand:\n%s", got)
+	}
+	if !strings.Contains(got, "&lt;script&gt;alert(&#34;x&#34;)&lt;/script&gt;") {
+		t.Fatalf("replyHTML missing escaped script:\n%s", got)
+	}
+	if strings.Contains(got, "<script>") {
+		t.Fatalf("replyHTML leaked raw <script>:\n%s", got)
+	}
+}
+
+func TestPlainTierSendsNoAttachmentsOrHTML(t *testing.T) {
+	fake := newFakeTransport()
+	message := Message{
+		MessageID: "plain-1",
+		ThreadID:  "thread-plain",
+		From:      "sender@example.com",
+		To:        []string{"device@example.com"},
+		CreatedAt: time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC),
+		Subject:   "Request",
+		Body:      "Please handle this request.",
+		Labels:    []string{"unread"},
+		Attachments: []AttachmentRef{{
+			AttachmentID: "missing-attachment",
+			Filename:     "in.txt",
+			ContentType:  "text/plain",
+			SizeBytes:    3,
+		}},
+	}
+	fake.setPoll([]Message{message})
+	rig := newTestRigTransport(t, TierPlain, fake, "test-model")
+	rig.setAnswer("plain answer")
+	t.Setenv("FAKE_AGENT_OUTBOX_FILE", "out.txt")
+
+	var inboxExists bool
+	var inboxNames []string
+	rig.app.runner.invoke = func(command *exec.Cmd) error {
+		if err := command.Run(); err != nil {
+			return err
+		}
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			inbox := filepath.Join(
+				rig.app.runner.projectDir,
+				".attachments-inbox",
+				TurnKey(1, message.MessageID),
+			)
+			if info, err := os.Stat(inbox); err == nil && info.IsDir() {
+				inboxExists = true
+			}
+			entries, err := os.ReadDir(inbox)
+			if err == nil {
+				for _, entry := range entries {
+					inboxNames = append(inboxNames, entry.Name())
+				}
+			}
+		}
+		return nil
+	}
+
+	if err := rig.app.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+
+	if len(fake.replies) != 1 {
+		t.Fatalf("replies = %+v, want exactly 1", fake.replies)
+	}
+	reply := fake.replies[0]
+	if reply.Text != "plain answer" {
+		t.Fatalf("reply text = %q, want %q", reply.Text, "plain answer")
+	}
+	if reply.HTML != "" {
+		t.Fatalf("plain reply HTML = %q, want empty", reply.HTML)
+	}
+	if len(reply.Files) != 0 {
+		t.Fatalf("plain reply files = %+v, want none", reply.Files)
+	}
+	if got := rig.capture("count"); got != "1" {
+		t.Fatalf("machtiani run count = %q, want 1", got)
+	}
+	if got := rig.capture("events"); got != "sync\nrun\n" {
+		t.Fatalf("machtiani call order = %q, want sync then run", got)
+	}
+	if !inboxExists {
+		t.Fatal("plain-tier inbox turn directory did not exist during the agent run")
+	}
+	if len(inboxNames) != 0 {
+		t.Fatalf("plain-tier inbox entries during run = %v, want empty", inboxNames)
+	}
+	if found := inboundManifestPaths(t, rig.app.runner.projectDir); len(found) != 0 {
+		t.Fatalf("plain tier wrote inbound manifests: %v", found)
+	}
+}
+
+func TestFormattedTierStagesInboundAndAttachesOutboxFiles(t *testing.T) {
+	fake := newFakeTransport()
+	message := Message{
+		MessageID: "formatted-1",
+		ThreadID:  "thread-formatted",
+		From:      "sender@example.com",
+		To:        []string{"device@example.com"},
+		CreatedAt: time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC),
+		Subject:   "Request",
+		Body:      "Please handle this request.",
+		Labels:    []string{"unread"},
+		Attachments: []AttachmentRef{{
+			AttachmentID: "attachment-1",
+			Filename:     "  report.txt ",
+			ContentType:  "application/octet-stream",
+			SizeBytes:    7,
+		}},
+	}
+	fake.setPoll([]Message{message})
+	fake.attachments["attachment-1"] = []byte("payload")
+	rig := newTestRigTransport(t, TierFormatted, fake, "test-model")
+	const answer = "answer <tag> & more"
+	rig.setAnswer(answer)
+	t.Setenv("FAKE_AGENT_OUTBOX_FILE", "result.txt")
+	t.Setenv("FAKE_AGENT_OUTBOX_CONTENT", "outbox data")
+
+	var stagedReport []byte
+	var stagedManifest []byte
+	rig.app.runner.invoke = func(command *exec.Cmd) error {
+		if err := command.Run(); err != nil {
+			return err
+		}
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			inbox := filepath.Join(
+				rig.app.runner.projectDir,
+				".attachments-inbox",
+				TurnKey(1, message.MessageID),
+			)
+			var err error
+			stagedReport, err = os.ReadFile(filepath.Join(inbox, "report.txt"))
+			if err != nil {
+				t.Errorf("read staged report.txt: %v", err)
+			}
+			stagedManifest, err = os.ReadFile(filepath.Join(inbox, InboundManifestName()))
+			if err != nil {
+				t.Errorf("read staged inbound manifest: %v", err)
+			}
+		}
+		return nil
+	}
+
+	if err := rig.app.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+
+	if len(fake.replies) != 1 {
+		t.Fatalf("replies = %+v, want exactly 1", fake.replies)
+	}
+	reply := fake.replies[0]
+	if reply.Text != answer {
+		t.Fatalf("reply text = %q, want %q", reply.Text, answer)
+	}
+	if reply.HTML == "" {
+		t.Fatal("formatted reply HTML is empty")
+	}
+	if !strings.Contains(reply.HTML, "answer &lt;tag&gt; &amp; more") {
+		t.Fatalf("formatted reply HTML missing escaped answer:\n%s", reply.HTML)
+	}
+	if len(reply.Files) != 1 {
+		t.Fatalf("formatted reply files = %+v, want 1", reply.Files)
+	}
+	if reply.Files[0].Filename != "result.txt" {
+		t.Fatalf("outbound filename = %q, want result.txt", reply.Files[0].Filename)
+	}
+	if string(reply.Files[0].Contents) != "outbox data" {
+		t.Fatalf("outbound contents = %q, want %q", reply.Files[0].Contents, "outbox data")
+	}
+	if reply.Files[0].ContentType != "text/plain" {
+		t.Fatalf("outbound content type = %q, want text/plain", reply.Files[0].ContentType)
+	}
+
+	if string(stagedReport) != "payload" {
+		t.Fatalf("staged report.txt = %q, want %q", stagedReport, "payload")
+	}
+	var manifest InboundManifest
+	if err := json.Unmarshal(stagedManifest, &manifest); err != nil {
+		t.Fatalf("parse inbound manifest: %v", err)
+	}
+	if len(manifest.Files) != 1 {
+		t.Fatalf("inbound manifest files = %+v, want 1 entry", manifest.Files)
+	}
+	sum := sha256.Sum256([]byte("payload"))
+	wantSHA := hex.EncodeToString(sum[:])
+	if manifest.Files[0].SHA256 != wantSHA {
+		t.Fatalf("inbound manifest SHA256 = %q, want %q", manifest.Files[0].SHA256, wantSHA)
+	}
+}
+
+func TestCompleteTierPackagesOneDeterministicZIP(t *testing.T) {
+	fake := newFakeTransport()
+	message := Message{
+		MessageID: "complete-1",
+		ThreadID:  "thread-complete",
+		From:      "sender@example.com",
+		To:        []string{"device@example.com"},
+		CreatedAt: time.Date(2026, time.August, 8, 12, 0, 0, 0, time.UTC),
+		Subject:   "Request",
+		Body:      "Please handle this request.",
+		Labels:    []string{"unread"},
+	}
+	fake.setPoll([]Message{message})
+	rig := newTestRigTransport(t, TierComplete, fake, "test-model")
+	rig.setAnswer("complete answer")
+	t.Setenv("FAKE_AGENT_OUTBOX_FILE", "notes.txt")
+	t.Setenv("FAKE_AGENT_OUTBOX_CONTENT", "zip me")
+
+	if err := rig.app.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+
+	if len(fake.replies) != 1 {
+		t.Fatalf("replies = %+v, want exactly 1", fake.replies)
+	}
+	reply := fake.replies[0]
+	if len(reply.Files) != 1 {
+		t.Fatalf("complete reply files = %+v, want 1", reply.Files)
+	}
+	if reply.Files[0].Filename != AttachmentArchiveName() {
+		t.Fatalf("archive filename = %q, want %q", reply.Files[0].Filename, AttachmentArchiveName())
+	}
+	if reply.Files[0].ContentType != "application/zip" {
+		t.Fatalf("archive content type = %q, want application/zip", reply.Files[0].ContentType)
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(reply.Files[0].Contents), int64(len(reply.Files[0].Contents)))
+	if err != nil {
+		t.Fatalf("open attachment archive: %v", err)
+	}
+	wantNames := []string{"manifest.json", "notes.txt"}
+	if len(reader.File) != len(wantNames) {
+		t.Fatalf("archive entries = %d, want %d", len(reader.File), len(wantNames))
+	}
+	wantTime := time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
+	sum := sha256.Sum256([]byte("zip me"))
+	wantSHA := hex.EncodeToString(sum[:])
+	for i, file := range reader.File {
+		if file.Name != wantNames[i] {
+			t.Fatalf("entry[%d] = %q, want %q", i, file.Name, wantNames[i])
+		}
+		if !file.Modified.Equal(wantTime) {
+			t.Fatalf("entry %s Modified = %v, want %v", file.Name, file.Modified, wantTime)
+		}
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatalf("open %s: %v", file.Name, err)
+		}
+		contents, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", file.Name, err)
+		}
+		switch file.Name {
+		case "manifest.json":
+			var manifest OutboundManifest
+			if err := json.Unmarshal(contents, &manifest); err != nil {
+				t.Fatalf("parse archive manifest: %v", err)
+			}
+			if manifest.TurnKey != TurnKey(1, message.MessageID) {
+				t.Fatalf("manifest turn key = %q, want %q", manifest.TurnKey, TurnKey(1, message.MessageID))
+			}
+			if len(manifest.Files) != 1 || manifest.Files[0].Filename != "notes.txt" {
+				t.Fatalf("manifest files = %+v, want notes.txt", manifest.Files)
+			}
+			if manifest.Files[0].SHA256 != wantSHA {
+				t.Fatalf("manifest SHA256 = %q, want %q", manifest.Files[0].SHA256, wantSHA)
+			}
+		case "notes.txt":
+			if string(contents) != "zip me" {
+				t.Fatalf("notes.txt = %q, want %q", contents, "zip me")
+			}
+		}
+	}
+}
+
+func inboundManifestPaths(t *testing.T, projectDir string) []string {
+	t.Helper()
+	root := filepath.Join(projectDir, ".attachments-inbox")
+	var found []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if entry.Name() == InboundManifestName() {
+			found = append(found, path)
+		}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("walk inbox: %v", err)
+	}
+	return found
+}
+
 func newTestRig(t *testing.T) *testRig {
-	return newTestRigWithModel(t, "test-model")
+	return newTestRigTransport(t, TierPlain, nil, "test-model")
 }
 
 func TestEmptyModelUsesProjectDefault(t *testing.T) {
@@ -734,16 +1085,23 @@ func TestEmptyModelUsesProjectDefault(t *testing.T) {
 }
 
 func newTestRigWithModel(t *testing.T, model string) *testRig {
-	t.Helper()
-	mail := newFakeAgentMail(t)
+	return newTestRigTransport(t, TierPlain, nil, model)
+}
 
-	client := agentmail.NewClient(
-		option.WithBaseURL(mail.server.URL+"/"),
-		option.WithAPIKey("test-key"),
-	)
-	mailbox, err := NewMailbox(client, "test-inbox")
-	if err != nil {
-		t.Fatalf("NewMailbox: %v", err)
+func newTestRigTransport(t *testing.T, tier ResponseTier, transport Transport, model string) *testRig {
+	t.Helper()
+	var mail *fakeAgentMail
+	if transport == nil {
+		mail = newFakeAgentMail(t)
+		client := agentmail.NewClient(
+			option.WithBaseURL(mail.server.URL+"/"),
+			option.WithAPIKey("test-key"),
+		)
+		mailbox, err := NewMailbox(client, "test-inbox")
+		if err != nil {
+			t.Fatalf("NewMailbox: %v", err)
+		}
+		transport = mailbox
 	}
 	dbPath := filepath.Join(t.TempDir(), "dearmachine.db")
 	store, err := OpenStore(dbPath)
@@ -752,7 +1110,9 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 	}
 	t.Cleanup(func() {
 		store.Close()
-		mail.server.Close()
+		if mail != nil {
+			mail.server.Close()
+		}
 	})
 
 	fixture, err := filepath.Abs(filepath.Join("testdata", "fake-agent.sh"))
@@ -780,7 +1140,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		t.Fatalf("ConfigureAgentManaged: %v", err)
 	}
 	app, err := New(
-		mailbox,
+		transport,
 		store,
 		runner,
 		nil,
@@ -789,7 +1149,7 @@ func newTestRigWithModel(t *testing.T, model string) *testRig {
 		log.New(io.Discard, "", 0),
 		false,
 		"",
-		TierPlain,
+		tier,
 	)
 	if err != nil {
 		t.Fatalf("New: %v", err)

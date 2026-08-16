@@ -105,6 +105,13 @@ printf '%s' "${DEARMACHINE_BACKENDS-}" > "$capture_dir/backends-env-$count"
 printf '%s' "${DEARMACHINE_BACKEND-}" > "$capture_dir/backend-env-$count"
 printf '%s' "${AGENT_MANAGER_PATH-}" > "$capture_dir/manager-env-$count"
 
+if [ -n "${FAKE_AGENT_OUTBOX_FILE-}" ]; then
+	outbox_dir=${DEARMACHINE_ATTACHMENTS_OUTBOX:?}
+	mkdir -p "$outbox_dir"
+	printf '%s' "${FAKE_AGENT_OUTBOX_CONTENT-outbox data}" > "$outbox_dir/$FAKE_AGENT_OUTBOX_FILE"
+	printf '%s' "$FAKE_AGENT_OUTBOX_FILE" >> "$capture_dir/outbox-files"
+fi
+
 if [ -z "$final_file" ]; then
 	echo "missing --final-file" >&2
 	exit 2
