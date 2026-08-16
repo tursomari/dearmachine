@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -235,6 +237,113 @@ func TestMailboxReplyMapsPayloadText(t *testing.T) {
 	if len(replies) != 1 || replies[0].Text != "answer" {
 		t.Fatalf("replies = %+v", replies)
 	}
+}
+
+func TestMailboxReplyMapsPayloadHTML(t *testing.T) {
+	body := captureMailboxReplyBody(t, ReplyPayload{
+		Text: "plain answer",
+		HTML: "<p>rich answer</p>",
+	})
+
+	var text, html string
+	if err := json.Unmarshal(body["text"], &text); err != nil {
+		t.Fatalf("decode text: %v", err)
+	}
+	if err := json.Unmarshal(body["html"], &html); err != nil {
+		t.Fatalf("decode html: %v", err)
+	}
+	if text != "plain answer" || html != "<p>rich answer</p>" {
+		t.Fatalf("reply body text = %q, html = %q", text, html)
+	}
+}
+
+func TestMailboxReplyMapsPayloadFiles(t *testing.T) {
+	files := []OutboundFile{
+		{
+			Filename:    "report.txt",
+			ContentType: "text/plain",
+			Contents:    []byte("report contents"),
+		},
+		{
+			Filename:    "chart.png",
+			ContentType: "image/png",
+			Contents:    []byte{0x89, 0x50, 0x4e, 0x47},
+		},
+	}
+	body := captureMailboxReplyBody(t, ReplyPayload{Text: "answer", Files: files})
+
+	var attachments []struct {
+		Filename           string `json:"filename"`
+		ContentType        string `json:"content_type"`
+		Content            string `json:"content"`
+		ContentDisposition string `json:"content_disposition"`
+	}
+	if err := json.Unmarshal(body["attachments"], &attachments); err != nil {
+		t.Fatalf("decode attachments: %v", err)
+	}
+	if len(attachments) != len(files) {
+		t.Fatalf("attachments count = %d, want %d", len(attachments), len(files))
+	}
+	for index, file := range files {
+		attachment := attachments[index]
+		if attachment.Filename != file.Filename ||
+			attachment.ContentType != file.ContentType ||
+			attachment.Content != base64.StdEncoding.EncodeToString(file.Contents) ||
+			attachment.ContentDisposition != "attachment" {
+			t.Errorf("attachment %d = %+v, want file %+v with attachment disposition", index, attachment, file)
+		}
+	}
+}
+
+func TestMailboxReplyOmitsEmptyHTMLAndFiles(t *testing.T) {
+	body := captureMailboxReplyBody(t, ReplyPayload{Text: "plain answer"})
+
+	if _, ok := body["html"]; ok {
+		t.Errorf("reply body unexpectedly contains html: %s", body["html"])
+	}
+	if _, ok := body["attachments"]; ok {
+		t.Errorf("reply body unexpectedly contains attachments: %s", body["attachments"])
+	}
+}
+
+func captureMailboxReplyBody(t *testing.T, payload ReplyPayload) map[string]json.RawMessage {
+	t.Helper()
+	var body map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost ||
+			request.URL.Path != "/v0/inboxes/test-inbox/messages/message-1/reply" {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Errorf("decode reply request: %v", err)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(writer).Encode(map[string]string{
+			"message_id": "reply-message-1",
+			"thread_id":  "thread-1",
+		}); err != nil {
+			t.Errorf("encode reply response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := agentmail.NewClient(
+		option.WithBaseURL(server.URL+"/"),
+		option.WithAPIKey("test-key"),
+		option.WithMaxRetries(0),
+	)
+	mailbox, err := NewMailbox(client, "test-inbox")
+	if err != nil {
+		t.Fatalf("NewMailbox: %v", err)
+	}
+	receiptID, err := mailbox.Reply(context.Background(), "message-1", payload, "key-1")
+	if err != nil || receiptID != "reply-message-1" {
+		t.Fatalf("Reply = %q, %v", receiptID, err)
+	}
+	return body
 }
 
 func TestMailboxFetchAttachmentEnforcesMaxBytes(t *testing.T) {

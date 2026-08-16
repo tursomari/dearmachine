@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -123,13 +124,28 @@ func (m *Mailbox) Reply(
 	payload ReplyPayload,
 	idempotencyKey string,
 ) (string, error) {
+	params := agentmail.InboxMessageReplyParams{
+		InboxID: m.inboxID,
+		Text:    agentmail.String(payload.Text),
+	}
+	if payload.HTML != "" {
+		params.HTML = agentmail.String(payload.HTML)
+	}
+	if len(payload.Files) > 0 {
+		params.Attachments = make([]agentmail.SendAttachmentParam, 0, len(payload.Files))
+		for _, file := range payload.Files {
+			params.Attachments = append(params.Attachments, agentmail.SendAttachmentParam{
+				Content:            agentmail.String(base64.StdEncoding.EncodeToString(file.Contents)),
+				ContentType:        agentmail.String(file.ContentType),
+				Filename:           agentmail.String(file.Filename),
+				ContentDisposition: agentmail.AttachmentContentDispositionAttachment,
+			})
+		}
+	}
 	receipt, err := m.client.Inboxes.Messages.Reply(
 		ctx,
 		messageID,
-		agentmail.InboxMessageReplyParams{
-			InboxID: m.inboxID,
-			Text:    agentmail.String(payload.Text),
-		},
+		params,
 		option.WithHeader("Idempotency-Key", idempotencyKey),
 	)
 	if err != nil {
