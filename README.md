@@ -56,8 +56,6 @@ configure the paired correspondent in both directions:
 export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
 export DEARMACHINE_OPENMAIL_ALLOWED_FROM=user@example.com
 export DEARMACHINE_OPENMAIL_ALLOWED_TO=user@example.com
-export DEARMACHINE_LIVE_OPENMAIL=1
-export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
 
 dearmachine \
   --transport openmail \
@@ -68,10 +66,17 @@ dearmachine \
   --verbose
 ```
 
-Without both `DEARMACHINE_LIVE_OPENMAIL` gates, OpenMail is inspect-only and
-will not reply or mark a thread read. OpenMail's provider-side correspondent
-policy must also permit the pair; the local allow-lists cannot loosen that
-policy. See the [OpenMail transport runbook](dearmachine/runbooks/testing/openmail-transport.md)
+This first command is inspect-only and will not reply or mark a thread read. To
+enable those mutations, explicitly opt in with both live gates:
+
+```bash
+export DEARMACHINE_LIVE_OPENMAIL=1
+export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
+```
+
+OpenMail's provider-side correspondent policy must also permit the pair; the
+local allow-lists cannot loosen that policy. See the
+[OpenMail transport runbook](dearmachine/runbooks/testing/openmail-transport.md)
 for a disposable, fully isolated verification procedure.
 
 DearMachine remains in the foreground and does not assume systemd or another
