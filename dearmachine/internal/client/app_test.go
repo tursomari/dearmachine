@@ -159,6 +159,42 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	}
 }
 
+func TestClaimSkipsOwnOutboundReply(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage("msg-001", "thread-001", "Request."))
+	rig.setAnswer("Answer.")
+	mustProcess(t, rig)
+
+	if replies := rig.mail.sentReplies(); len(replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(replies))
+	}
+	rig.mail.unread["reply-msg-001"] = true
+
+	if err := rig.app.ProcessOnce(context.Background()); err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if replies := rig.mail.sentReplies(); len(replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(replies))
+	}
+	pending, err := rig.store.Pending()
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("pending = %+v, want empty", pending)
+	}
+	seen, err := rig.store.Seen("reply-msg-001")
+	if err != nil {
+		t.Fatalf("Seen: %v", err)
+	}
+	if seen {
+		t.Fatal("own outbound reply recorded as processed inbound message")
+	}
+	if rig.mail.isUnread("reply-msg-001") {
+		t.Fatal("own outbound reply remains unread")
+	}
+}
+
 func TestFollowUpResumesExistingSession(t *testing.T) {
 	t.Setenv("MACHTIANI_SESSION_ID", "outer-session")
 	rig := newTestRig(t)

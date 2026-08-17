@@ -169,6 +169,15 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		a.logger.Printf("poll: %d unread messages", len(messages))
 	}
 	for _, message := range messages {
+		if containsFold(message.Labels, "sent") {
+			if a.verbose {
+				a.logger.Printf("poll: locally skipped own outbound message=%s thread=%s", message.MessageID, message.ThreadID)
+			}
+			if err := a.transport.MarkProcessed(ctx, message.MessageID); err != nil {
+				a.logger.Printf("poll: clear own outbound message=%s thread=%s: %v", message.MessageID, message.ThreadID, err)
+			}
+			continue
+		}
 		skipped, err := a.store.IsSkipped(message.MessageID)
 		if err != nil {
 			return err
