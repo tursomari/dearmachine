@@ -19,6 +19,7 @@ import (
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
+	"github.com/dearmachine/dearmachine/internal/transports"
 
 	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
@@ -34,6 +35,7 @@ func main() {
 
 type config struct {
 	inboxID                string
+	transport              string
 	dbPath                 string
 	projectDir             string
 	model                  string
@@ -86,9 +88,6 @@ type dependencies struct {
 func defaultDependencies() dependencies {
 	return dependencies{
 		openStore: client.OpenStore,
-		newTransport: func(inboxID string) (client.Transport, error) {
-			return client.NewAgentMailTransport(inboxID)
-		},
 		newRunner: client.NewAgentRunner,
 		newApp: func(
 			transport client.Transport,
@@ -133,7 +132,8 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	flags := flag.NewFlagSet("dearmachine", flag.ContinueOnError)
 	flags.SetOutput(output)
 	var cfg config
-	flags.StringVar(&cfg.inboxID, "inbox-id", "", "AgentMail inbox ID")
+	flags.StringVar(&cfg.inboxID, "inbox-id", "", "mail transport inbox ID or address")
+	flags.StringVar(&cfg.transport, "transport", "agentmail", "mail transport ID (agentmail or openmail)")
 	flags.StringVar(
 		&cfg.dbPath,
 		"db",
@@ -186,7 +186,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		&cfg.pollInterval,
 		"poll-interval",
 		60*time.Second,
-		"delay after each completed AgentMail poll",
+		"delay after each completed mail transport poll",
 	)
 	flags.IntVar(
 		&cfg.concurrency,
@@ -202,7 +202,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	)
 	flags.StringVar(&cfg.pidfile, "pidfile", "", "path to write the DearMachine Client process ID")
 	flags.BoolVar(&cfg.once, "once", false, "poll once, process available messages, and exit")
-	flags.BoolVar(&cfg.verbose, "verbose", false, "log every AgentMail poll cycle")
+	flags.BoolVar(&cfg.verbose, "verbose", false, "log every mail transport poll cycle")
 	if err := flags.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -244,8 +244,16 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if cfg.inboxID == "" {
 		return fmt.Errorf("--inbox-id is required")
 	}
-	if err := loadAgentMailCredential(getenv, deps); err != nil {
-		return err
+	if cfg.transport == "agentmail" {
+		if err := loadAgentMailCredential(getenv, deps); err != nil {
+			return err
+		}
+	}
+	if deps.newTransport == nil {
+		selectedTransport := cfg.transport
+		deps.newTransport = func(inboxID string) (client.Transport, error) {
+			return transports.New(selectedTransport, inboxID)
+		}
 	}
 	backends, managerPath, customBackends, responseTier, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {

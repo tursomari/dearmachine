@@ -2,18 +2,17 @@
 
 This module proves the DearMachine Client alpha happy path:
 
-1. Poll an AgentMail inbox through the AgentMail Go SDK.
-2. Map AgentMail thread IDs to durable machtiani session IDs in SQLite.
+1. Poll an AgentMail or OpenMail inbox through a selectable mail transport.
+2. Map provider thread IDs to durable machtiani session IDs in SQLite.
 3. Invoke machtiani with a preallocated session ID for new threads or
    `--session-id` for existing threads.
 4. Inspect `machtiani session show --json`.
-5. Send either the final answer or an AskUser clarification as an AgentMail
-   reply.
+5. Send either the final answer or an AskUser clarification as a threaded
+   transport reply.
 
 The DearMachine Client processes independent email threads concurrently while
 preserving FIFO order within each thread. It does not implement retries,
-preemption, attachments, sandbox policy, or the production transport
-abstraction.
+preemption, or sandbox policy.
 
 ## Run
 
@@ -89,6 +88,50 @@ dearmachine \
 DearMachine runs in the foreground and handles `SIGINT` and `SIGTERM`; it does
 not require a particular process supervisor.
 
+### Optional OpenMail transport
+
+`--transport` defaults to `agentmail`. To inspect a dedicated OpenMail inbox,
+select `openmail` and provide its inbox ID or full address:
+
+```bash
+export OPENMAIL_API_KEY_FILE="$HOME/.config/dearmachine/openmail-api-key"
+# Or point OPENMAIL_API_KEY_FILE at another operator-managed one-line key file.
+export DEARMACHINE_OPENMAIL_ALLOWED_FROM=user@example.com
+export DEARMACHINE_OPENMAIL_ALLOWED_TO=user@example.com
+
+dearmachine --transport openmail --inbox-id '<openmail-inbox-id-or-address>'
+```
+
+`OPENMAIL_API_KEY` is the direct environment alternative. OpenMail credentials
+are loaded only by the OpenMail constructor; selecting OpenMail never invokes
+the AgentMail credential loader. If neither credential variable is set, the
+constructor optionally checks
+`$HOME/.config/dearmachine/openmail-api-key`. That generic path is not created
+or written by DearMachine.
+
+The production adapter uses only the documented
+`https://api.openmail.sh/v1` API. Its default mode is read-only inspection. To
+let the running client reply and mark processed threads read, explicitly enable
+both live gates:
+
+```bash
+export DEARMACHINE_LIVE_OPENMAIL=1
+export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
+```
+
+Both correspondent variables are required comma-separated exact-address
+allow-lists. Inbound messages must be addressed directly and exclusively to the configured OpenMail inbox and
+come from `DEARMACHINE_OPENMAIL_ALLOWED_FROM`; replies must target
+`DEARMACHINE_OPENMAIL_ALLOWED_TO`. The same rule accepts new threads and later
+follow-ups. CC delivery or a thread containing any other correspondent is ignored entirely:
+DearMachine does not fetch its attachments, reply, or mark it processed.
+
+OpenMail exposes unread state per thread rather than per message. Polling
+therefore returns the newest inbound message in each unread, fully allowed
+thread, and successful processing marks that whole thread read. The main
+command and `inbox skip --current` both accept `--transport openmail`; skip
+decisions remain local and never change the remote inbox.
+
 The default SQLite state database is
 `~/.dearmachine/state/dearmachine.db`. DearMachine Client creates its state
 directory with mode `0700` and creates or tightens the database to mode `0600`.
@@ -102,7 +145,7 @@ Pass `--model your-model-alias` to override the project's configured default
 model; when omitted, no model flag is forwarded.
 
 For each inbound email, DearMachine Client passes the sender/thread metadata and the
-newly authored text reported by AgentMail. Follow-ups resume the mapped
+newly authored text reported by the selected transport. Follow-ups resume the mapped
 `machtiani` session with `--session-id`; that persisted session owns prior
 conversation context, so DearMachine Client does not replay the email thread.
 
@@ -117,12 +160,13 @@ machtiani session never has multiple active children.
 ## Locally skip inbox messages
 
 Stop DearMachine Client before changing its local inbox decisions. To suppress the
-exact snapshot of messages that are currently unread without changing
-AgentMail, run:
+exact snapshot of messages that are currently eligible without changing the
+remote inbox, run:
 
 ```bash
 dearmachine inbox skip \
   --current \
+  --transport agentmail \
   --inbox-id your-inbox-id \
   --project ~/.dearmachine/entrypoint/main \
   --pidfile ~/.dearmachine/run/dearmachine.pid \
@@ -142,10 +186,10 @@ dearmachine inbox skipped --json
 dearmachine inbox unskip <message-id>
 ```
 
-These commands never delete messages, change labels, mark messages processed,
-or send replies through AgentMail. A skipped unread message therefore remains
-visible in each remote poll, but DearMachine Client recognizes its local ID and does
-nothing. After `unskip`, the next poll handles the message normally.
+These commands never delete messages, change labels or thread state, mark
+messages processed, or send replies. A skipped eligible message therefore
+remains visible in each remote poll, but DearMachine Client recognizes its local
+ID and does nothing. After `unskip`, the next poll handles the message normally.
 
 Skipping also removes a provisional first-message queue record left by an
 interrupted run and asks machtiani to delete that abandoned session. If session
@@ -169,7 +213,7 @@ follow-up starts, DearMachine Client forks its committed agent session and recor
 clean checkpoint in the durable pending row. The command requires a `running`
 pending message with that checkpoint, atomically remaps the thread to it,
 records the selected message as locally skipped, removes its pending row, and
-deletes the partial source session. AgentMail remains unchanged. Future
+deletes the partial source session. The remote inbox remains unchanged. Future
 follow-ups continue from the last committed sequence; unskipping the abandoned
 message makes that message eligible again against the clean checkpoint.
 

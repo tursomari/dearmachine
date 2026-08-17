@@ -1,20 +1,20 @@
 # Dear Machine, Email Transport Alternatives
 
-- **Revision date:** 2026-08-08
+- **Revision date:** 2026-08-17
 - **Status:** Living document; re-verify capabilities, terms, availability, and pricing before adopting any option.
 
 ## Purpose
 
-This document informs a future transport-agnostic abstraction for the
-DearMachine Client. It records potential drop-in alternatives to AgentMail as
-the email transport, compares them against the operations the client currently
-needs, and outlines how a transport could eventually be selected during client
-initialization. It is a technical survey, not an adoption decision.
+This document records the transport abstraction now used by the DearMachine
+Client, the implemented OpenMail proof, and other potential alternatives to
+AgentMail. The remaining provider comparisons are a technical survey, not an
+adoption decision.
 
 ## Current transport
 
-The DearMachine Client currently uses AgentMail through `agentmail-go` v0.16.0. The client
-depends on a small but stateful mailbox surface:
+The DearMachine Client defaults to AgentMail through `agentmail-go` v0.16.0 and
+also provides a selectable OpenMail REST adapter. Both implement a small but
+stateful mailbox surface:
 
 - Poll unread inbound messages, including pagination and deterministic timestamp
   ordering.
@@ -33,10 +33,9 @@ it completes orchestration and reply handling before marking the message as
 processed. A replacement therefore needs equivalent observable behavior, even
 when the provider names or implements these operations differently.
 
-ROADMAP section 5 plans to separate transport from orchestration. Polling,
-thread history, send/reply, idempotent reply-receipt detection, and processed or
-label state should sit behind an adapter so provider-specific REST behavior does
-not alter the application state machine.
+Polling, thread history, send/reply, reply-receipt detection, processed state,
+and attachment fetches now sit behind an adapter so provider-specific REST
+behavior does not alter the application state machine.
 
 ## Alternative providers
 
@@ -82,7 +81,37 @@ compatibility with the current AgentMail SDK.
 
 #### OpenMail — High
 
-OpenMail offers provisioned, agent-focused inboxes with send/receive, threads, webhooks, WebSockets, and custom domains. Its explicit threads and both pull and push interfaces cover much of the adapter, but label mutation, idempotent send, reply-receipt fidelity, and Go support still need verification.
+OpenMail is implemented through its REST API at
+`https://api.openmail.sh/v1`. The public OpenAPI document confirms Bearer API
+key authentication, paginated inbox messages, unread-thread filtering, thread
+history, native `Idempotency-Key` sends, thread-level read updates, and
+message-ID/filename attachment fetches. No maintained Go SDK was needed.
+
+The impedance is real and remains visible in the adapter:
+
+- OpenMail read state belongs to a thread, not a message. `Poll` therefore
+  returns only the newest inbound message from each unread thread, and
+  `MarkProcessed` marks the complete thread read. A thread containing any
+  non-allow-listed correspondent is ignored entirely so it is never mutated.
+- OpenMail API paths require an inbox ID. DearMachine accepts either the ID or
+  address; an address is resolved through the paginated inbox list, while an ID
+  is verified with the inbox endpoint. The resolved address is also checked on
+  every message.
+- Sends have native 24-hour idempotency, but messages do not expose an
+  `In-Reply-To` field. Receipt recovery conservatively selects the first allowed
+  outbound message later in the same thread than the inbound message.
+- There is no single-message get endpoint. Recovery scans the paginated inbox
+  message list for the requested ID.
+- Attachments are addressed by message ID and filename. The adapter exposes an
+  opaque transport attachment ID, limits bytes before returning content, and
+  refuses redirects outside the configured OpenMail API origin.
+- Correspondent authorization is deliberately adapter-local because it is not
+  a capability common to the `Transport` interface. Inbound messages must come
+  from `DEARMACHINE_OPENMAIL_ALLOWED_FROM` and be addressed directly and
+  exclusively to the configured inbox; replies must target
+  `DEARMACHINE_OPENMAIL_ALLOWED_TO`. New threads and follow-ups obey the same
+  exact-address rule. CC delivery and any thread with another correspondent are
+  ignored; their mail is not surfaced, replied to, fetched, or marked processed.
 
 #### Dead Simple Email — High
 
@@ -203,18 +232,17 @@ type Transport interface {
 	Poll(ctx context.Context) ([]Message, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
 	Message(ctx context.Context, messageID string) (Message, error)
-	Reply(ctx context.Context, messageID, text, idempotencyKey string) (string, error)
+	Reply(ctx context.Context, messageID string, payload ReplyPayload, idempotencyKey string) (string, error)
 	ReplyReceipt(ctx context.Context, message Message) (string, bool, error)
 	MarkProcessed(ctx context.Context, messageID string) error
-	FetchAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error)
 }
 ```
 
-The normalized `Message` must retain provider IDs, thread ID, sender, timestamp,
-body text, labels or direction, reply-reference metadata, and attachment
-references. `FetchAttachment` is inbound-only; outbound reply attachments are
-deferred to the attachments milestone. Adapter construction also needs
-provider-specific credential and inbox-ID configuration.
+The normalized `Message` retains provider IDs, thread ID, sender, timestamp,
+body text, labels or direction, reply-reference metadata where the provider
+offers it, and attachment references. Adapter construction keeps
+provider-specific credentials and inbox addressing outside the interface.
 
 The broader scratch section 9 relay surface—transport capabilities,
 checkpoint/page-token polling, `observe_send`, `finalize_inbound`, and delivery
@@ -258,43 +286,27 @@ durable deduplication. A contract test suite should decide fit: list and order
 unread messages, fetch full bodies, preserve thread/reply headers, retry a send
 without duplication, find its receipt after restart, and mark work complete.
 
-## Selecting a transport at dearmachine initialization
+## Selecting a transport
 
-This is a proposal for future work; it is not implemented.
+Transport selection is implemented as a runtime seam. `--transport` accepts
+`agentmail` (the default) or `openmail` on the main command and `inbox skip`.
+The static `internal/transports` catalog contains metadata only; its separate
+factory dispatches constructors. Authentication remains constructor-local, so
+the AgentMail credential prelude is not run for OpenMail. The existing
+single-argument `dependencies.newTransport` function remains the test injection
+point by binding the selected factory after flags are parsed.
 
-The transport selection can mirror the existing backend registration pattern:
+Selection intentionally does not add a `transport` key to the version-1 device
+TOML or bump its schema. The shipped construction seam proved sufficient
+without mixing provider credentials or options into agent-backend
+configuration.
 
-1. Add a versioned `transport = "agentmail"` key to a future
-   `~/.dearmachine/config/dearmachine.toml`; version 2 is a reasonable schema
-   target because it changes initialization data.
-2. Add a `setup-transport`-style initialization step, or accept `--transport`
-   during the existing initialization flow. It should validate the selection,
-   required configuration, and credential presence without storing secrets.
-3. Define a static transport catalog analogous to `internal/backends/catalog.go`.
-   Suggested metadata is `ID`, `DisplayName`, `SDKOrEndpoint`, `InstallHint`, and
-   `ConfigKeys`; the catalog should not construct clients or contain credentials.
-4. Resolve a registered adapter factory from the canonical transport ID, then
-   inject the resulting interface into the existing application dependencies.
-5. Keep credentials in per-transport environment variables. AgentMail uses
-   `AGENTMAIL_API_KEY` today; each alternative should declare its documented
-   provider-specific variable only after the provider documentation is verified.
-
-An illustrative configuration, with placeholders rather than real identifiers:
-
-```toml
-version = 2
-backends = ["codex", "forge"]
-transport = "agentmail"
-
-[transport_options]
-inbox_id = "<configured-inbox-id>"
-credential_env = "AGENTMAIL_API_KEY"
-```
-
-The config should name a credential environment variable, not store the secret.
-Provider-specific options such as endpoint, region, domain, webhook mode, or
-self-hosted base URL should remain scoped under transport options and be rejected
-when they are invalid for the selected catalog entry.
+For OpenMail, set `OPENMAIL_API_KEY` or `OPENMAIL_API_KEY_FILE` (whose optional
+default is `$HOME/.config/dearmachine/openmail-api-key`) and both exact-address
+correspondent lists. The adapter is inspect-only unless both
+`DEARMACHINE_LIVE_OPENMAIL=1` and `DEARMACHINE_LIVE_OPENMAIL_APPLY=1` are set;
+the second gate enables replies and thread-read mutations. The API host is not
+configurable in the production constructor.
 
 ## Sources
 
@@ -305,6 +317,8 @@ against the following provider pages before an implementation or purchasing
 decision:
 
 - OpenMail: <https://openmail.sh/>
+- OpenMail API reference: <https://docs.openmail.sh/api-reference/introduction>
+- OpenMail OpenAPI document: <https://docs.openmail.sh/api-reference/openapi.json>
 - Dead Simple Email: <https://deadsimple.email/>
 - AGmail: <https://agmail.ai/>
 - AgenticEmail: <https://agenticemail.dev/>

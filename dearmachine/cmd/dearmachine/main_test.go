@@ -43,7 +43,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse defaults: %v", err)
 	}
-	if defaults.dbPath != "" || defaults.projectDir != "." ||
+	if defaults.transport != "agentmail" || defaults.dbPath != "" || defaults.projectDir != "." ||
 		defaults.agentBinary != "machtiani" || defaults.concurrency != 3 ||
 		defaults.maintenanceMinTurns != 20 ||
 		defaults.pollInterval != time.Minute ||
@@ -58,6 +58,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 
 	args := []string{
 		"--inbox-id", "inbox-123",
+		"--transport", "openmail",
 		"--db", "/tmp/state.db",
 		"--project", "/tmp/project",
 		"--model", "fast-model",
@@ -75,7 +76,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
-	if cfg.inboxID != "inbox-123" || cfg.dbPath != "/tmp/state.db" ||
+	if cfg.inboxID != "inbox-123" || cfg.transport != "openmail" || cfg.dbPath != "/tmp/state.db" ||
 		cfg.projectDir != "/tmp/project" || cfg.model != "fast-model" ||
 		cfg.agentBinary != "/tmp/machtiani" || cfg.entryPointRepo != "/tmp/entrypoint" ||
 		cfg.entryPointPrompt != "/tmp/entrypoint/documentation/update.md" ||
@@ -152,10 +153,30 @@ func TestParseConfigHelp(t *testing.T) {
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseConfig help error = %v", err)
 	}
-	for _, want := range []string{"Usage of dearmachine:", "-agent-bin", "-concurrency", "-inbox-id", "-maintenance-min-turns", "-once"} {
+	for _, want := range []string{"Usage of dearmachine:", "-agent-bin", "-concurrency", "-inbox-id", "-maintenance-min-turns", "-once", "-transport"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help output missing %q:\n%s", want, output.String())
 		}
+	}
+}
+
+func TestRunOpenMailDoesNotLoadAgentMailCredential(t *testing.T) {
+	app := &fakeApplication{}
+	deps := testDependencies(t, app)
+	constructed := false
+	deps.newTransport = func(inboxID string) (client.Transport, error) {
+		constructed = true
+		return client.NewAgentMailTransport(inboxID)
+	}
+	if err := run(
+		[]string{"--transport", "openmail", "--inbox-id", "inb-test", "--once"},
+		func(string) string { return "" },
+		deps,
+	); err != nil {
+		t.Fatalf("run openmail: %v", err)
+	}
+	if !constructed || app.runOnceCount != 1 {
+		t.Fatalf("OpenMail selection construction/run = %v/%d", constructed, app.runOnceCount)
 	}
 }
 

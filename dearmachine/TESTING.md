@@ -58,6 +58,11 @@ The suite favors behavior-level component tests over isolated mocks:
 
 - `httptest.Server` implements a local AgentMail REST fake while production
   mailbox code still uses the AgentMail Go SDK.
+- A separate `httptest.Server` covers the OpenMail REST contract, including
+  unread-thread polling, reply idempotency and payloads, read acknowledgement,
+  attachment limits, redirect confinement, and correspondent allow-lists.
+  Default tests inject an offline key and endpoint; they never read an operator
+  OpenMail credential or contact `api.openmail.sh`.
 - `internal/client/testdata/fake-agent.sh` is executed as a real
   subprocess. It simulates `sync`, `run`, and `session show`, and captures
   arguments, environment, prompts, and final-answer files.

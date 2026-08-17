@@ -20,7 +20,7 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	}{
 		{args: []string{"--help"}, wants: []string{"dearmachine inbox <command>"}},
 		{args: []string{"help", "skip"}, wants: []string{"dearmachine inbox skip --current", "--agent-bin <path>"}},
-		{args: []string{"skip", "--help"}, wants: []string{"without changing AgentMail", "--agent-bin <path>"}},
+		{args: []string{"skip", "--help"}, wants: []string{"without changing the remote inbox", "--transport <id>", "--agent-bin <path>"}},
 		{args: []string{"abandon", "--help"}, wants: []string{"clean pre-run session checkpoint", "--agent-bin <path>"}},
 		{args: []string{"unskip", "--help"}, wants: []string{"dearmachine inbox unskip"}},
 		{args: []string{"skipped", "--help"}, wants: []string{"dearmachine inbox skipped"}},
@@ -41,6 +41,30 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestInboxSkipOpenMailDoesNotLoadAgentMailCredential(t *testing.T) {
+	home := t.TempDir()
+	want := errors.New("selected OpenMail constructor reached")
+	deps := dependencies{
+		newTransport: func(string) (client.Transport, error) { return nil, want },
+		flagOutput:   io.Discard,
+		userHomeDir:  func() (string, error) { return home, nil },
+	}
+	err := runInboxSkip(
+		[]string{
+			"--current",
+			"--transport", "openmail",
+			"--inbox-id", "inb-test",
+			"--db", filepath.Join(home, "state.db"),
+			"--pidfile", filepath.Join(home, "missing.pid"),
+		},
+		func(string) string { return "" },
+		deps,
+	)
+	if !errors.Is(err, want) {
+		t.Fatalf("runInboxSkip error = %v, want %v", err, want)
 	}
 }
 

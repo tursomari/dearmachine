@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/dearmachine/dearmachine/internal/client"
+	"github.com/dearmachine/dearmachine/internal/transports"
 )
 
 func runInbox(args []string, getenv func(string) string, deps dependencies) error {
@@ -66,7 +67,8 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 	flags := flag.NewFlagSet("inbox skip", flag.ContinueOnError)
 	flags.SetOutput(output)
 	current := flags.Bool("current", false, "skip the exact snapshot of currently unread messages")
-	inboxID := flags.String("inbox-id", "", "AgentMail inbox ID")
+	inboxID := flags.String("inbox-id", "", "mail transport inbox ID or address")
+	transportID := flags.String("transport", "agentmail", "mail transport ID (agentmail or openmail)")
 	dbPath := flags.String("db", "", "SQLite state database path")
 	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
 	projectDir := flags.String("project", ".", "machtiani project for abandoned-session cleanup")
@@ -88,8 +90,16 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 			"--inbox-id is required\nRun \"dearmachine inbox skip --help\" for usage",
 		)
 	}
-	if err := loadAgentMailCredential(getenv, deps); err != nil {
-		return err
+	if *transportID == "agentmail" {
+		if err := loadAgentMailCredential(getenv, deps); err != nil {
+			return err
+		}
+	}
+	if deps.newTransport == nil {
+		selectedTransport := *transportID
+		deps.newTransport = func(inboxID string) (client.Transport, error) {
+			return transports.New(selectedTransport, inboxID)
+		}
 	}
 	resolvedDB, resolvedPID, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
 	if err != nil {
@@ -117,7 +127,7 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 			})
 		}
 		if len(refs) == 0 {
-			_, err := fmt.Fprintln(stdout, "No currently unread messages to skip. AgentMail unchanged.")
+			_, err := fmt.Fprintln(stdout, "No currently eligible messages to skip. Remote inbox unchanged.")
 			return err
 		}
 	} else {
@@ -144,7 +154,7 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 	}
 	if _, err := fmt.Fprintf(
 		stdout,
-		"Skipped %d message(s) locally. AgentMail unchanged.\n",
+		"Skipped %d message(s) locally. Remote inbox unchanged.\n",
 		len(refs),
 	); err != nil {
 		return err
@@ -266,7 +276,7 @@ func runInboxAbandon(args []string, deps dependencies) error {
 	}
 	if _, err := fmt.Fprintf(
 		stdout,
-		"Abandoned message %s locally at committed sequence %d. AgentMail unchanged.\n",
+		"Abandoned message %s locally at committed sequence %d. Remote inbox unchanged.\n",
 		plan.MessageID,
 		plan.CommittedSequence,
 	); err != nil {
@@ -436,7 +446,7 @@ Commands:
   unskip    Make locally skipped messages eligible again
   skipped   List locally skipped messages
 
-AgentMail is never modified by these commands.
+The configured mail transport is never modified by these commands.
 Use "dearmachine inbox <command> --help" for command help.
 `)
 	return err
@@ -447,12 +457,13 @@ func inboxSkipHelp(output io.Writer) error {
   dearmachine inbox skip --current --inbox-id <id> [flags]
   dearmachine inbox skip --inbox-id <id> [flags] <message-id>...
 
-Records an exact local skip decision without changing AgentMail. The DearMachine Client must be stopped. --current snapshots messages that are unread now;
+Records an exact local skip decision without changing the remote inbox. The DearMachine Client must be stopped. --current snapshots messages that are eligible now;
 messages arriving later remain eligible.
 
 Flags:
-  --current          Select all messages unread at this instant
-  --inbox-id <id>    AgentMail inbox ID (required)
+  --current          Select all messages eligible at this instant
+  --transport <id>   Mail transport ID: agentmail or openmail (default: agentmail)
+  --inbox-id <id>    Mail transport inbox ID or address (required)
   --db <path>        SQLite state database (default: normal DearMachine Client DB)
   --pidfile <path>   PID file to check (default: normal DearMachine Client PID file)
   --project <path>   machtiani project for abandoned-session cleanup
@@ -467,7 +478,8 @@ func inboxAbandonHelp(output io.Writer) error {
   dearmachine inbox abandon [flags] <message-id>
 
 Force-skips one running follow-up in an established thread without changing
-AgentMail. DearMachine Client must be stopped. Every established follow-up receives
+the remote inbox. DearMachine Client must be stopped. Every established
+follow-up receives
 a clean pre-run session checkpoint. This command atomically remaps the thread
 to that checkpoint, records the message as locally skipped, and removes the
 partial source session. Use ordinary inbox skip for messages that have not
@@ -487,7 +499,7 @@ func inboxUnskipHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
   dearmachine inbox unskip [--db <path>] [--pidfile <path>] <message-id>...
 
-Removes local skip decisions. AgentMail is not changed.
+Removes local skip decisions. The remote inbox is not changed.
 
 Flags:
   --db <path>       SQLite state database (default: normal DearMachine Client DB)
@@ -500,7 +512,7 @@ func inboxSkippedHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
   dearmachine inbox skipped [--db <path>] [--json]
 
-Lists local skip decisions. AgentMail is not queried or changed.
+Lists local skip decisions. The remote inbox is not queried or changed.
 
 Flags:
   --db <path>  SQLite state database (default: normal DearMachine Client DB)

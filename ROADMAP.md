@@ -94,11 +94,11 @@ Current behavior and test commands are documented in
 
 ## 5. Separate transport from orchestration
 
-- Define the production transport interface around polling, thread history,
-  reply dispatch, acknowledgements, and finalization.
-- Move AgentMail-specific REST behavior behind an adapter without changing the
-  application state machine.
-- Test the adapter contract once and reuse it for the future self-hosted relay.
+- Maintain the production transport interface around polling, thread history,
+  reply dispatch, acknowledgements, finalization, and bounded attachment fetches.
+- Keep AgentMail and selectable OpenMail behavior behind adapters without
+  changing the application state machine; `--transport` defaults to AgentMail.
+- Reuse the offline adapter contract coverage for the future self-hosted relay.
 - Track the stronger delivery, authorization, idempotency, deletion, and
   attestation guarantees described by the relay specification.
 
@@ -142,8 +142,8 @@ Current behavior and test commands are documented in
    mail smoke test, and restart/reboot recovery in WSL.
 3. **Multi-thread alpha:** durable per-thread FIFO, preemption, and bounded
    concurrency with executable scenario tests.
-4. **Transport-ready alpha:** AgentMail behind a tested interface and a clear
-   path to the self-hosted relay.
+4. **Transport-ready alpha:** AgentMail and OpenMail behind a tested selectable
+   interface, with a clear path to the self-hosted relay.
 5. **Personalized alpha:** Configurable email tiers, attachment round‑trip, at
    least two agent‑managed modes, and values‑driven initialization seeded from
    user preferences and Magnifica Humanitas.
