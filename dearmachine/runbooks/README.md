@@ -30,6 +30,9 @@ Go test suite.
   for explicitly scoped development diagnostics.
 - [`testing/disposable-instance.md`](./testing/disposable-instance.md) tests
   the ordinary email lifecycle and local skip/unskip behavior.
+- [`testing/openmail-transport.md`](./testing/openmail-transport.md) tests the
+  OpenMail constructor, inspect-only default, and isolated poll/reply/ack
+  lifecycle with temporary inboxes.
 - [`testing/concurrent-sessions.md`](./testing/concurrent-sessions.md) compares
   sequential and three-worker processing across simultaneous email threads.
 - [`testing/live-backends.md`](./testing/live-backends.md) tests Forge, Codex,

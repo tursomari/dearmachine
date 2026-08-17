@@ -1,0 +1,131 @@
+# OpenMail Transport Live-Test Runbook
+
+This protocol verifies the selectable OpenMail transport against the live
+OpenMail API without sharing the normal DearMachine inbox, database, PID file,
+project, or Agent Manager state. It exercises constructor configuration,
+inbox resolution, unread-thread polling, thread history, idempotent reply, and
+thread-level read acknowledgement.
+
+Use the isolation requirements in
+[`temporary-instance.md`](./temporary-instance.md), adapted as described here.
+This is a native transport diagnostic, not evidence for the OCI or Compose
+deployment path.
+
+## Safety boundaries
+
+- Confirm the official OpenAPI document still declares
+  `https://api.openmail.sh` and the required `/v1` paths before a credentialed
+  request. Never send the key, mail, or an `Authorization` header to another
+  host.
+- Load the key through `OPENMAIL_API_KEY` or `OPENMAIL_API_KEY_FILE`. Never
+  print it, place it in a command argument, copy it into evidence, or retain an
+  HTTP trace containing request headers.
+- Use two temporary OpenMail inboxes when account capacity and policy permit.
+  Record their exact IDs privately, and never delete or change an inbox the run
+  did not create.
+- Keep any normal account-level correspondent allow-list unchanged. If the
+  temporary pair is blocked by an inherited policy, apply exact-address rules
+  only at each run-created inbox scope. The sender needs inbound/outbound access
+  to the receiver, and the receiver needs inbound/outbound access to the
+  sender. Deleting each temporary inbox also removes its scoped policy.
+- The adapter's own exact-address allow-lists are separate and fail closed.
+  Configure the temporary sender in both
+  `DEARMACHINE_OPENMAIL_ALLOWED_FROM` and
+  `DEARMACHINE_OPENMAIL_ALLOWED_TO` for the receiver client.
+- OpenMail is inspect-only unless both `DEARMACHINE_LIVE_OPENMAIL=1` and
+  `DEARMACHINE_LIVE_OPENMAIL_APPLY=1` are present. Leave both unset for the
+  first poll.
+
+## API contract to verify
+
+Check these operations in the current official OpenAPI document:
+
+- `GET /v1/inboxes` and `POST /v1/inboxes` list and create inboxes;
+- `GET /v1/inboxes/{id}` verifies an inbox ID;
+- `POST /v1/inboxes/{id}/send` sends with `Idempotency-Key`;
+- `GET /v1/inboxes/{id}/threads?is_read=false` lists unread threads;
+- `GET /v1/threads/{id}/messages` returns ordered thread history; and
+- `PATCH /v1/threads/{id}` with `{"is_read":true}` marks the thread read.
+
+The API also documents `DELETE /v1/inboxes/{id}`. It is irreversible and is
+used during teardown only for exact IDs created by the current run.
+
+## Isolated inspect
+
+1. Create a runtime root with `mktemp -d` and require mode `0700`. Put the
+   disposable project, device configuration, database, PID file, binaries,
+   logs, Agent Manager home, and Machtiani project store below it. Unset an
+   inherited `MACHTIANI_SESSION_ID`, and disable entry-point maintenance with
+   `--entry-point-repo ""`.
+2. Build `dearmachine` and `agent-manager` from the revision under test. Create
+   a temporary Git project and initialize it with Machtiani using isolated
+   home and session-temp roots.
+3. List inboxes without printing the credential. Create and verify a temporary
+   receiver if no suitable run-created receiver exists. Prefer a second
+   temporary inbox as the sender.
+4. Leave both mutation gates unset and run one empty poll:
+
+   ```bash
+   export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
+   export DEARMACHINE_OPENMAIL_ALLOWED_FROM=temp-sender@example.test
+   export DEARMACHINE_OPENMAIL_ALLOWED_TO=temp-sender@example.test
+
+   "$TMP/dearmachine" \
+     --transport openmail \
+     --inbox-id '<temporary-receiver-id-or-address>' \
+     --once \
+     --verbose \
+     --db "$TMP/inspect.db" \
+     --pidfile "$TMP/inspect.pid" \
+     --project "$TMP/project" \
+     --config "$TMP/dearmachine.toml" \
+     --agent-manager "$TMP/agent-manager" \
+     --agent-bin '<absolute-machtiani-path>' \
+     --entry-point-repo ""
+   ```
+
+The inspect step passes when the constructor reads the key file, resolves the
+inbox, polls the canonical API host, and exits without changing any thread.
+
+## Poll, reply, and acknowledge
+
+1. Confirm the provider-side policy allows the temporary pair. If the account
+   policy denies the pair, add only inbox-scoped exact-address policies to the
+   two run-created inboxes. Do not replace or expand the account policy.
+2. From the temporary sender, send one new-thread message to the receiver with
+   a unique `Idempotency-Key`. Use a short, read-only task scoped to the
+   disposable project, such as asking for its current Git status.
+3. Wait until the receiver lists exactly that thread as unread. Then enable
+   both mutation gates and run the same isolated command against a fresh live
+   database:
+
+   ```bash
+   export DEARMACHINE_LIVE_OPENMAIL=1
+   export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
+   ```
+
+4. Verify all of the following independently:
+
+   - the client polled and claimed exactly one allowed inbound message;
+   - the receiver history contains one later outbound reply to the temporary
+     sender;
+   - the sender received that reply in its corresponding thread;
+   - the receiver thread is read after successful processing;
+   - the isolated database has no pending message and exactly one processed
+     message; and
+   - a repeated poll does not create a duplicate session or reply.
+
+OpenMail read state is thread-level. `Poll` returns the newest inbound message
+from each unread, fully allowed thread, and `MarkProcessed` marks the whole
+thread read. OpenMail assigns a different local thread ID in each inbox, so the
+sender and receiver histories can correspond even when their IDs differ.
+
+## Teardown
+
+Stop the isolated client and confirm its PID file is gone. Delete only the
+temporary inbox IDs recorded by this run, using the official inbox deletion
+operation. Verify those IDs now return not found and that the normal
+account-level policy is unchanged. Remove the exact temporary runtime root,
+including copied runtime credentials and session artifacts. Finally confirm
+the normal DearMachine process still has its original command, inbox, database,
+and PID file.

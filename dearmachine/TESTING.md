@@ -118,6 +118,11 @@ Give
 to a capable local agent
 for the ordinary end-to-end email lifecycle or local skip/unskip exercise.
 
+For an isolated OpenMail inspect and poll/reply/ack check, use
+[`openmail-transport.md`](./runbooks/testing/openmail-transport.md). It adapts
+the shared temporary-instance boundaries to OpenMail's API key, inbox-scoped
+correspondent policy, and two live mutation gates.
+
 For a live test of Forge, Codex, and ordered fallback through the complete
 email lifecycle, give
 [`runbooks/testing/live-backends.md`](./runbooks/testing/live-backends.md) to a capable local

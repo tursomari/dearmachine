@@ -120,17 +120,23 @@ export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
 ```
 
 Both correspondent variables are required comma-separated exact-address
-allow-lists. Inbound messages must be addressed directly and exclusively to the configured OpenMail inbox and
-come from `DEARMACHINE_OPENMAIL_ALLOWED_FROM`; replies must target
+allow-lists. Inbound messages must be addressed directly and exclusively to the
+configured OpenMail inbox and come from
+`DEARMACHINE_OPENMAIL_ALLOWED_FROM`; replies must target
 `DEARMACHINE_OPENMAIL_ALLOWED_TO`. The same rule accepts new threads and later
-follow-ups. CC delivery or a thread containing any other correspondent is ignored entirely:
-DearMachine does not fetch its attachments, reply, or mark it processed.
+follow-ups. CC delivery or a thread containing any other correspondent is
+ignored entirely: DearMachine does not fetch its attachments, reply, or mark it
+processed.
 
 OpenMail exposes unread state per thread rather than per message. Polling
 therefore returns the newest inbound message in each unread, fully allowed
 thread, and successful processing marks that whole thread read. The main
 command and `inbox skip --current` both accept `--transport openmail`; skip
 decisions remain local and never change the remote inbox.
+
+For a credentialed test that does not reuse normal runtime state or a normal
+inbox, follow the
+[OpenMail transport runbook](runbooks/testing/openmail-transport.md).
 
 The default SQLite state database is
 `~/.dearmachine/state/dearmachine.db`. DearMachine Client creates its state

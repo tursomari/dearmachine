@@ -49,6 +49,31 @@ dearmachine \
   --verbose
 ```
 
+To use an existing OpenMail device inbox instead, select it explicitly and
+configure the paired correspondent in both directions:
+
+```bash
+export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
+export DEARMACHINE_OPENMAIL_ALLOWED_FROM=user@example.com
+export DEARMACHINE_OPENMAIL_ALLOWED_TO=user@example.com
+export DEARMACHINE_LIVE_OPENMAIL=1
+export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
+
+dearmachine \
+  --transport openmail \
+  --inbox-id '<openmail-inbox-id-or-address>' \
+  --project "$HOME/.dearmachine/entrypoint/main" \
+  --entry-point-repo "$HOME/.dearmachine/entrypoint/main" \
+  --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
+  --verbose
+```
+
+Without both `DEARMACHINE_LIVE_OPENMAIL` gates, OpenMail is inspect-only and
+will not reply or mark a thread read. OpenMail's provider-side correspondent
+policy must also permit the pair; the local allow-lists cannot loosen that
+policy. See the [OpenMail transport runbook](dearmachine/runbooks/testing/openmail-transport.md)
+for a disposable, fully isolated verification procedure.
+
 DearMachine remains in the foreground and does not assume systemd or another
 service manager. The optional Nix/OCI container deployment and Linux lifecycle
 helper are documented in
