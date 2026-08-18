@@ -11,6 +11,7 @@ import (
 
 	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/agentmail-to/agentmail-go/option"
+	"golang.org/x/net/html"
 )
 
 const pageSize = 100
@@ -253,12 +254,136 @@ func (m *Mailbox) MarkProcessed(ctx context.Context, messageID string) error {
 	return nil
 }
 
+func htmlToText(raw string) string {
+	tokenizer := html.NewTokenizer(strings.NewReader(raw))
+	var rendered strings.Builder
+	var skipped []string
+	var links []string
+
+	for {
+		tokenType := tokenizer.Next()
+		if tokenType == html.ErrorToken {
+			break
+		}
+
+		token := tokenizer.Token()
+		tag := strings.ToLower(token.Data)
+		switch tokenType {
+		case html.TextToken:
+			if len(skipped) == 0 {
+				rendered.WriteString(token.Data)
+			}
+		case html.StartTagToken:
+			if isSkippedHTMLTag(tag) {
+				skipped = append(skipped, tag)
+				continue
+			}
+			if len(skipped) > 0 {
+				continue
+			}
+			if isHTMLLineBreak(tag) {
+				rendered.WriteByte('\n')
+			}
+			if tag == "a" {
+				links = append(links, safeHTMLLink(token.Attr))
+			}
+		case html.SelfClosingTagToken:
+			if len(skipped) == 0 && isHTMLLineBreak(tag) {
+				rendered.WriteByte('\n')
+			}
+		case html.EndTagToken:
+			if len(skipped) > 0 {
+				for i := len(skipped) - 1; i >= 0; i-- {
+					if skipped[i] == tag {
+						skipped = skipped[:i]
+						break
+					}
+				}
+				continue
+			}
+			if tag == "a" && len(links) > 0 {
+				href := links[len(links)-1]
+				links = links[:len(links)-1]
+				if href != "" {
+					rendered.WriteString(" (")
+					rendered.WriteString(href)
+					rendered.WriteByte(')')
+				}
+			}
+			if isHTMLLineBreak(tag) {
+				rendered.WriteByte('\n')
+			}
+		}
+	}
+
+	lines := strings.Split(rendered.String(), "\n")
+	cleaned := make([]string, 0, len(lines))
+	blank := false
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			if len(cleaned) > 0 && !blank {
+				cleaned = append(cleaned, "")
+				blank = true
+			}
+			continue
+		}
+		cleaned = append(cleaned, line)
+		blank = false
+	}
+	for len(cleaned) > 0 && cleaned[len(cleaned)-1] == "" {
+		cleaned = cleaned[:len(cleaned)-1]
+	}
+	return strings.TrimSpace(strings.Join(cleaned, "\n"))
+}
+
+func isSkippedHTMLTag(tag string) bool {
+	switch tag {
+	case "head", "script", "style":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHTMLLineBreak(tag string) bool {
+	switch tag {
+	case "br", "p", "div", "li", "blockquote", "pre", "tr", "table", "hr",
+		"h1", "h2", "h3", "h4", "h5", "h6":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeHTMLLink(attributes []html.Attribute) string {
+	for _, attribute := range attributes {
+		if strings.EqualFold(attribute.Key, "href") {
+			href := strings.TrimSpace(attribute.Val)
+			lower := strings.ToLower(href)
+			if strings.HasPrefix(lower, "http://") ||
+				strings.HasPrefix(lower, "https://") ||
+				strings.HasPrefix(lower, "mailto:") {
+				return href
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 func (m *Mailbox) normalize(message agentmail.Message) Message {
 	body := message.ExtractedText
-	if body == "" {
+	if strings.TrimSpace(body) == "" {
 		body = message.Text
 	}
-	if body == "" {
+	if strings.TrimSpace(body) == "" {
+		body = htmlToText(message.ExtractedHTML)
+	}
+	if strings.TrimSpace(body) == "" {
+		body = htmlToText(message.HTML)
+	}
+	if strings.TrimSpace(body) == "" {
 		body = message.Preview
 	}
 	attachments := make([]AttachmentRef, 0, len(message.Attachments))

@@ -409,6 +409,50 @@ func TestMessageBodyPrefersExtractedText(t *testing.T) {
 			message: agentmail.Message{Preview: "preview"},
 			want:    "preview",
 		},
+		{
+			name: "HTML-only body",
+			message: agentmail.Message{
+				HTML: `<html><head><style>p { color: red; }</style></head><body><p>Hello <b>world</b>.</p><script>alert(1)</script><p>Second<br>line &amp; more <a href="https://example.com/x">link</a></p></body></html>`,
+			},
+			want: "Hello world.\n\nSecond\nline & more link (https://example.com/x)",
+		},
+		{
+			name:    "text beats html",
+			message: agentmail.Message{Text: "plain wins", HTML: "<p>html</p>"},
+			want:    "plain wins",
+		},
+		{
+			name: "extracted text beats html",
+			message: agentmail.Message{
+				ExtractedText: "extracted",
+				HTML:          "<p>ignored</p>",
+			},
+			want: "extracted",
+		},
+		{
+			name: "extracted html beats html",
+			message: agentmail.Message{
+				ExtractedHTML: "<p>from extracted</p>",
+				HTML:          "<p>from raw html</p>",
+			},
+			want: "from extracted",
+		},
+		{
+			name: "converted html beats preview",
+			message: agentmail.Message{
+				HTML:    "<p>html body</p>",
+				Preview: "truncated preview...",
+			},
+			want: "html body",
+		},
+		{
+			name: "whitespace-only html falls through to preview",
+			message: agentmail.Message{
+				HTML:    "<body>   </body>",
+				Preview: "preview fallback",
+			},
+			want: "preview fallback",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

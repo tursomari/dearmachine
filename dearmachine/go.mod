@@ -6,6 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/agentmail-to/agentmail-go v0.16.0
 	github.com/mattn/go-sqlite3 v1.14.32
+	golang.org/x/net v0.28.0
 )
 
 require (
