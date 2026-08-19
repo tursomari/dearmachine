@@ -291,10 +291,11 @@ different default state or Compose project. Do not use
 `dearmachine-container-lifecycle` for an ephemeral QSE; that helper operates
 the separately installed systemd-user stack.
 
-Send the protocol message only after health succeeds. Success requires—not
-merely a PID—the expected `poll:` log, a successful health probe for the
-selected Agent Manager backend, one pending-to-processed transition, a
-completed mct session, and exactly one reply observed at the temporary sender.
+Send protocol messages only after health succeeds. Success requires—not merely
+a PID—the expected `poll:` log, a successful health probe for the selected Agent
+Manager backend, the protocol's expected pending-to-processed transitions, a
+completed mct session, and the protocol's exact expected reply count observed
+at the temporary sender.
 Capture retained Agent Manager ticket state when the selected path preserves
 it, but do not substitute a ticket file for the completed session and persisted
 conversation. Record the image revision and container ID with that evidence.
@@ -353,7 +354,8 @@ thread.
 Do not infer success from a reply or a single log message. Verify the protocol's
 entire state transition and negative assertions. Avoid same-thread follow-ups
 when session ordering is under test because a continuation changes that
-session's `updated_at` value.
+session's `updated_at` value. This restriction does not apply when reply
+continuity is itself the behavior under test.
 
 ### Retain evidence safely
 

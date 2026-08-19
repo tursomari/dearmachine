@@ -7,6 +7,8 @@ reinstall=$PROJECT_ROOT/dearmachine/runbooks/uninstall-reinstall.md
 migrate=$PROJECT_ROOT/dearmachine/runbooks/migrate-live-state.md
 spinup=$PROJECT_ROOT/dearmachine/runbooks/container-spin-up.md
 temporary=$PROJECT_ROOT/dearmachine/runbooks/testing/temporary-instance.md
+disposable=$PROJECT_ROOT/dearmachine/runbooks/testing/disposable-instance.md
+openmail=$PROJECT_ROOT/dearmachine/runbooks/testing/openmail-transport.md
 native=$PROJECT_ROOT/dearmachine/runbooks/native-install.md
 
 for contract in \
@@ -30,7 +32,12 @@ grep -F 'Live integration protocols use the containerized production path' \
 grep -F 'without requiring systemd' "$temporary" >/dev/null
 grep -F 'nix run .#dearmachine-stack -- up' "$temporary" >/dev/null
 grep -F '### Native diagnostic exception' "$temporary" >/dev/null
-grep -F 'pending-to-processed transition' "$temporary" >/dev/null
+grep -F 'pending-to-processed transitions' "$temporary" >/dev/null
+grep -F 'two inbound user turns map to one mct session with sequence 2' \
+  "$disposable" >/dev/null
+grep -F 'exactly two substantive replies arrive' "$disposable" >/dev/null
+grep -F 'exactly two allowed inbound messages' "$openmail" >/dev/null
+grep -F 'exactly two later outbound replies' "$openmail" >/dev/null
 grep -F 'Native foreground execution is the default' "$native" >/dev/null
 grep -F 'nix profile install .#dearmachine' "$native" >/dev/null
 grep -F 'machtiani` and the backend commands' "$native" >/dev/null

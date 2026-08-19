@@ -87,7 +87,7 @@ used during teardown only for exact IDs created by the current run.
 The inspect step passes when the constructor reads the key file, resolves the
 inbox, polls the canonical API host, and exits without changing any thread.
 
-## Poll, reply, and acknowledge
+## Poll, reply, continue, and acknowledge
 
 1. Confirm the provider-side policy allows the temporary pair. If the account
    policy denies the pair, add only inbox-scoped exact-address policies to the
@@ -104,15 +104,29 @@ inbox, polls the canonical API host, and exits without changing any thread.
    export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
    ```
 
-4. Verify all of the following independently:
+4. Wait for the first Dear Machine response. Record its stable conversation
+   reference privately, then reply to it from the temporary sender's existing
+   email thread with a meaningful follow-up to the original task. Preserve the
+   quoted reply and footer as a normal mail client would.
+5. Wait for the receiver thread to become unread again and run the same
+   isolated client against the same live database. Record both inboxes' local
+   message and thread identifiers; OpenMail may use different identifiers on
+   each side or for the continuation.
+6. Verify all of the following independently:
 
-   - the client polled and claimed exactly one allowed inbound message;
-   - the receiver history contains one later outbound reply to the temporary
-     sender;
-   - the sender received that reply in its corresponding thread;
+   - the client polled and claimed exactly two allowed inbound messages;
+   - both inbound turns map to one mct session and the second turn advances it
+     to sequence 2;
+   - both outbound replies contain the same valid stable Dear Machine
+     conversation reference;
+   - the second machtiani prompt contains the new follow-up but neither the
+     Dear Machine footer nor quoted history as new user content;
+   - the receiver history contains exactly two later outbound replies to the
+     temporary sender;
+   - the sender received both replies in its corresponding email thread;
    - the receiver thread is read after successful processing;
-   - the isolated database has no pending message and exactly one processed
-     message; and
+   - the isolated database has no pending message and exactly two processed
+     messages; and
    - a repeated poll does not create a duplicate session or reply.
 
 OpenMail read state is thread-level. `Poll` returns the newest inbound message

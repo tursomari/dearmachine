@@ -1,8 +1,8 @@
 # Disposable DearMachine Client Smoke-Test Runbook
 
 This document is a prompt for a capable local agent, not an executable test
-script. It exercises one isolated email-to-session-to-reply lifecycle or the
-optional local skip/unskip behavior.
+script. It exercises one isolated two-turn email-to-session-to-reply lifecycle
+or the optional local skip/unskip behavior.
 
 Use [`temporary-instance.md`](./temporary-instance.md) for provisioning,
 isolation, observation, evidence handling, and teardown. Those requirements are
@@ -41,12 +41,23 @@ exercise. Preserve all pre-existing workspace state and retain no credentials.
 3. Record the sender-side message and thread identifiers and the AgentMail
    thread identifier in private evidence.
 4. Observe the process, disposable database, mapped mct session, trajectory,
-   Agent Manager state when used, and AgentMail thread until completion.
-5. If the response asks a legitimate clarification, answer in the same email
-   thread and confirm the existing mct session resumes. Do not create a new
-   thread for a continuation.
-6. Apply a bounded deadline. On timeout, preserve the last state and report the
-   stage where progress stopped.
+   Agent Manager state when used, and AgentMail thread until the first
+   substantive reply arrives. Record the reply's stable Dear Machine
+   conversation reference privately.
+5. Reply to that response in the sender's existing email thread with a
+   meaningful follow-up to the original task. Preserve the quoted reply and
+   its Dear Machine footer as a normal mail client would. Record the second
+   sender-side message and thread identifiers and the second receiver-side
+   AgentMail message and thread identifiers; provider-local thread identifiers
+   are allowed to differ.
+6. Observe the second turn through completion. Confirm it resumes the original
+   mct session at sequence 2, retains the same stable Dear Machine conversation
+   reference, does not pass the footer or quoted history to machtiani as new
+   user content, and produces exactly one second reply to the sender's existing
+   email thread. Observe one further poll and confirm it creates no duplicate
+   execution or reply.
+7. Apply a bounded deadline to each turn. On timeout, preserve the last state
+   and report the stage where progress stopped.
 
 For agent-managed work, do not infer success from the reply alone. Verify the
 approved backend order, health-check results, selected ticket worker, closed
@@ -78,13 +89,18 @@ messages.
 
 ### Pass criteria
 
-The exercise passes only when:
+The ordinary exercise passes only when:
 
-- exactly one new email thread is consumed;
-- it maps to one mct session without replaying quoted history;
+- exactly one sender-visible email conversation is exercised, containing two
+  inbound user turns; provider-local thread identifiers may differ;
+- two inbound user turns map to one mct session with sequence 2 without
+  replaying quoted history or exposing the Dear Machine footer to machtiani;
+- both outbound replies contain the same valid stable conversation reference;
 - any managed ticket closes with the intended worker;
-- a substantive reply arrives in the original AgentMail thread;
-- the disposable database has no pending message;
+- exactly two substantive replies arrive in the sender's original email
+  thread;
+- the disposable database has exactly two processed messages and no pending
+  message;
 - no duplicate reply or session is created;
 - entry-point session maintenance remains disabled;
 - normal DearMachine Client and repository state remain untouched; and
