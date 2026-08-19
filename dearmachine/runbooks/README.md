@@ -34,6 +34,9 @@ Go test suite.
   sequential and three-worker processing across simultaneous email threads.
 - [`testing/live-backends.md`](./testing/live-backends.md) tests Forge, Codex,
   and ordered backend fallback.
+- [`testing/apple-mail-html-fallback.md`](./testing/apple-mail-html-fallback.md)
+  proves the Apple Mail HTML-only body fallback through the live AgentMail API
+  and the isolated production Podman path.
 - [`testing/update-sync.md`](./testing/update-sync.md) tests rolling session
   checkpoints and entry-point update sync.
 

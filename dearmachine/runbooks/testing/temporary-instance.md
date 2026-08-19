@@ -14,6 +14,8 @@ Current protocols include:
   concurrent processing of simultaneous email threads;
 - [`live-backends.md`](./live-backends.md) for Forge, Codex, and
   ordered fallback; and
+- [`apple-mail-html-fallback.md`](./apple-mail-html-fallback.md) for the live
+  AgentMail HTML-only normalization regression; and
 - [`update-sync.md`](./update-sync.md) for rolling
   session checkpoints and internal-README update sync.
 
@@ -225,6 +227,8 @@ export XDG_CONFIG_HOME="$runtime_root/xdg-config"
 export XDG_STATE_HOME="$runtime_root/xdg-state"
 export XDG_CACHE_HOME="$runtime_root/xdg-cache"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+# Scratch HOME hides the operator's nix.conf. Keep flakes available explicitly.
+export NIX_CONFIG=$'experimental-features = nix-command flakes\n'
 export DEARMACHINE_STATE_DIR="$XDG_STATE_HOME/dearmachine-stack"
 export DEARMACHINE_CACHE_DIR="$XDG_CACHE_HOME/dearmachine-stack"
 export DEARMACHINE_CLIENT_HOME="$runtime_root/client-home"
@@ -249,6 +253,13 @@ under the canonical `.dearmachine/config` path in that private home. Agent
 Manager comes from the tested DearMachine image and must not be replaced by a
 host-mounted copy.
 
+Before `dearmachine-stack up`, run `machtiani sync` once in the disposable
+project with the same isolated Machtiani home/configuration that the container
+will mount, then copy or mount that synchronized UUID store. DearMachine creates
+its PID file only after its startup sync completes. A brand-new unsynchronized
+store can therefore spend the entire PID health window doing a legitimate live
+README sync and make an otherwise working container appear unhealthy.
+
 Write `stack.env` with the temporary receiver and project, then synchronize the
 AgentMail key into the isolated Podman secret without printing it:
 
@@ -270,13 +281,23 @@ cd "$repository"
 nix run .#dearmachine-stack -- secrets sync --file <mode-0600-AgentMail-key-file>
 nix run .#dearmachine-stack -- up
 nix run .#dearmachine-stack -- health
+nix run .#dearmachine-stack -- status
 ```
 
+All stack commands for this run must execute from the same shell while the
+complete isolated environment above remains exported. `status`, `health`,
+`logs`, `exec`, `containers`, `down`, and `secrets remove` otherwise select a
+different default state or Compose project. Do not use
+`dearmachine-container-lifecycle` for an ephemeral QSE; that helper operates
+the separately installed systemd-user stack.
+
 Send the protocol message only after health succeeds. Success requires—not
-merely a PID—the expected `poll:` log, one pending-to-processed transition, a
-real Agent Manager ticket for the selected backend, a completed mct session,
-and exactly one reply observed at the temporary sender. Record the image
-revision and container ID with that evidence.
+merely a PID—the expected `poll:` log, a successful health probe for the
+selected Agent Manager backend, one pending-to-processed transition, a
+completed mct session, and exactly one reply observed at the temporary sender.
+Capture retained Agent Manager ticket state when the selected path preserves
+it, but do not substitute a ticket file for the completed session and persisted
+conversation. Record the image revision and container ID with that evidence.
 
 Teardown must bring down the exact Compose project, remove the isolated Podman
 secret, prove no test container remains, inspect and then remove only the
@@ -288,7 +309,12 @@ untouched.
 nix run .#dearmachine-stack -- down
 nix run .#dearmachine-stack -- secrets remove
 test -z "$(nix run .#dearmachine-stack -- containers --format '{{.ID}}')"
+nix run .#dearmachine-stack -- unload
 ```
+
+Unload the image before removing the isolated runtime root. Direct filesystem
+deletion can fail on read-only overlay layer contents even after Compose has
+removed the container.
 
 The optional Linux systemd-user lifecycle has its own credential-free real
 Podman test in `tests/nix/test-host-podman-integration.sh`; it is not a
@@ -338,7 +364,9 @@ evidence needed to support it. For update-sync sensitivity runs, use:
 <DearMachine-source>/.scratch/update-sync-evaluations/<UTC-run-timestamp>/
 ```
 
-The repository's `.git/info/exclude` keeps `.scratch/` unversioned. Record the
+The repository's `.gitignore` keeps `.scratch/` unversioned. Keep the live
+resource journal in this persistent evidence directory, not only beneath the
+`/tmp` runtime root, so an abrupt reboot still leaves exact cleanup IDs. Record the
 source revisions, model/backend selection, safe prompt case IDs, timestamps,
 state transitions, checkpoint snapshots, Git hashes, and outcome
 classifications. Private session and message identifiers may remain in that
@@ -361,9 +389,11 @@ Treat teardown as part of every pass or failure:
 5. Resolve the disposable project's UUID-backed store with
    `machtiani project show --json`. Delete that exact store only after proving
    its project root equals the disposable project and no process uses it.
-6. Validate that the runtime root is non-empty, owned by the current user, has
+6. After `dearmachine-stack down`, prove the exact project container list is
+   empty and run `dearmachine-stack unload` in the same isolated environment.
+7. Validate that the runtime root is non-empty, owned by the current user, has
    the expected test basename, and is not a symlink. Remove only that exact
    directory.
-7. Confirm the normal DearMachine Client and the source repository's tracked and
+8. Confirm the normal DearMachine Client and the source repository's tracked and
    untracked baseline remain unchanged, apart from changes explicitly under
    test. Never remove unrelated files.

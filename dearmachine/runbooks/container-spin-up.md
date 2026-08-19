@@ -51,62 +51,32 @@ logs contain `DearMachine credential-free Compose test service ready`, and
 verify it is the private directory created above, is owned by the current user,
 and is not a symlink. Never point these variables at `~/.dearmachine`.
 
-## Functional disposable client
+## Live credentialed QSEs
 
-For a real temporary inbox exercise, repeat the isolation setup with
-`DEARMACHINE_STACK_MODE=development`. Create a self-contained Git checkout at
-`DEARMACHINE_PROJECT_DIR`. Put Linux-compatible `machtiani` and every
-configured backend executable or symlink in
-`DEARMACHINE_TOOLS_DIR`; Nix-store symlinks work because `/nix/store` is
-mounted read-only. Configure and authenticate those tools only under
-`DEARMACHINE_CLIENT_HOME`. Agent Manager is packaged in the image.
+This runbook owns the Podman mechanics, not live-mail protocol setup. Run every
+live credentialed QSE through the canonical containerized production path in
+[`testing/temporary-instance.md`](testing/temporary-instance.md). That path
+defines the scratch HOME/XDG roots, unique Compose project, external Podman
+secret, mounted tools and credentials, observation requirements, and exact
+cleanup boundary. Do not substitute development mode or the native diagnostic
+exception for a protocol that claims container or deployment-path coverage.
 
-Rebuild and replace a running disposable stack from the current source with:
-
-```bash
-nix run .#dearmachine-stack -- rebuild
-```
-
-`nix run` rebuilds the wrapper and its image archive when the source changes;
-the wrapper loads `localhost/dearmachine:nix` and force-recreates the Compose
-service. For rollback, retain a previously built image archive, set both
-`DEARMACHINE_IMAGE_ARCHIVE` and `DEARMACHINE_IMAGE` to that archive and its
-embedded tag, then run `dearmachine-stack rebuild`. Confirm the selected image
-with `nix run .#dearmachine-stack -- image` before resuming a disposable inbox.
-The container lifecycle below provides the supported archive retention and
-rollback behavior.
-
-Write the backend selection to
-`$DEARMACHINE_CLIENT_HOME/.dearmachine/config/dearmachine.toml`, for example:
-
-```toml
-version = 1
-backends = ["forge", "codex"]
-```
-
-Then export, without printing, the API key for a dedicated temporary inbox and
-set its exact ID:
+Use the stack wrapper—not the installed-service lifecycle helper—to observe an
+ephemeral QSE. Run these commands from the same shell with the QSE's complete
+isolated environment still exported:
 
 ```bash
-export AGENTMAIL_API_KEY
-export DEARMACHINE_INBOX_ID=<temporary-inbox-id>
-export DEARMACHINE_STACK_MODE=development
-nix run .#dearmachine-stack -- up
+nix run .#dearmachine-stack -- status
 nix run .#dearmachine-stack -- health
-nix run .#dearmachine-stack -- logs --follow dearmachine
+nix run .#dearmachine-stack -- logs --tail 100 dearmachine
+nix run .#dearmachine-stack -- containers --format '{{.ID}}'
 ```
 
-Apply the provisioning, allow-list, observation, and teardown rules in
-[`testing/temporary-instance.md`](testing/temporary-instance.md). In
-particular, never use the normal inbox, never run a competing poller, and never
-remove the protected pre-existing Gmail allow-list entry. Stop with
-`nix run .#dearmachine-stack -- down` before deleting only the verified
-disposable inbox, mct store, and runtime root.
-
-For production mode, create the external Podman secret in the same isolated
-Podman context and set `DEARMACHINE_STACK_MODE=production`. The wrapper refuses
-to start if `dearmachine_agentmail_api_key` is absent. Provision and rotate it
-with `nix run .#container-secrets`; plaintext never enters Compose or the Nix store.
+`nix run .#dearmachine-container-lifecycle -- status` inspects the separately
+installed `dearmachine-stack.service`; it does not report an ephemeral QSE.
+Rebuild the current isolated stack with `nix run .#dearmachine-stack --
+rebuild`, and confirm its selected image with `nix run .#dearmachine-stack --
+image`.
 
 ## Isolated systemd user lifecycle
 
