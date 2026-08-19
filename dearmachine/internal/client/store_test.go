@@ -210,6 +210,145 @@ func TestStoreReturnsExistingPendingMessageForDuplicate(t *testing.T) {
 	}
 }
 
+func TestStoreReferenceAssociatesChangedThreadWithExistingSessionAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "continuity.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	first, existed, err := store.BeginMessageWithReference(
+		"message-1", "provider-thread-a", "", TierPlain,
+	)
+	if err != nil || existed {
+		t.Fatalf("first BeginMessageWithReference = %+v, %v, %v", first, existed, err)
+	}
+	if !validConversationReference(first.Session.ConversationReference) {
+		t.Fatalf("conversation reference = %q", first.Session.ConversationReference)
+	}
+	if err := store.MarkRunning(first.MessageID, "first prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(first.MessageID, RunResult{Kind: ResultAnswer, Text: "first answer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(first.MessageID, "completed", "outbound-1"); err != nil {
+		t.Fatal(err)
+	}
+	reference := first.Session.ConversationReference
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer store.Close()
+	second, existed, err := store.BeginMessageWithReference(
+		"message-2", "provider-thread-b", reference, TierPlain,
+	)
+	if err != nil || existed {
+		t.Fatalf("second BeginMessageWithReference = %+v, %v, %v", second, existed, err)
+	}
+	if second.ThreadID != first.ThreadID || second.Session.SessionID != first.Session.SessionID {
+		t.Fatalf("changed thread created another session: first=%+v second=%+v", first, second)
+	}
+	if second.Session.Sequence != 2 || second.Session.ConversationReference != reference {
+		t.Fatalf("changed-thread continuation = %+v", second.Session)
+	}
+	aliased, err := store.Session("provider-thread-b")
+	if err != nil {
+		t.Fatalf("Session through learned alias: %v", err)
+	}
+	if aliased.SessionID != first.Session.SessionID {
+		t.Fatalf("alias session = %+v, want %s", aliased, first.Session.SessionID)
+	}
+}
+
+func TestStoreKnownThreadWinsOverForeignFooterReference(t *testing.T) {
+	store := openTestStore(t)
+	first, _, err := store.BeginMessageWithReference("message-a", "thread-a", "", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.BeginMessageWithReference("message-b", "thread-b", "", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err := store.BeginMessageWithReference(
+		"message-a-2", "thread-a", second.Session.ConversationReference, TierPlain,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Session.SessionID != first.Session.SessionID || pending.ThreadID != first.ThreadID {
+		t.Fatalf("foreign footer displaced known thread: first=%+v pending=%+v", first, pending)
+	}
+}
+
+func TestStoreUnknownValidReferenceCannotAttachToExistingSession(t *testing.T) {
+	store := openTestStore(t)
+	first, _, err := store.BeginMessageWithReference("message-a", "thread-a", "", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.BeginMessageWithReference(
+		"message-b", "thread-b", newConversationReference(), TierPlain,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Session.SessionID == first.Session.SessionID || second.ThreadID == first.ThreadID {
+		t.Fatalf("unknown reference attached to existing session: first=%+v second=%+v", first, second)
+	}
+	if second.Session.ConversationReference == first.Session.ConversationReference {
+		t.Fatalf("new conversation reused reference %q", first.Session.ConversationReference)
+	}
+}
+
+func TestStoreSkipAcceptsLearnedExternalThreadAlias(t *testing.T) {
+	store := openTestStore(t)
+	first, _, err := store.BeginMessageWithReference("message-1", "thread-a", "", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunning(first.MessageID, "prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(first.MessageID, RunResult{Kind: ResultAnswer, Text: "answer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(first.MessageID, "completed", "outbound-1"); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := store.BeginMessageWithReference(
+		"message-2", "thread-b", first.Session.ConversationReference, TierPlain,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandoned, err := store.SkipMessages(
+		[]MessageRef{{MessageID: second.MessageID, ThreadID: "thread-b"}},
+		"operator skipped alias",
+	)
+	if err != nil {
+		t.Fatalf("SkipMessages through alias: %v", err)
+	}
+	if len(abandoned) != 1 || abandoned[0].SessionID != first.Session.SessionID {
+		t.Fatalf("abandoned = %+v", abandoned)
+	}
+	skipped, err := store.SkippedMessages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 1 || skipped[0].ThreadID != "thread-b" {
+		t.Fatalf("skipped = %+v, want provider alias thread-b", skipped)
+	}
+	if session, err := store.Session("thread-b"); err != nil || session.SessionID != first.Session.SessionID {
+		t.Fatalf("committed session after skip = %+v, %v", session, err)
+	}
+}
+
 func TestStoreBeginMessageAtomicallyClaimsDuplicate(t *testing.T) {
 	store := openTestStore(t)
 	start := make(chan struct{})
@@ -891,6 +1030,13 @@ INSERT INTO thread_sessions VALUES
 	}
 	if tier != "plain" {
 		t.Fatalf("migrated response_tier = %q, want plain", tier)
+	}
+	legacy, err := store.Session("legacy-thread")
+	if err != nil {
+		t.Fatalf("Session after conversation-reference migration: %v", err)
+	}
+	if !validConversationReference(legacy.ConversationReference) {
+		t.Fatalf("migrated conversation reference = %q", legacy.ConversationReference)
 	}
 
 	pending, existed, err := store.BeginMessage("new", "legacy-thread", TierComplete)

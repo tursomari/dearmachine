@@ -169,6 +169,7 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		a.logger.Printf("poll: %d unread messages", len(messages))
 	}
 	for _, message := range messages {
+		message, conversationReference := prepareInboundMessage(message)
 		if containsFold(message.Labels, "sent") {
 			if a.verbose {
 				a.logger.Printf("poll: locally skipped own outbound message=%s thread=%s", message.MessageID, message.ThreadID)
@@ -202,7 +203,12 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			}
 			continue
 		}
-		pending, existed, err := a.store.BeginMessage(message.MessageID, message.ThreadID, a.responseTier)
+		pending, existed, err := a.store.BeginMessageWithReference(
+			message.MessageID,
+			message.ThreadID,
+			conversationReference,
+			a.responseTier,
+		)
 		if errors.Is(err, errMessageSkipped) {
 			if a.verbose {
 				a.logger.Printf(
@@ -248,6 +254,7 @@ func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {
 		if err != nil {
 			return err
 		}
+		message, _ = prepareInboundMessage(message)
 		work.enqueue(messageWork{message: message, pending: pending, recovering: true})
 	}
 	return nil
@@ -406,10 +413,11 @@ func (a *App) processPending(
 		}
 	}
 
-	payload := ReplyPayload{Text: result.Text}
+	replyText := appendConversationFooter(result.Text, pending.Session.ConversationReference)
+	payload := ReplyPayload{Text: replyText}
 	tier := a.tierFor(pending)
 	if tier != TierPlain {
-		payload.HTML = replyHTML(result.Text)
+		payload.HTML = replyHTML(replyText)
 	}
 	switch tier {
 	case TierFormatted:
@@ -614,6 +622,7 @@ func formatPrompt(
 	message Message,
 	session Session,
 ) string {
+	message, _ = prepareInboundMessage(message)
 	var prompt strings.Builder
 	fmt.Fprintf(
 		&prompt,

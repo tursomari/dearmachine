@@ -386,6 +386,16 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 	if strings.TrimSpace(body) == "" {
 		body = message.Preview
 	}
+	body, bodyReferences := stripConversationFooters(body)
+	conversationReferences := mergeConversationReferences(
+		bodyReferences,
+		conversationReferencesInBodies(
+			message.Text,
+			htmlToText(message.HTML),
+			message.ExtractedText,
+			htmlToText(message.ExtractedHTML),
+		),
+	)
 	attachments := make([]AttachmentRef, 0, len(message.Attachments))
 	for _, attachment := range message.Attachments {
 		attachments = append(attachments, AttachmentRef{
@@ -396,18 +406,19 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 		})
 	}
 	normalized := Message{
-		MessageID:   message.MessageID,
-		ThreadID:    message.ThreadID,
-		From:        message.From,
-		To:          append([]string(nil), message.To...),
-		Timestamp:   message.Timestamp,
-		CreatedAt:   message.CreatedAt,
-		Subject:     message.Subject,
-		Body:        body,
-		InReplyTo:   message.InReplyTo,
-		References:  append([]string(nil), message.References...),
-		Labels:      append([]string(nil), message.Labels...),
-		Attachments: attachments,
+		MessageID:              message.MessageID,
+		ThreadID:               message.ThreadID,
+		From:                   message.From,
+		To:                     append([]string(nil), message.To...),
+		Timestamp:              message.Timestamp,
+		CreatedAt:              message.CreatedAt,
+		Subject:                message.Subject,
+		Body:                   body,
+		InReplyTo:              message.InReplyTo,
+		References:             append([]string(nil), message.References...),
+		ConversationReferences: conversationReferences,
+		Labels:                 append([]string(nil), message.Labels...),
+		Attachments:            attachments,
 	}
 	if len(attachments) > 0 {
 		m.attachmentMu.Lock()

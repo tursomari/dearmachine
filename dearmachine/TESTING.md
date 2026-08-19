@@ -72,6 +72,10 @@ The suite favors behavior-level component tests over isolated mocks:
   credential-free.
 - Follow-up tests verify that AgentMail `extracted_text` supplies only the new
   user contribution while the existing machtiani session supplies history.
+- Conversation-reference tests verify footer generation and checksum
+  validation, metadata stripping before machtiani, reference recovery outside
+  AgentMail `extracted_text`, OpenMail HTML normalization, restart persistence,
+  and continuation when a provider changes its thread ID and drops ancestry.
 
 The automated suite is split by responsibility:
 

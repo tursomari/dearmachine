@@ -233,7 +233,11 @@ Reply to the latest `Dear Machine,` message:
 Run the tests and tell me what fails.
 ```
 
-Replies continue the same conversation and local agent session.
+Replies continue the same conversation and local agent session. Every Dear
+Machine response carries a stable opaque conversation reference in its visible
+footer. The local client removes that footer before invoking the agent and can
+use the reference to preserve continuity when a mail provider reports the
+reply under a different thread identifier.
 
 `Dear Machine,` only replies to the latest message in the thread.
 
@@ -324,6 +328,8 @@ You do not need every agent installed. `Dear Machine,` uses what is available.
 
 - Start a new email thread for a new conversation.
 - Reply to continue the existing conversation.
+- A stable Dear Machine footer reference preserves continuity across provider
+  thread changes; it is transport metadata and is not sent to the local agent.
 - The email subject is the conversation name.
 - `Dear Machine,` replies only inside user-initiated threads.
 - Your email account remains the visible conversation history.

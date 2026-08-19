@@ -202,6 +202,26 @@ func TestMailboxTimeoutContract(t *testing.T) {
 	}
 }
 
+func TestMailboxNormalizeFindsQuotedFooterOutsideExtractedText(t *testing.T) {
+	reference := newConversationReference()
+	mailbox := &Mailbox{}
+	normalized := mailbox.normalize(agentmail.Message{
+		MessageID:     "message-1",
+		ThreadID:      "provider-thread-b",
+		From:          "user@example.com",
+		ExtractedText: "Continue with the next section.",
+		Text: "Continue with the next section.\n\n> Earlier answer.\n> --\n" +
+			"> Dear Machine - Ref: " + reference + "\n> Magnifica Humanitas",
+	})
+	if normalized.Body != "Continue with the next section." {
+		t.Fatalf("normalized body = %q", normalized.Body)
+	}
+	if len(normalized.ConversationReferences) != 1 ||
+		normalized.ConversationReferences[0] != reference {
+		t.Fatalf("normalized references = %v, want [%s]", normalized.ConversationReferences, reference)
+	}
+}
+
 func TestMailboxReplyRequiresReceiptMessageID(t *testing.T) {
 	fake, mailbox := newMailboxTestPair(t)
 	fake.fail(http.MethodPost, fakeInboxPrefix+"messages/message-1/reply", fakeHTTPResponse{

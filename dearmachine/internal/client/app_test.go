@@ -145,9 +145,10 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	}
 
 	replies := rig.mail.sentReplies()
-	if len(replies) != 1 || replies[0].Text != "Here is the Q3 sales report." {
+	if len(replies) != 1 {
 		t.Fatalf("unexpected replies: %+v", replies)
 	}
+	assertReplyText(t, replies[0].Text, "Here is the Q3 sales report.")
 	if replies[0].IdempotencyKey == "" {
 		t.Fatal("reply omitted Idempotency-Key")
 	}
@@ -247,8 +248,60 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	}
 
 	replies := rig.mail.sentReplies()
-	if got := replies[len(replies)-1].Text; got != "Here is the regional breakdown." {
-		t.Fatalf("follow-up reply = %q", got)
+	assertReplyText(t, replies[len(replies)-1].Text, "Here is the regional breakdown.")
+}
+
+func TestFooterReferenceContinuesSessionWhenTransportThreadAndAncestryChange(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage("msg-footer-1", "provider-thread-a", "Start the report."))
+	rig.setAnswer("Initial report.")
+	mustProcess(t, rig)
+
+	first := rig.session("provider-thread-a")
+	if !validConversationReference(first.ConversationReference) {
+		t.Fatalf("conversation reference = %q", first.ConversationReference)
+	}
+	firstReply := rig.mail.sentReplies()[0].Text
+	if !strings.Contains(firstReply, conversationFooter(first.ConversationReference)) {
+		t.Fatalf("first reply omitted conversation footer:\n%s", firstReply)
+	}
+	if strings.Contains(firstReply, first.SessionID) {
+		t.Fatalf("reply footer exposed machtiani session ID:\n%s", firstReply)
+	}
+
+	rig.restartStore(t)
+	reply := testMessage(
+		"msg-footer-2",
+		"provider-thread-b",
+		"Add a regional breakdown.\n\n> Initial report.\n> --\n> Dear Machine - Ref: "+first.ConversationReference+"\n> Magnifica Humanitas",
+	)
+	reply.ExtractedText = "Add a regional breakdown."
+	reply.InReplyTo = ""
+	reply.References = nil
+	rig.mail.add(reply)
+	rig.setAnswer("Regional breakdown added.")
+	mustProcess(t, rig)
+
+	continued := rig.session("provider-thread-b")
+	if continued.SessionID != first.SessionID || continued.Sequence != 2 {
+		t.Fatalf("changed-thread reply did not continue session: first=%+v continued=%+v", first, continued)
+	}
+	if continued.ConversationReference != first.ConversationReference {
+		t.Fatalf("reference changed: %q -> %q", first.ConversationReference, continued.ConversationReference)
+	}
+	assertArg(t, rig.captureLines("args-2"), "--session-id", first.SessionID)
+	prompt := rig.capture("text-2")
+	if !strings.Contains(prompt, "Add a regional breakdown.") {
+		t.Fatalf("continuation prompt omitted request:\n%s", prompt)
+	}
+	for _, metadata := range []string{"Dear Machine - Ref:", "Magnifica Humanitas"} {
+		if strings.Contains(prompt, metadata) {
+			t.Fatalf("Machtiani prompt retained footer metadata %q:\n%s", metadata, prompt)
+		}
+	}
+	secondReply := rig.mail.sentReplies()[1].Text
+	if !strings.Contains(secondReply, conversationFooter(first.ConversationReference)) {
+		t.Fatalf("continued reply omitted stable footer:\n%s", secondReply)
 	}
 }
 
@@ -319,9 +372,10 @@ func TestAskUserThenResumeWithAnswer(t *testing.T) {
 	}
 	assertArg(t, rig.captureLines("args-2"), "--session-id", completed.SessionID)
 	replies := rig.mail.sentReplies()
-	if len(replies) != 2 || replies[1].Text != "Here is the report for last week." {
+	if len(replies) != 2 {
 		t.Fatalf("unexpected replies: %+v", replies)
 	}
+	assertReplyText(t, replies[1].Text, "Here is the report for last week.")
 }
 
 func TestFollowUpUsesExtractedTextWithoutQuotedHistory(t *testing.T) {
@@ -357,9 +411,7 @@ func TestFollowUpUsesExtractedTextWithoutQuotedHistory(t *testing.T) {
 	if len(prompt) > 1_000 {
 		t.Fatalf("prompt length = %d, want compact extracted message", len(prompt))
 	}
-	if got := rig.mail.sentReplies()[1].Text; got != "I've updated section 3." {
-		t.Fatalf("reply = %q", got)
-	}
+	assertReplyText(t, rig.mail.sentReplies()[1].Text, "I've updated section 3.")
 }
 
 func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
@@ -483,9 +535,10 @@ func TestRestartRecoversAcceptedAgentResultWithoutDuplicatePrompt(t *testing.T) 
 		t.Fatalf("machtiani run count = %q, want initial run only", got)
 	}
 	replies := rig.mail.sentReplies()
-	if len(replies) != 2 || replies[1].Text != "Recovered accepted result." {
+	if len(replies) != 2 {
 		t.Fatalf("unexpected replies: %+v", replies)
 	}
+	assertReplyText(t, replies[1].Text, "Recovered accepted result.")
 }
 
 func TestRestartRecordsExistingOutboundReceiptWithoutRerun(t *testing.T) {
@@ -1066,9 +1119,7 @@ func TestPlainTierSendsNoAttachmentsOrHTML(t *testing.T) {
 		t.Fatalf("replies = %+v, want exactly 1", fake.replies)
 	}
 	reply := fake.replies[0]
-	if reply.Text != "plain answer" {
-		t.Fatalf("reply text = %q, want %q", reply.Text, "plain answer")
-	}
+	assertReplyText(t, reply.Text, "plain answer")
 	if reply.HTML != "" {
 		t.Fatalf("plain reply HTML = %q, want empty", reply.HTML)
 	}
@@ -1151,9 +1202,7 @@ func TestFormattedTierStagesInboundAndAttachesOutboxFiles(t *testing.T) {
 		t.Fatalf("replies = %+v, want exactly 1", fake.replies)
 	}
 	reply := fake.replies[0]
-	if reply.Text != answer {
-		t.Fatalf("reply text = %q, want %q", reply.Text, answer)
-	}
+	assertReplyText(t, reply.Text, answer)
 	if reply.HTML == "" {
 		t.Fatal("formatted reply HTML is empty")
 	}
@@ -1642,6 +1691,17 @@ func assertArg(t *testing.T, args []string, flag, value string) {
 		if index+1 >= len(args) || args[index+1] != value {
 			t.Fatalf("%s value in %v, want %q", flag, args, value)
 		}
+	}
+}
+
+func assertReplyText(t *testing.T, reply, want string) {
+	t.Helper()
+	clean, references := stripConversationFooters(reply)
+	if clean != want {
+		t.Fatalf("reply body = %q, want %q", clean, want)
+	}
+	if len(references) != 1 || !validConversationReference(references[0]) {
+		t.Fatalf("reply references = %v, want one valid conversation reference", references)
 	}
 }
 

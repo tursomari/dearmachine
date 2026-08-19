@@ -3,7 +3,8 @@
 This module proves the DearMachine Client alpha happy path:
 
 1. Poll an AgentMail or OpenMail inbox through a selectable mail transport.
-2. Map provider thread IDs to durable machtiani session IDs in SQLite.
+2. Resolve provider thread aliases and stable Dear Machine footer references
+   to durable machtiani session IDs in SQLite.
 3. Invoke machtiani with a preallocated session ID for new threads or
    `--session-id` for existing threads.
 4. Inspect `machtiani session show --json`.
@@ -155,13 +156,24 @@ newly authored text reported by the selected transport. Follow-ups resume the ma
 `machtiani` session with `--session-id`; that persisted session owns prior
 conversation context, so DearMachine Client does not replay the email thread.
 
+Every outbound answer and AskUser response ends with a stable, opaque Dear
+Machine conversation reference. The reference maps to local SQLite state and
+does not expose the machtiani session ID. On inbound mail the adapters recover
+the reference from full text or HTML even when they separately provide a clean
+new-message extract. DearMachine removes the footer before prompt construction.
+If a provider assigns a legitimate reply a new thread ID, one valid reference
+associates that ID as another alias of the existing conversation. A known
+thread mapping takes precedence over quoted references, and multiple distinct
+references never cause an automatic association. Forward/fork classification
+is intentionally separate from this continuity rule.
+
 The first poll runs immediately. Later polls start 60 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single
 poll. Each poll claims messages before dispatching them to a worker pool. The
 `--concurrency` flag limits the pool to three active email threads by default;
 set `--concurrency 1` for sequential processing. The value must be at least one.
-Messages from one thread always run one at a time and in sequence, so one
-machtiani session never has multiple active children.
+Messages from one resolved conversation always run one at a time and in
+sequence, so one machtiani session never has multiple active children.
 
 ## Locally skip inbox messages
 

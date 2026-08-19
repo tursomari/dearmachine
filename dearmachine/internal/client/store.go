@@ -18,12 +18,13 @@ type Store struct {
 }
 
 type Session struct {
-	ThreadID     string
-	SessionID    string
-	Sequence     int
-	Status       string
-	IsNew        bool
-	ResponseTier ResponseTier
+	ThreadID              string
+	SessionID             string
+	ConversationReference string
+	Sequence              int
+	Status                string
+	IsNew                 bool
+	ResponseTier          ResponseTier
 }
 
 type PendingMessage struct {
@@ -134,6 +135,7 @@ func (s *Store) migrate() error {
 CREATE TABLE IF NOT EXISTS thread_sessions (
     thread_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL UNIQUE,
+    conversation_ref TEXT NOT NULL DEFAULT '',
     sequence INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
     response_tier TEXT NOT NULL DEFAULT 'plain',
@@ -168,6 +170,11 @@ CREATE TABLE IF NOT EXISTS skipped_messages (
     thread_id TEXT NOT NULL,
     reason TEXT NOT NULL DEFAULT '',
     skipped_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS thread_aliases (
+    external_thread_id TEXT PRIMARY KEY,
+    canonical_thread_id TEXT NOT NULL
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
@@ -176,6 +183,13 @@ CREATE TABLE IF NOT EXISTS skipped_messages (
 		"thread_sessions",
 		"response_tier",
 		`TEXT NOT NULL DEFAULT 'plain'`,
+	); err != nil {
+		return err
+	}
+	if err := s.addColumnIfMissing(
+		"thread_sessions",
+		"conversation_ref",
+		`TEXT NOT NULL DEFAULT ''`,
 	); err != nil {
 		return err
 	}
@@ -199,6 +213,56 @@ CREATE TABLE IF NOT EXISTS skipped_messages (
 		`TEXT NOT NULL DEFAULT ''`,
 	); err != nil {
 		return err
+	}
+	return s.migrateConversationReferences()
+}
+
+func (s *Store) migrateConversationReferences() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin conversation-reference migration: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT thread_id FROM thread_sessions WHERE conversation_ref = ''`)
+	if err != nil {
+		return fmt.Errorf("query conversations without references: %w", err)
+	}
+	var threadIDs []string
+	for rows.Next() {
+		var threadID string
+		if err := rows.Scan(&threadID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan conversation without reference: %w", err)
+		}
+		threadIDs = append(threadIDs, threadID)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close conversation-reference migration rows: %w", err)
+	}
+	for _, threadID := range threadIDs {
+		if _, err := tx.Exec(
+			`UPDATE thread_sessions SET conversation_ref = ? WHERE thread_id = ? AND conversation_ref = ''`,
+			newConversationReference(),
+			threadID,
+		); err != nil {
+			return fmt.Errorf("backfill conversation reference for thread %s: %w", threadID, err)
+		}
+	}
+	if _, err := tx.Exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS thread_sessions_conversation_ref
+		     ON thread_sessions(conversation_ref) WHERE conversation_ref <> ''`,
+	); err != nil {
+		return fmt.Errorf("index conversation references: %w", err)
+	}
+	if _, err := tx.Exec(
+		`INSERT OR IGNORE INTO thread_aliases (external_thread_id, canonical_thread_id)
+		 SELECT thread_id, thread_id FROM thread_sessions`,
+	); err != nil {
+		return fmt.Errorf("seed canonical thread aliases: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit conversation-reference migration: %w", err)
 	}
 	return nil
 }
@@ -240,21 +304,35 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 			continue
 		}
 		seen[message.MessageID] = struct{}{}
+		externalThreadID := message.ThreadID
+		canonicalThreadID := message.ThreadID
+		if resolvedThreadID, found, err := resolveThreadAlias(tx, message.ThreadID); err != nil {
+			return nil, fmt.Errorf("resolve skipped message thread: %w", err)
+		} else if found {
+			canonicalThreadID = resolvedThreadID
+		}
 
 		var existingThread string
 		err := tx.QueryRow(
 			`SELECT thread_id FROM skipped_messages WHERE message_id = ?`,
 			message.MessageID,
 		).Scan(&existingThread)
-		switch {
-		case err == nil && existingThread != message.ThreadID:
-			return nil, fmt.Errorf(
-				"skipped message %s belongs to thread %s, not %s",
-				message.MessageID,
-				existingThread,
-				message.ThreadID,
-			)
-		case err != nil && !errors.Is(err, sql.ErrNoRows):
+		if err == nil {
+			existingCanonical := existingThread
+			if resolved, found, resolveErr := resolveThreadAlias(tx, existingThread); resolveErr != nil {
+				return nil, fmt.Errorf("resolve existing skipped message thread: %w", resolveErr)
+			} else if found {
+				existingCanonical = resolved
+			}
+			if existingCanonical != canonicalThreadID {
+				return nil, fmt.Errorf(
+					"skipped message %s belongs to thread %s, not %s",
+					message.MessageID,
+					existingThread,
+					externalThreadID,
+				)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("query existing skipped message: %w", err)
 		}
 
@@ -274,12 +352,12 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("inspect pending message before skip: %w", err)
 		}
-		if err == nil && pendingThread != message.ThreadID {
+		if err == nil && pendingThread != canonicalThreadID {
 			return nil, fmt.Errorf(
 				"pending message %s belongs to thread %s, not %s",
 				message.MessageID,
 				pendingThread,
-				message.ThreadID,
+				externalThreadID,
 			)
 		}
 		if err == nil && pendingState != messageReceived && committedSequence > 0 {
@@ -296,7 +374,7 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 			 VALUES (?, ?, ?, ?)
 			 ON CONFLICT(message_id) DO UPDATE SET reason = excluded.reason`,
 			message.MessageID,
-			message.ThreadID,
+			externalThreadID,
 			strings.TrimSpace(reason),
 			now,
 		); err != nil {
@@ -314,8 +392,14 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 		}
 		if committedSequence == 0 {
 			if _, err := tx.Exec(
+				`DELETE FROM thread_aliases WHERE canonical_thread_id = ?`,
+				canonicalThreadID,
+			); err != nil {
+				return nil, fmt.Errorf("remove provisional thread aliases: %w", err)
+			}
+			if _, err := tx.Exec(
 				`DELETE FROM thread_sessions WHERE thread_id = ? AND sequence = 0`,
-				message.ThreadID,
+				canonicalThreadID,
 			); err != nil {
 				return nil, fmt.Errorf("remove provisional thread session: %w", err)
 			}
@@ -668,6 +752,13 @@ func (s *Store) CountProcessedSince(since time.Time) (int, error) {
 }
 
 func (s *Store) BeginMessage(messageID, threadID string, responseTier ResponseTier) (PendingMessage, bool, error) {
+	return s.BeginMessageWithReference(messageID, threadID, "", responseTier)
+}
+
+func (s *Store) BeginMessageWithReference(
+	messageID, externalThreadID, conversationReference string,
+	responseTier ResponseTier,
+) (PendingMessage, bool, error) {
 	if responseTier == "" {
 		responseTier = TierPlain
 	}
@@ -700,13 +791,38 @@ func (s *Store) BeginMessage(messageID, threadID string, responseTier ResponseTi
 		return PendingMessage{}, false, fmt.Errorf("query pending message: %w", err)
 	}
 
+	canonicalThreadID, found, err := resolveThreadAlias(tx, externalThreadID)
+	if err != nil {
+		return PendingMessage{}, false, fmt.Errorf("resolve external thread: %w", err)
+	}
+	if !found {
+		conversationReference = canonicalConversationReference(conversationReference)
+		if conversationReference != "" {
+			err = tx.QueryRow(
+				`SELECT thread_id FROM thread_sessions WHERE conversation_ref = ?`,
+				conversationReference,
+			).Scan(&canonicalThreadID)
+			switch {
+			case err == nil:
+				found = true
+			case errors.Is(err, sql.ErrNoRows):
+				err = nil
+			default:
+				return PendingMessage{}, false, fmt.Errorf("resolve conversation reference: %w", err)
+			}
+		}
+	}
+
 	var session Session
-	err = tx.QueryRow(
-		`SELECT thread_id, session_id, sequence, status, response_tier
-		   FROM thread_sessions
-		  WHERE thread_id = ?`,
-		threadID,
-	).Scan(&session.ThreadID, &session.SessionID, &session.Sequence, &session.Status, &session.ResponseTier)
+	if found {
+		err = scanSession(tx.QueryRow(
+			`SELECT thread_id, session_id, conversation_ref, sequence, status, response_tier
+			   FROM thread_sessions WHERE thread_id = ?`,
+			canonicalThreadID,
+		), &session)
+	} else {
+		err = sql.ErrNoRows
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	switch {
@@ -717,19 +833,21 @@ func (s *Store) BeginMessage(messageID, threadID string, responseTier ResponseTi
 			return PendingMessage{}, false, fmt.Errorf("prepare thread session: %w", err)
 		}
 		session = Session{
-			ThreadID:     threadID,
-			SessionID:    newUUID(),
-			Sequence:     0,
-			Status:       "active",
-			IsNew:        true,
-			ResponseTier: tier,
+			ThreadID:              externalThreadID,
+			SessionID:             newUUID(),
+			ConversationReference: newConversationReference(),
+			Sequence:              0,
+			Status:                "active",
+			IsNew:                 true,
+			ResponseTier:          tier,
 		}
 		_, err = tx.Exec(
 			`INSERT INTO thread_sessions
-			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			     (thread_id, session_id, conversation_ref, sequence, status, response_tier, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			session.ThreadID,
 			session.SessionID,
+			session.ConversationReference,
 			session.Sequence,
 			session.Status,
 			session.ResponseTier,
@@ -740,26 +858,48 @@ func (s *Store) BeginMessage(messageID, threadID string, responseTier ResponseTi
 	if err != nil {
 		return PendingMessage{}, false, fmt.Errorf("prepare thread session: %w", err)
 	}
+	if _, err := tx.Exec(
+		`INSERT OR IGNORE INTO thread_aliases (external_thread_id, canonical_thread_id)
+		 VALUES (?, ?)`,
+		externalThreadID,
+		session.ThreadID,
+	); err != nil {
+		return PendingMessage{}, false, fmt.Errorf("persist external thread alias: %w", err)
+	}
+	var mappedThreadID string
+	if err := tx.QueryRow(
+		`SELECT canonical_thread_id FROM thread_aliases WHERE external_thread_id = ?`,
+		externalThreadID,
+	).Scan(&mappedThreadID); err != nil {
+		return PendingMessage{}, false, fmt.Errorf("verify external thread alias: %w", err)
+	}
+	if mappedThreadID != session.ThreadID {
+		return PendingMessage{}, false, fmt.Errorf(
+			"external thread %s is already associated with another conversation",
+			externalThreadID,
+		)
+	}
 
 	latestSequence := session.Sequence
 	if err := tx.QueryRow(
 		`SELECT COALESCE(MAX(sequence), ?) FROM pending_messages WHERE thread_id = ?`,
 		session.Sequence,
-		threadID,
+		session.ThreadID,
 	).Scan(&latestSequence); err != nil {
 		return PendingMessage{}, false, fmt.Errorf("query pending thread sequence: %w", err)
 	}
 
 	pending = PendingMessage{
 		MessageID: messageID,
-		ThreadID:  threadID,
+		ThreadID:  session.ThreadID,
 		Session: Session{
-			ThreadID:     threadID,
-			SessionID:    session.SessionID,
-			Sequence:     latestSequence + 1,
-			Status:       session.Status,
-			IsNew:        session.Sequence == 0,
-			ResponseTier: session.ResponseTier,
+			ThreadID:              session.ThreadID,
+			SessionID:             session.SessionID,
+			ConversationReference: session.ConversationReference,
+			Sequence:              latestSequence + 1,
+			Status:                session.Status,
+			IsNew:                 session.Sequence == 0,
+			ResponseTier:          session.ResponseTier,
 		},
 		State: messageReceived,
 	}
@@ -971,6 +1111,7 @@ const pendingMessageQuery = `
 SELECT p.message_id,
        p.thread_id,
        t.session_id,
+	   t.conversation_ref,
        p.sequence,
        t.status,
        t.response_tier,
@@ -996,6 +1137,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.MessageID,
 		&pending.ThreadID,
 		&pending.Session.SessionID,
+		&pending.Session.ConversationReference,
 		&pending.Session.Sequence,
 		&pending.Session.Status,
 		&storedTier,
@@ -1018,6 +1160,12 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 			err,
 		)
 	}
+	if !validConversationReference(pending.Session.ConversationReference) {
+		return PendingMessage{}, fmt.Errorf(
+			"stored conversation reference %q is invalid",
+			pending.Session.ConversationReference,
+		)
+	}
 	pending.Session.ThreadID = pending.ThreadID
 	pending.Session.IsNew = committedSequence == 0
 	pending.Session.ResponseTier = tier
@@ -1026,26 +1174,60 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 
 func (s *Store) Session(threadID string) (Session, error) {
 	var session Session
-	var storedTier string
-	err := s.db.QueryRow(
-		`SELECT thread_id, session_id, sequence, status, response_tier
-		   FROM thread_sessions
-		  WHERE thread_id = ?`,
+	err := scanSession(s.db.QueryRow(
+		`SELECT t.thread_id, t.session_id, t.conversation_ref, t.sequence, t.status, t.response_tier
+		   FROM thread_aliases a
+		   JOIN thread_sessions t ON t.thread_id = a.canonical_thread_id
+		  WHERE a.external_thread_id = ?`,
 		threadID,
-	).Scan(&session.ThreadID, &session.SessionID, &session.Sequence, &session.Status, &storedTier)
+	), &session)
 	if err != nil {
 		return Session{}, fmt.Errorf("get thread session: %w", err)
 	}
+	return session, nil
+}
+
+func resolveThreadAlias(tx *sql.Tx, externalThreadID string) (string, bool, error) {
+	var canonicalThreadID string
+	err := tx.QueryRow(
+		`SELECT canonical_thread_id FROM thread_aliases WHERE external_thread_id = ?`,
+		externalThreadID,
+	).Scan(&canonicalThreadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return canonicalThreadID, err == nil, err
+}
+
+func scanSession(row rowScanner, session *Session) error {
+	var storedTier string
+	err := row.Scan(
+		&session.ThreadID,
+		&session.SessionID,
+		&session.ConversationReference,
+		&session.Sequence,
+		&session.Status,
+		&storedTier,
+	)
+	if err != nil {
+		return err
+	}
 	tier, err := ParseResponseTier(storedTier)
 	if err != nil {
-		return Session{}, fmt.Errorf(
-			"get thread session: stored response tier %q is invalid: %w",
+		return fmt.Errorf(
+			"stored response tier %q is invalid: %w",
 			storedTier,
 			err,
 		)
 	}
+	if !validConversationReference(session.ConversationReference) {
+		return fmt.Errorf(
+			"stored conversation reference %q is invalid",
+			session.ConversationReference,
+		)
+	}
 	session.ResponseTier = tier
-	return session, nil
+	return nil
 }
 
 func newUUID() string {

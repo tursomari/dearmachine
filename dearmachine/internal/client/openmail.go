@@ -697,17 +697,27 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 			SizeBytes:    attachment.SizeBytes,
 		})
 	}
+	body := message.BodyText
+	if strings.TrimSpace(body) == "" {
+		body = htmlToText(message.BodyHTML)
+	}
+	body, bodyReferences := stripConversationFooters(body)
+	conversationReferences := mergeConversationReferences(
+		bodyReferences,
+		conversationReferencesInBodies(message.BodyText, htmlToText(message.BodyHTML)),
+	)
 	return Message{
-		MessageID:   message.ID,
-		ThreadID:    message.ThreadID,
-		From:        from,
-		To:          to,
-		Timestamp:   message.CreatedAt,
-		CreatedAt:   message.CreatedAt,
-		Subject:     message.Subject,
-		Body:        firstNonEmpty(message.BodyText, message.BodyHTML),
-		Labels:      labels,
-		Attachments: attachments,
+		MessageID:              message.ID,
+		ThreadID:               message.ThreadID,
+		From:                   from,
+		To:                     to,
+		Timestamp:              message.CreatedAt,
+		CreatedAt:              message.CreatedAt,
+		Subject:                message.Subject,
+		Body:                   body,
+		ConversationReferences: conversationReferences,
+		Labels:                 labels,
+		Attachments:            attachments,
 	}
 }
 

@@ -482,3 +482,29 @@ func TestOpenMailAPIBaseURLIsCanonicalDocumentedHost(t *testing.T) {
 		t.Fatalf("openMailAPIBaseURL = %q, %v", openMailAPIBaseURL, err)
 	}
 }
+
+func TestOpenMailNormalizeExtractsAndStripsHTMLFooter(t *testing.T) {
+	reference := newConversationReference()
+	transport := &OpenMailTransport{}
+	normalized := transport.normalize(openMailMessage{
+		ID:        "message-1",
+		ThreadID:  "provider-thread-b",
+		Direction: "inbound",
+		FromAddr:  "sender@example.com",
+		ToAddr:    "device@openmail.sh",
+		BodyHTML: "<p>Continue with the next section.</p><blockquote><p>Earlier answer.</p>" +
+			"<p>--</p><p>Dear Machine - Ref: " + reference + "</p>" +
+			"<p>Magnifica Humanitas</p></blockquote>",
+	}, false)
+	if !strings.Contains(normalized.Body, "Continue with the next section.") {
+		t.Fatalf("normalized body omitted request: %q", normalized.Body)
+	}
+	if strings.Contains(normalized.Body, "Dear Machine - Ref:") ||
+		strings.Contains(normalized.Body, conversationFooterMotto) {
+		t.Fatalf("normalized body retained footer metadata: %q", normalized.Body)
+	}
+	if len(normalized.ConversationReferences) != 1 ||
+		normalized.ConversationReferences[0] != reference {
+		t.Fatalf("normalized references = %v, want [%s]", normalized.ConversationReferences, reference)
+	}
+}

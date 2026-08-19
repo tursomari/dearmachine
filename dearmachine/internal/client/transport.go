@@ -12,18 +12,19 @@ var ErrAttachmentTooLarge = errors.New("attachment too large")
 
 // Message is the transport-neutral representation of an email message.
 type Message struct {
-	MessageID   string
-	ThreadID    string
-	From        string
-	To          []string
-	Timestamp   time.Time
-	CreatedAt   time.Time
-	Subject     string
-	Body        string
-	InReplyTo   string
-	References  []string
-	Labels      []string
-	Attachments []AttachmentRef
+	MessageID              string
+	ThreadID               string
+	From                   string
+	To                     []string
+	Timestamp              time.Time
+	CreatedAt              time.Time
+	Subject                string
+	Body                   string
+	InReplyTo              string
+	References             []string
+	ConversationReferences []string
+	Labels                 []string
+	Attachments            []AttachmentRef
 }
 
 // AttachmentRef describes an inbound attachment without loading its contents.
