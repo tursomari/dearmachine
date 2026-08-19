@@ -2,7 +2,8 @@
 
 This module proves the DearMachine Client alpha happy path:
 
-1. Poll an AgentMail or OpenMail inbox through a selectable mail transport.
+1. Poll an AgentMail, OpenMail, or Sendmux inbox through a selectable mail
+   transport.
 2. Resolve provider thread aliases and stable Dear Machine footer references
    to durable machtiani session IDs in SQLite.
 3. Invoke machtiani with a preallocated session ID for new threads or
@@ -138,6 +139,45 @@ decisions remain local and never change the remote inbox.
 For a credentialed test that does not reuse normal runtime state or a normal
 inbox, follow the
 [OpenMail transport runbook](runbooks/testing/openmail-transport.md).
+
+### Optional Sendmux transport
+
+Select `sendmux` with a mailbox ID or full address. The mailbox key may be
+provided directly or through an operator-owned one-line file; when neither is
+set, the adapter optionally checks
+`$HOME/.config/dearmachine/sendmux-api-key`.
+
+```bash
+export SENDMUX_MAILBOX_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-api-key"
+export DEARMACHINE_SENDMUX_ALLOWED_FROM='<exact-correspondent-address>'
+export DEARMACHINE_SENDMUX_ALLOWED_TO='<exact-correspondent-address>'
+
+dearmachine --transport sendmux --inbox-id '<sendmux-mailbox-id-or-address>'
+```
+
+`SENDMUX_MAILBOX_API_KEY` is the direct environment alternative. Both
+correspondent variables are required comma-separated exact-address lists.
+Inbound mail must come from an allowed sender and be addressed exclusively to
+the configured mailbox; a thread containing any other correspondent is ignored
+without fetching attachments or mutating provider state.
+
+Sendmux is inspect-only unless both live gates are explicitly enabled:
+
+```bash
+export DEARMACHINE_LIVE_SENDMUX=1
+export DEARMACHINE_LIVE_SENDMUX_APPLY=1
+```
+
+The adapter uses Sendmux's native idempotency key. Sendmux's HTTP send API
+accepts X-headers but not caller-supplied RFC `In-Reply-To` or `References`
+headers, and exposes no reply endpoint. An outbound answer may therefore begin
+a new provider-local thread; the stable Dear Machine footer associates the
+human's next reply with the existing session. Presigned attachment URLs are
+fetched without the mailbox credential and remain subject to Dear Machine's
+byte limit. SDK retries are disabled pending a separate operational retry
+policy. Follow the isolated
+[Sendmux transport runbook](runbooks/testing/sendmux-transport.md) for a
+credentialed two-turn continuation test.
 
 The default SQLite state database is
 `~/.dearmachine/state/dearmachine.db`. DearMachine Client creates its state

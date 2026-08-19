@@ -27,11 +27,7 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	} {
 		t.Run(strings.Join(test.args, "_"), func(t *testing.T) {
 			var output strings.Builder
-			err := runInbox(
-				test.args,
-				func(string) string { return "" },
-				dependencies{flagOutput: &output},
-			)
+			err := runInbox(test.args, dependencies{flagOutput: &output})
 			if err != nil && !errors.Is(err, flag.ErrHelp) {
 				t.Fatalf("runInbox(%v): %v", test.args, err)
 			}
@@ -44,7 +40,7 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	}
 }
 
-func TestInboxSkipOpenMailDoesNotLoadAgentMailCredential(t *testing.T) {
+func TestInboxSkipUsesSelectedTransportConstructor(t *testing.T) {
 	home := t.TempDir()
 	want := errors.New("selected OpenMail constructor reached")
 	deps := dependencies{
@@ -60,7 +56,6 @@ func TestInboxSkipOpenMailDoesNotLoadAgentMailCredential(t *testing.T) {
 			"--db", filepath.Join(home, "state.db"),
 			"--pidfile", filepath.Join(home, "missing.pid"),
 		},
-		func(string) string { return "" },
 		deps,
 	)
 	if !errors.Is(err, want) {

@@ -79,6 +79,23 @@ local allow-lists cannot loosen that policy. See the
 [OpenMail transport runbook](dearmachine/runbooks/testing/openmail-transport.md)
 for a disposable, fully isolated verification procedure.
 
+Sendmux is also selectable through the same seam. It uses a mailbox-scoped key,
+exact local correspondent allow-lists, and two explicit mutation gates:
+
+```bash
+export SENDMUX_MAILBOX_API_KEY_FILE=/path/to/one-line-key
+export DEARMACHINE_SENDMUX_ALLOWED_FROM='<exact-correspondent-address>'
+export DEARMACHINE_SENDMUX_ALLOWED_TO='<exact-correspondent-address>'
+
+dearmachine --transport sendmux --inbox-id '<sendmux-mailbox-id-or-address>'
+```
+
+See the
+[Sendmux transport runbook](dearmachine/runbooks/testing/sendmux-transport.md)
+for the isolated `send, reply, send, reply` continuation proof. Keep real
+participant addresses in a mode-`0600` operator file, never in source or test
+evidence.
+
 DearMachine remains in the foreground and does not assume systemd or another
 service manager. The optional Nix/OCI container deployment and Linux lifecycle
 helper are documented in

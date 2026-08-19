@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -39,7 +40,33 @@ func NewMailbox(client agentmail.Client, inboxID string) (*Mailbox, error) {
 
 // NewAgentMailTransport constructs the production AgentMail adapter.
 func NewAgentMailTransport(inboxID string) (*Mailbox, error) {
-	return NewMailbox(agentmail.NewClient(), inboxID)
+	credential, err := loadAgentMailCredential()
+	if err != nil {
+		return nil, err
+	}
+	return NewMailbox(agentmail.NewClient(option.WithAPIKey(credential)), inboxID)
+}
+
+func loadAgentMailCredential() (string, error) {
+	if credential := strings.TrimSpace(os.Getenv("AGENTMAIL_API_KEY")); credential != "" {
+		return credential, nil
+	}
+	credentialPath := strings.TrimSpace(os.Getenv("AGENTMAIL_API_KEY_FILE"))
+	if credentialPath == "" {
+		return "", fmt.Errorf("AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required")
+	}
+	contents, err := os.ReadFile(credentialPath)
+	if err != nil {
+		return "", fmt.Errorf("read AGENTMAIL_API_KEY_FILE: %w", err)
+	}
+	credential := strings.TrimRight(string(contents), "\r\n")
+	if strings.TrimSpace(credential) == "" {
+		return "", fmt.Errorf("AGENTMAIL_API_KEY_FILE is empty")
+	}
+	if strings.ContainsAny(credential, "\r\n") {
+		return "", fmt.Errorf("AGENTMAIL_API_KEY_FILE must contain exactly one line")
+	}
+	return credential, nil
 }
 
 func (m *Mailbox) pollTarget() string {

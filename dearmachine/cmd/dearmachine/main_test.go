@@ -160,7 +160,7 @@ func TestParseConfigHelp(t *testing.T) {
 	}
 }
 
-func TestRunOpenMailDoesNotLoadAgentMailCredential(t *testing.T) {
+func TestRunUsesSelectedTransportConstructor(t *testing.T) {
 	app := &fakeApplication{}
 	deps := testDependencies(t, app)
 	constructed := false
@@ -181,6 +181,8 @@ func TestRunOpenMailDoesNotLoadAgentMailCredential(t *testing.T) {
 }
 
 func TestRunValidatesRequiredConfigurationBeforeConstruction(t *testing.T) {
+	t.Setenv("AGENTMAIL_API_KEY", "")
+	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
 	called := false
 	deps := dependencies{
 		openStore: func(string) (*client.Store, error) {
@@ -220,66 +222,9 @@ func TestRunValidatesRequiredConfigurationBeforeConstruction(t *testing.T) {
 	}
 }
 
-func TestRunLoadsAgentMailCredentialFile(t *testing.T) {
-	credentialPath := filepath.Join(t.TempDir(), "agentmail-api-key")
-	if err := os.WriteFile(credentialPath, []byte("test-key-from-file\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	app := &fakeApplication{}
-	deps := testDependencies(t, app)
-	var setName, setValue string
-	deps.setenv = func(name, value string) error {
-		setName, setValue = name, value
-		return nil
-	}
-	if err := run(
-		[]string{"--inbox-id", "inbox-123", "--once"},
-		func(name string) string {
-			if name == "AGENTMAIL_API_KEY_FILE" {
-				return credentialPath
-			}
-			return ""
-		},
-		deps,
-	); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if setName != "AGENTMAIL_API_KEY" || setValue != "test-key-from-file" {
-		t.Fatalf("setenv = %q, %q", setName, setValue)
-	}
-}
-
-func TestLoadAgentMailCredentialRejectsInvalidFiles(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		contents string
-		want     string
-	}{
-		{name: "empty", contents: "\n", want: "AGENTMAIL_API_KEY_FILE is empty"},
-		{name: "multiple lines", contents: "first\nsecond\n", want: "must contain exactly one line"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "credential")
-			if err := os.WriteFile(path, []byte(test.contents), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			err := loadAgentMailCredential(
-				func(name string) string {
-					if name == "AGENTMAIL_API_KEY_FILE" {
-						return path
-					}
-					return ""
-				},
-				dependencies{readFile: os.ReadFile, setenv: os.Setenv},
-			)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("loadAgentMailCredential error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
 func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
+	t.Setenv("AGENTMAIL_API_KEY", "offline-test-key")
+	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
 	for _, once := range []bool{false, true} {
 		t.Run(map[bool]string{false: "continuous", true: "once"}[once], func(t *testing.T) {
 			app := &fakeApplication{}
@@ -552,6 +497,8 @@ func TestLoadAgentManagedConfigFindsPackagedManagerOnPath(t *testing.T) {
 }
 
 func TestRunWiresConfiguredResponseTierToApp(t *testing.T) {
+	t.Setenv("AGENTMAIL_API_KEY", "offline-test-key")
+	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
 	tests := []struct {
 		name        string
 		writeConfig func(t *testing.T, path string)
@@ -621,8 +568,6 @@ func TestRunWiresConfiguredResponseTierToApp(t *testing.T) {
 					return context.WithCancel(parent)
 				},
 				flagOutput: io.Discard,
-				readFile:   os.ReadFile,
-				setenv:     os.Setenv,
 			}
 			home := t.TempDir()
 			configPath := filepath.Join(home, ".dearmachine", "config", "dearmachine.toml")
@@ -681,6 +626,8 @@ func TestSetupAgentsUsesDearMachineConfigPath(t *testing.T) {
 
 func testDependencies(t *testing.T, app application) dependencies {
 	t.Helper()
+	t.Setenv("AGENTMAIL_API_KEY", "offline-test-key")
+	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
 	deps := dependencies{
 		openStore: func(string) (*client.Store, error) {
 			return client.OpenStore(filepath.Join(t.TempDir(), "state.db"))
@@ -708,8 +655,6 @@ func testDependencies(t *testing.T, app application) dependencies {
 			return context.WithCancel(parent)
 		},
 		flagOutput: io.Discard,
-		readFile:   os.ReadFile,
-		setenv:     os.Setenv,
 	}
 	configureAgentTestDeps(t, &deps)
 	return deps

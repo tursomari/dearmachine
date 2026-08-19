@@ -15,6 +15,9 @@ var constructors = map[string]constructor{
 	"openmail": func(inboxID string) (client.Transport, error) {
 		return client.NewOpenMailTransport(inboxID)
 	},
+	"sendmux": func(inboxID string) (client.Transport, error) {
+		return client.NewSendmuxTransport(inboxID)
+	},
 }
 
 // New constructs the selected mail transport. Authentication remains local to

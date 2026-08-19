@@ -17,7 +17,7 @@ import (
 	"github.com/dearmachine/dearmachine/internal/transports"
 )
 
-func runInbox(args []string, getenv func(string) string, deps dependencies) error {
+func runInbox(args []string, deps dependencies) error {
 	if len(args) == 0 {
 		return inboxHelp(deps.flagOutput)
 	}
@@ -28,7 +28,7 @@ func runInbox(args []string, getenv func(string) string, deps dependencies) erro
 		}
 		return runInboxHelp(args[1:], deps.flagOutput)
 	case "skip":
-		return runInboxSkip(args[1:], getenv, deps)
+		return runInboxSkip(args[1:], deps)
 	case "abandon":
 		return runInboxAbandon(args[1:], deps)
 	case "unskip":
@@ -61,14 +61,14 @@ func runInboxHelp(args []string, output io.Writer) error {
 	}
 }
 
-func runInboxSkip(args []string, getenv func(string) string, deps dependencies) error {
+func runInboxSkip(args []string, deps dependencies) error {
 	output := outputOrDiscard(deps.flagOutput)
 	stdout := outputOrDiscard(deps.stdout)
 	flags := flag.NewFlagSet("inbox skip", flag.ContinueOnError)
 	flags.SetOutput(output)
 	current := flags.Bool("current", false, "skip the exact snapshot of currently unread messages")
 	inboxID := flags.String("inbox-id", "", "mail transport inbox ID or address")
-	transportID := flags.String("transport", "agentmail", "mail transport ID (agentmail or openmail)")
+	transportID := flags.String("transport", "agentmail", "mail transport ID ("+strings.Join(transports.IDs(), ", ")+")")
 	dbPath := flags.String("db", "", "SQLite state database path")
 	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
 	projectDir := flags.String("project", ".", "machtiani project for abandoned-session cleanup")
@@ -89,11 +89,6 @@ func runInboxSkip(args []string, getenv func(string) string, deps dependencies) 
 		return fmt.Errorf(
 			"--inbox-id is required\nRun \"dearmachine inbox skip --help\" for usage",
 		)
-	}
-	if *transportID == "agentmail" {
-		if err := loadAgentMailCredential(getenv, deps); err != nil {
-			return err
-		}
 	}
 	if deps.newTransport == nil {
 		selectedTransport := *transportID
@@ -453,7 +448,7 @@ Use "dearmachine inbox <command> --help" for command help.
 }
 
 func inboxSkipHelp(output io.Writer) error {
-	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
+	_, err := fmt.Fprintf(outputOrDiscard(output), `Usage:
   dearmachine inbox skip --current --inbox-id <id> [flags]
   dearmachine inbox skip --inbox-id <id> [flags] <message-id>...
 
@@ -462,14 +457,14 @@ messages arriving later remain eligible.
 
 Flags:
   --current          Select all messages eligible at this instant
-  --transport <id>   Mail transport ID: agentmail or openmail (default: agentmail)
+  --transport <id>   Mail transport ID: %s (default: agentmail)
   --inbox-id <id>    Mail transport inbox ID or address (required)
   --db <path>        SQLite state database (default: normal DearMachine Client DB)
   --pidfile <path>   PID file to check (default: normal DearMachine Client PID file)
   --project <path>   machtiani project for abandoned-session cleanup
   --agent-bin <path> machtiani executable
   --reason <text>    Local audit reason
-`)
+`, strings.Join(transports.IDs(), ", "))
 	return err
 }
 

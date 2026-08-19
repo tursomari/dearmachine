@@ -32,6 +32,28 @@ var catalog = []Transport{
 			"DEARMACHINE_LIVE_OPENMAIL_APPLY",
 		},
 	},
+	{
+		ID:            "sendmux",
+		DisplayName:   "Sendmux",
+		SDKOrEndpoint: "sendmux.ai/go/mailbox",
+		InstallHint:   "Set SENDMUX_MAILBOX_API_KEY or SENDMUX_MAILBOX_API_KEY_FILE and both Sendmux correspondent allow-lists.",
+		ConfigKeys: []string{
+			"SENDMUX_MAILBOX_API_KEY",
+			"SENDMUX_MAILBOX_API_KEY_FILE",
+			"DEARMACHINE_SENDMUX_ALLOWED_FROM",
+			"DEARMACHINE_SENDMUX_ALLOWED_TO",
+			"DEARMACHINE_LIVE_SENDMUX",
+			"DEARMACHINE_LIVE_SENDMUX_APPLY",
+		},
+	},
+}
+
+func IDs() []string {
+	ids := make([]string, 0, len(catalog))
+	for _, transport := range catalog {
+		ids = append(ids, transport.ID)
+	}
+	return ids
 }
 
 func All() []Transport {

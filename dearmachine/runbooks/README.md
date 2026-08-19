@@ -33,6 +33,9 @@ Go test suite.
 - [`testing/openmail-transport.md`](./testing/openmail-transport.md) tests the
   OpenMail constructor, inspect-only default, and isolated poll/reply/ack
   lifecycle with temporary inboxes.
+- [`testing/sendmux-transport.md`](./testing/sendmux-transport.md) tests the
+  Sendmux constructor, fail-closed boundaries, and a two-turn continuation
+  lifecycle using a separately authorized external correspondent.
 - [`testing/concurrent-sessions.md`](./testing/concurrent-sessions.md) compares
   sequential and three-worker processing across simultaneous email threads.
 - [`testing/live-backends.md`](./testing/live-backends.md) tests Forge, Codex,

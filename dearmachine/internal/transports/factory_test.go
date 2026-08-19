@@ -31,6 +31,19 @@ func TestFactoryConstructsOpenMailOffline(t *testing.T) {
 	}
 }
 
+func TestFactoryConstructsSendmuxOffline(t *testing.T) {
+	t.Setenv("SENDMUX_MAILBOX_API_KEY", "smx_mbx_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	t.Setenv("DEARMACHINE_SENDMUX_ALLOWED_FROM", "sender@example.com")
+	t.Setenv("DEARMACHINE_SENDMUX_ALLOWED_TO", "sender@example.com")
+	transport, err := New("sendmux", "mbx_test")
+	if err != nil {
+		t.Fatalf("New(sendmux): %v", err)
+	}
+	if _, ok := transport.(*client.SendmuxTransport); !ok {
+		t.Fatalf("New(sendmux) type = %T", transport)
+	}
+}
+
 func TestFactoryDistinguishesUnknownAndUnimplemented(t *testing.T) {
 	_, err := New("missing", "inbox-test")
 	if err == nil || !strings.Contains(err.Error(), `unknown transport "missing"`) {

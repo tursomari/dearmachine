@@ -63,6 +63,12 @@ The suite favors behavior-level component tests over isolated mocks:
   attachment limits, redirect confinement, and correspondent allow-lists.
   Default tests inject an offline key and endpoint; they never read an operator
   OpenMail credential or contact `api.openmail.sh`.
+- `internal/client/sendmux_test.go` exercises the Sendmux adapter through a
+  credential-free mailbox fake: unread polling, full-thread authorization,
+  stable-reference normalization, RFC reply headers, native idempotency,
+  receipts, processed state, and bounded presigned attachment downloads. The
+  production wrapper still compiles against the official Sendmux Go mailbox
+  SDK; default tests never read an operator credential or contact Sendmux.
 - `internal/client/testdata/fake-agent.sh` is executed as a real
   subprocess. It simulates `sync`, `run`, and `session show`, and captures
   arguments, environment, prompts, and final-answer files.
@@ -126,6 +132,11 @@ For an isolated OpenMail inspect and poll/reply/ack check, use
 [`openmail-transport.md`](./runbooks/testing/openmail-transport.md). It adapts
 the shared temporary-instance boundaries to OpenMail's API key, inbox-scoped
 correspondent policy, and two live mutation gates.
+
+For the equivalent Sendmux inspect and two-turn continuation check, use
+[`sendmux-transport.md`](./runbooks/testing/sendmux-transport.md). It keeps
+provider credentials and real participant addresses in mode-`0600` operator
+files and never requires a second Sendmux mailbox.
 
 For a live test of Forge, Codex, and ordered fallback through the complete
 email lifecycle, give

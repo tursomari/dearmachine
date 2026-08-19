@@ -7,7 +7,7 @@ import (
 
 func TestCatalogContainsOnlyImplementedMailTransports(t *testing.T) {
 	all := All()
-	if len(all) != 2 || all[0].ID != "agentmail" || all[1].ID != "openmail" {
+	if !slices.Equal(IDs(), []string{"agentmail", "openmail", "sendmux"}) || len(all) != len(IDs()) {
 		t.Fatalf("All = %+v", all)
 	}
 	for _, transport := range all {

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,44 @@ import (
 )
 
 const fakeInboxPrefix = "/v0/inboxes/test-inbox/"
+
+func TestNewAgentMailTransportLoadsCredentialFile(t *testing.T) {
+	credentialPath := filepath.Join(t.TempDir(), "agentmail-api-key")
+	if err := os.WriteFile(credentialPath, []byte("test-key-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTMAIL_API_KEY", "")
+	t.Setenv("AGENTMAIL_API_KEY_FILE", credentialPath)
+	if _, err := NewAgentMailTransport("test-inbox"); err != nil {
+		t.Fatalf("NewAgentMailTransport: %v", err)
+	}
+}
+
+func TestNewAgentMailTransportRejectsMissingOrInvalidCredential(t *testing.T) {
+	t.Setenv("AGENTMAIL_API_KEY", "")
+	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
+	if _, err := NewAgentMailTransport("test-inbox"); err == nil || !strings.Contains(err.Error(), "AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required") {
+		t.Fatalf("missing credential = %v", err)
+	}
+
+	for _, test := range []struct {
+		name, contents, want string
+	}{
+		{name: "empty", contents: "\n", want: "AGENTMAIL_API_KEY_FILE is empty"},
+		{name: "multiple lines", contents: "first\nsecond\n", want: "must contain exactly one line"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			credentialPath := filepath.Join(t.TempDir(), "agentmail-api-key")
+			if err := os.WriteFile(credentialPath, []byte(test.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AGENTMAIL_API_KEY_FILE", credentialPath)
+			if _, err := NewAgentMailTransport("test-inbox"); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("credential error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
 
 func TestMailboxAPIErrorContracts(t *testing.T) {
 	tests := []struct {

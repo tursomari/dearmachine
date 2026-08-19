@@ -1,20 +1,20 @@
 # Dear Machine, Email Transport Alternatives
 
-- **Revision date:** 2026-08-17
+- **Revision date:** 2026-08-19
 - **Status:** Living document; re-verify capabilities, terms, availability, and pricing before adopting any option.
 
 ## Purpose
 
 This document records the transport abstraction now used by the DearMachine
-Client, the implemented OpenMail proof, and other potential alternatives to
-AgentMail. The remaining provider comparisons are a technical survey, not an
-adoption decision.
+Client, the implemented OpenMail and Sendmux adapters, and other potential
+alternatives to AgentMail. The remaining provider comparisons are a technical
+survey, not an adoption decision.
 
 ## Current transport
 
 The DearMachine Client defaults to AgentMail through `agentmail-go` v0.16.0 and
-also provides a selectable OpenMail REST adapter. Both implement a small but
-stateful mailbox surface:
+also provides selectable OpenMail and Sendmux adapters. All implement a small
+but stateful mailbox surface:
 
 - Poll unread inbound messages, including pagination and deterministic timestamp
   ordering.
@@ -131,7 +131,33 @@ Lumbox provides agent inboxes for waiting on replies, extracting OTPs, and handl
 
 #### Sendmux — High
 
-Sendmux supplies send/receive, threads, attachments, webhook/SSE events, and managed or bring-your-own outbound delivery. Threads and event delivery cover major requirements, while a pull-polling adapter, read state, idempotency, reply-receipt fields, and outbound authorization behavior need validation.
+Sendmux is implemented with the official `sendmux.ai/go/mailbox` client. The
+mailbox API exposes cursor-paginated unread messages, message and thread
+history, selected RFC headers, flags, native `Idempotency-Key` sends, and
+presigned attachment URLs. Adding it required no application-state-machine or
+SQLite changes: the provider-specific work remains in one adapter plus catalog
+and factory registration.
+
+The adapter keeps these provider deltas explicit:
+
+- a mailbox ID or address resolves through the credential-scoped mailbox
+  endpoint and must identify an active mailbox;
+- inbound, outbound, and whole-thread exact-address authorization is local and
+  fail-closed, matching the existing OpenMail safety boundary;
+- the HTTP API exposes ordinary sends and X-headers, but no reply operation or
+  caller-supplied RFC `In-Reply-To` / `References`; the stable Dear Machine
+  footer therefore carries continuity when the outbound answer and next human
+  reply receive a new provider-local thread ID;
+- native idempotency is passed on every send, while SDK retries are currently
+  disabled until Dear Machine adopts one deliberate operational retry policy;
+- processed state maps to the message's `seen` flag; and
+- attachment metadata provides a short-lived presigned URL, which is fetched
+  over HTTPS without forwarding the mailbox credential and with the shared
+  byte limit enforced.
+
+The remaining live proof is the isolated two-turn QSE. It requires a valid
+mailbox credential and a separately authorized external correspondent; neither
+participant address belongs in code, fixtures, documentation, or evidence.
 
 #### Xobni.ai — High
 

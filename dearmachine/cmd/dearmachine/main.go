@@ -79,8 +79,6 @@ type dependencies struct {
 	flagOutput    io.Writer
 	stdin         io.Reader
 	stdout        io.Writer
-	readFile      func(string) ([]byte, error)
-	setenv        func(string, string) error
 	lookPath      func(string) (string, error)
 	userHomeDir   func() (string, error)
 }
@@ -121,8 +119,6 @@ func defaultDependencies() dependencies {
 		flagOutput:    os.Stderr,
 		stdin:         os.Stdin,
 		stdout:        os.Stdout,
-		readFile:      os.ReadFile,
-		setenv:        os.Setenv,
 		lookPath:      exec.LookPath,
 		userHomeDir:   os.UserHomeDir,
 	}
@@ -133,7 +129,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	flags.SetOutput(output)
 	var cfg config
 	flags.StringVar(&cfg.inboxID, "inbox-id", "", "mail transport inbox ID or address")
-	flags.StringVar(&cfg.transport, "transport", "agentmail", "mail transport ID (agentmail or openmail)")
+	flags.StringVar(&cfg.transport, "transport", "agentmail", "mail transport ID ("+strings.Join(transports.IDs(), ", ")+")")
 	flags.StringVar(
 		&cfg.dbPath,
 		"db",
@@ -231,7 +227,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return runSetupAgents(args[1:], deps)
 	}
 	if len(args) > 0 && args[0] == "inbox" {
-		return runInbox(args[1:], getenv, deps)
+		return runInbox(args[1:], deps)
 	}
 	flagOutput := deps.flagOutput
 	if flagOutput == nil {
@@ -244,16 +240,15 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if cfg.inboxID == "" {
 		return fmt.Errorf("--inbox-id is required")
 	}
-	if cfg.transport == "agentmail" {
-		if err := loadAgentMailCredential(getenv, deps); err != nil {
-			return err
-		}
-	}
 	if deps.newTransport == nil {
 		selectedTransport := cfg.transport
 		deps.newTransport = func(inboxID string) (client.Transport, error) {
 			return transports.New(selectedTransport, inboxID)
 		}
+	}
+	transport, err := deps.newTransport(cfg.inboxID)
+	if err != nil {
+		return err
 	}
 	backends, managerPath, customBackends, responseTier, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {
@@ -273,10 +268,6 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	}
 	defer store.Close()
 
-	transport, err := deps.newTransport(cfg.inboxID)
-	if err != nil {
-		return err
-	}
 	runner, err := deps.newRunner(cfg.agentBinary, cfg.projectDir, cfg.model)
 	if err != nil {
 		return err
@@ -332,34 +323,6 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
-}
-
-func loadAgentMailCredential(getenv func(string) string, deps dependencies) error {
-	if strings.TrimSpace(getenv("AGENTMAIL_API_KEY")) != "" {
-		return nil
-	}
-	credentialPath := strings.TrimSpace(getenv("AGENTMAIL_API_KEY_FILE"))
-	if credentialPath == "" {
-		return fmt.Errorf("AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required")
-	}
-	if deps.readFile == nil || deps.setenv == nil {
-		return fmt.Errorf("load AGENTMAIL_API_KEY_FILE: credential file support is unavailable")
-	}
-	contents, err := deps.readFile(credentialPath)
-	if err != nil {
-		return fmt.Errorf("read AGENTMAIL_API_KEY_FILE: %w", err)
-	}
-	credential := strings.TrimRight(string(contents), "\r\n")
-	if strings.TrimSpace(credential) == "" {
-		return fmt.Errorf("AGENTMAIL_API_KEY_FILE is empty")
-	}
-	if strings.ContainsAny(credential, "\r\n") {
-		return fmt.Errorf("AGENTMAIL_API_KEY_FILE must contain exactly one line")
-	}
-	if err := deps.setenv("AGENTMAIL_API_KEY", credential); err != nil {
-		return fmt.Errorf("set AGENTMAIL_API_KEY from file: %w", err)
-	}
-	return nil
 }
 
 func runInit(args []string, deps dependencies) error {
