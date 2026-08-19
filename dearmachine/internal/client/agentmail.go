@@ -259,6 +259,34 @@ func htmlToText(raw string) string {
 	var rendered strings.Builder
 	var skipped []string
 	var links []string
+	quoteDepth := 0
+	lineStart := true
+	writeBreak := func() {
+		rendered.WriteByte('\n')
+		lineStart = true
+	}
+	writeText := func(value string) {
+		for len(value) > 0 {
+			newline := strings.IndexByte(value, '\n')
+			segment := value
+			if newline >= 0 {
+				segment = value[:newline]
+			}
+			if lineStart && quoteDepth > 0 && strings.TrimSpace(segment) != "" {
+				rendered.WriteString(strings.Repeat(">", quoteDepth))
+				rendered.WriteByte(' ')
+			}
+			rendered.WriteString(segment)
+			if newline < 0 {
+				if strings.TrimSpace(segment) != "" {
+					lineStart = false
+				}
+				break
+			}
+			writeBreak()
+			value = value[newline+1:]
+		}
+	}
 
 	for {
 		tokenType := tokenizer.Next()
@@ -271,7 +299,7 @@ func htmlToText(raw string) string {
 		switch tokenType {
 		case html.TextToken:
 			if len(skipped) == 0 {
-				rendered.WriteString(token.Data)
+				writeText(token.Data)
 			}
 		case html.StartTagToken:
 			if isSkippedHTMLTag(tag) {
@@ -282,14 +310,17 @@ func htmlToText(raw string) string {
 				continue
 			}
 			if isHTMLLineBreak(tag) {
-				rendered.WriteByte('\n')
+				writeBreak()
+			}
+			if tag == "blockquote" {
+				quoteDepth++
 			}
 			if tag == "a" {
 				links = append(links, safeHTMLLink(token.Attr))
 			}
 		case html.SelfClosingTagToken:
 			if len(skipped) == 0 && isHTMLLineBreak(tag) {
-				rendered.WriteByte('\n')
+				writeBreak()
 			}
 		case html.EndTagToken:
 			if len(skipped) > 0 {
@@ -305,13 +336,14 @@ func htmlToText(raw string) string {
 				href := links[len(links)-1]
 				links = links[:len(links)-1]
 				if href != "" {
-					rendered.WriteString(" (")
-					rendered.WriteString(href)
-					rendered.WriteByte(')')
+					writeText(" (" + href + ")")
 				}
 			}
+			if tag == "blockquote" && quoteDepth > 0 {
+				quoteDepth--
+			}
 			if isHTMLLineBreak(tag) {
-				rendered.WriteByte('\n')
+				writeBreak()
 			}
 		}
 	}

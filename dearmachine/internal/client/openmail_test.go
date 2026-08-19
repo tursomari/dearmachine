@@ -496,8 +496,8 @@ func TestOpenMailNormalizeExtractsAndStripsHTMLFooter(t *testing.T) {
 			"<p>--</p><p>Dear Machine - Ref: " + reference + "</p>" +
 			"<p>Magnifica Humanitas</p></blockquote>",
 	}, false)
-	if !strings.Contains(normalized.Body, "Continue with the next section.") {
-		t.Fatalf("normalized body omitted request: %q", normalized.Body)
+	if normalized.Body != "Continue with the next section." {
+		t.Fatalf("normalized body = %q, want only the new contribution", normalized.Body)
 	}
 	if strings.Contains(normalized.Body, "Dear Machine - Ref:") ||
 		strings.Contains(normalized.Body, conversationFooterMotto) {

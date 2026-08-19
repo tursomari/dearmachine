@@ -74,6 +74,8 @@ func stripConversationFooters(body string) (string, []string) {
 	lines := strings.Split(body, "\n")
 	remove := make([]bool, len(lines))
 	seen := make(map[string]struct{})
+	validReferences := make(map[string]struct{})
+	validReferenceLines := make([]int, 0)
 	var references []string
 	for index, line := range lines {
 		content := strings.TrimSpace(stripEmailQuotePrefix(line))
@@ -107,9 +109,22 @@ func stripConversationFooters(body string) (string, []string) {
 		if reference == "" {
 			continue
 		}
+		validReferences[reference] = struct{}{}
+		validReferenceLines = append(validReferenceLines, index)
 		if _, exists := seen[reference]; !exists {
 			seen[reference] = struct{}{}
 			references = append(references, reference)
+		}
+	}
+	if len(validReferences) == 1 && hasUnquotedContribution(lines, remove) {
+		for _, index := range validReferenceLines {
+			if emailQuoteDepth(lines[index]) == 0 {
+				continue
+			}
+			start, end := quotedBlockBounds(lines, index)
+			for candidate := start; candidate < end; candidate++ {
+				remove[candidate] = true
+			}
 		}
 	}
 	kept := make([]string, 0, len(lines))
@@ -121,11 +136,50 @@ func stripConversationFooters(body string) (string, []string) {
 	return strings.TrimSpace(strings.Join(kept, "\n")), references
 }
 
-func stripEmailQuotePrefix(line string) string {
+func hasUnquotedContribution(lines []string, remove []bool) bool {
+	for index, line := range lines {
+		if remove[index] || strings.TrimSpace(line) == "" || emailQuoteDepth(line) > 0 {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func quotedBlockBounds(lines []string, referenceLine int) (int, int) {
+	start := referenceLine
+	for start > 0 {
+		candidate := lines[start-1]
+		if strings.TrimSpace(candidate) != "" && emailQuoteDepth(candidate) == 0 {
+			break
+		}
+		start--
+	}
+	end := referenceLine + 1
+	for end < len(lines) {
+		candidate := lines[end]
+		if strings.TrimSpace(candidate) != "" && emailQuoteDepth(candidate) == 0 {
+			break
+		}
+		end++
+	}
+	return start, end
+}
+
+func emailQuoteDepth(line string) int {
 	line = strings.TrimLeft(line, " \t")
+	depth := 0
 	for strings.HasPrefix(line, ">") {
-		line = strings.TrimPrefix(line, ">")
+		depth++
+		line = strings.TrimLeft(strings.TrimPrefix(line, ">"), " \t")
+	}
+	return depth
+}
+
+func stripEmailQuotePrefix(line string) string {
+	for depth := emailQuoteDepth(line); depth > 0; depth-- {
 		line = strings.TrimLeft(line, " \t")
+		line = strings.TrimLeft(strings.TrimPrefix(line, ">"), " \t")
 	}
 	return line
 }

@@ -27,13 +27,64 @@ func TestConversationFooterExtractsStableReferenceAndStripsMetadata(t *testing.T
 	if len(references) != 1 || references[0] != reference {
 		t.Fatalf("references = %v, want [%s]", references, reference)
 	}
-	if !strings.Contains(clean, "Please continue.") || !strings.Contains(clean, "Earlier answer.") {
-		t.Fatalf("clean body lost user content:\n%s", clean)
+	if clean != "Please continue." {
+		t.Fatalf("clean body = %q, want only the new contribution", clean)
 	}
 	for _, metadata := range []string{"Dear Machine - Ref:", "Magnifica Humanitas", "\n> --"} {
 		if strings.Contains(clean, metadata) {
 			t.Fatalf("clean body retained %q:\n%s", metadata, clean)
 		}
+	}
+}
+
+func TestConversationFooterPreservesQuotedContentForInvalidReference(t *testing.T) {
+	reference := newConversationReference()
+	checksum := "0"
+	if strings.HasSuffix(reference, checksum) {
+		checksum = "1"
+	}
+	invalid := reference[:len(reference)-1] + checksum
+	body := "Please assess this excerpt.\n\n> Keep this quoted answer.\n> --\n" +
+		"> Dear Machine - Ref: " + invalid + "\n> Magnifica Humanitas"
+
+	clean, references := stripConversationFooters(body)
+	if len(references) != 0 {
+		t.Fatalf("references = %v, want none", references)
+	}
+	if !strings.Contains(clean, "Keep this quoted answer.") {
+		t.Fatalf("invalid reference removed quoted content:\n%s", clean)
+	}
+}
+
+func TestConversationFooterPreservesAmbiguousForwardedContent(t *testing.T) {
+	first := newConversationReference()
+	second := newConversationReference()
+	body := "Compare these forwarded answers.\n\n" +
+		"> First answer.\n> --\n> Dear Machine - Ref: " + first + "\n> Magnifica Humanitas\n\n" +
+		"> Second answer.\n> --\n> Dear Machine - Ref: " + second + "\n> Magnifica Humanitas"
+
+	clean, references := stripConversationFooters(body)
+	if len(references) != 2 {
+		t.Fatalf("references = %v, want both forwarded references", references)
+	}
+	for _, answer := range []string{"First answer.", "Second answer."} {
+		if !strings.Contains(clean, answer) {
+			t.Fatalf("ambiguous forward lost %q:\n%s", answer, clean)
+		}
+	}
+}
+
+func TestConversationFooterPreservesQuoteWithoutNewContribution(t *testing.T) {
+	reference := newConversationReference()
+	body := "> Earlier answer.\n> --\n" +
+		"> Dear Machine - Ref: " + reference + "\n> Magnifica Humanitas"
+
+	clean, references := stripConversationFooters(body)
+	if len(references) != 1 || references[0] != reference {
+		t.Fatalf("references = %v, want [%s]", references, reference)
+	}
+	if !strings.Contains(clean, "Earlier answer.") {
+		t.Fatalf("quote without a new contribution was removed:\n%s", clean)
 	}
 }
 
