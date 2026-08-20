@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dearmachine/dearmachine/internal/agentmanager"
 	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
+	"github.com/dearmachine/dearmachine/internal/client"
 )
 
 func main() {
@@ -163,6 +166,37 @@ func runBackend(manager *agentmanager.Manager, args []string, output io.Writer) 
 			fmt.Fprintln(output, backend)
 		}
 		return nil
+	case "resolve":
+		if len(args) == 2 && isHelp(args[1]) {
+			return writeHelp(output, "backend", "resolve")
+		}
+		flags := flag.NewFlagSet("backend resolve", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		configPath := flags.String("config", "", "device configuration path")
+		if err := flags.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return writeHelp(output, "backend", "resolve")
+			}
+			return helpError(err.Error(), "agent-manager backend resolve --help")
+		}
+		if flags.NArg() != 0 {
+			return helpError("backend resolve takes no arguments", "agent-manager backend resolve --help")
+		}
+		if strings.TrimSpace(*configPath) == "" {
+			path, err := client.DefaultDeviceConfigPath(os.UserHomeDir)
+			if err != nil {
+				return err
+			}
+			*configPath = path
+		}
+		if err := manager.ConfigureFromDeviceConfig(filepath.Clean(*configPath)); err != nil {
+			return fmt.Errorf("configure resolved backends: %w", err)
+		}
+		resolved, err := manager.ResolveBackends()
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(resolved)
 	case "health":
 		if len(args) == 2 && isHelp(args[1]) {
 			return writeHelp(output, "backend", "health")
@@ -269,6 +303,7 @@ Run "agent-manager help <command> <subcommand>" for subcommand help.
 
 Commands:
   list            Print approved backends in priority order
+	  resolve         Resolve configured backend executables for a service launch
   health <name>   Functionally probe an approved backend
 
 Run "agent-manager backend <command> --help" for subcommand help.
@@ -277,6 +312,13 @@ Run "agent-manager backend <command> --help" for subcommand help.
   agent-manager backend list
 
 Print approved backends, one per line, in priority order.
+`,
+	"backend resolve": `Usage:
+  agent-manager backend resolve [--config <path>]
+
+Resolve every backend selected in the device configuration using the current
+PATH. Prints a JSON array in priority order. Each item contains the backend
+ID, configured executable name, and the resolved absolute executable path.
 `,
 	"backend health": `Usage:
   agent-manager backend health <name>

@@ -147,6 +147,48 @@ func TestAdapterRegistryMatchesSharedCatalog(t *testing.T) {
 	// }
 }
 
+func TestConfigureFromDeviceConfigResolvesBuiltInAndCustomBackends(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	codex := filepath.Join(bin, "codex")
+	if err := os.WriteFile(codex, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	custom := filepath.Join(t.TempDir(), "custom-backend")
+	if err := os.WriteFile(custom, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "dearmachine.toml")
+	if err := os.WriteFile(configPath, []byte("version = 1\nbackends = [\"codex-yolo\", \"custom\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	customConfig := "[custom]\nexecutable = \"" + custom + "\"\noutput_format = \"plain\"\n"
+	if err := os.WriteFile(filepath.Join(configDir, "custom-backends.toml"), []byte(customConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	manager := New(filepath.Join(root, "agent-manager"))
+	if err := manager.ConfigureFromDeviceConfig(configPath); err != nil {
+		t.Fatalf("ConfigureFromDeviceConfig: %v", err)
+	}
+	resolved, err := manager.ResolveBackends()
+	if err != nil {
+		t.Fatalf("ResolveBackends: %v", err)
+	}
+	want := []ResolvedBackend{
+		{ID: "codex-yolo", Executable: "codex", Path: codex},
+		{ID: "custom", Executable: custom, Path: custom},
+	}
+	if !slices.Equal(resolved, want) {
+		t.Fatalf("ResolveBackends = %#v, want %#v", resolved, want)
+	}
+}
+
 func TestCodexAdapterObservesSessionAndReply(t *testing.T) {
 	input := strings.NewReader(strings.Join([]string{
 		`{"type":"thread.started","thread_id":"native-123"}`,

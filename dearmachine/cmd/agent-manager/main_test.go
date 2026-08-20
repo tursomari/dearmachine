@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,7 +28,12 @@ func TestHelpMenusAtEveryCommandLevel(t *testing.T) {
 		{
 			name: "backend group",
 			args: []string{"backend", "--help"},
-			want: []string{"agent-manager backend <command>", "health <name>"},
+			want: []string{"agent-manager backend <command>", "resolve", "health <name>"},
+		},
+		{
+			name: "backend resolve",
+			args: []string{"backend", "resolve", "--help"},
+			want: []string{"agent-manager backend resolve", "resolved absolute executable path"},
 		},
 		{
 			name: "backend subcommand flag",
@@ -87,6 +93,7 @@ func TestSyntaxErrorsPointToExactHelpCommand(t *testing.T) {
 		{name: "missing backend command", args: []string{"backend"}, want: `Run "agent-manager backend --help" for usage.`},
 		{name: "unknown backend command", args: []string{"backend", "bogus"}, want: `Run "agent-manager backend --help" for usage.`},
 		{name: "backend list arguments", args: []string{"backend", "list", "extra"}, want: `Run "agent-manager backend list --help" for usage.`},
+		{name: "backend resolve arguments", args: []string{"backend", "resolve", "extra"}, want: `Run "agent-manager backend resolve --help" for usage.`},
 		{name: "missing health backend", args: []string{"backend", "health"}, want: `Run "agent-manager backend health --help" for usage.`},
 		{name: "missing ticket command", args: []string{"ticket"}, want: `Run "agent-manager ticket --help" for usage.`},
 		{name: "unknown ticket command", args: []string{"ticket", "bogus"}, want: `Run "agent-manager ticket --help" for usage.`},
@@ -128,6 +135,37 @@ func TestBackendListPrintsApprovedPriorityOrderOnly(t *testing.T) {
 	}
 	if got := output.String(); got != "forge\ncodex\n" {
 		t.Fatalf("backend list output = %q", got)
+	}
+}
+
+func TestBackendResolvePrintsConfiguredAbsoluteExecutablePaths(t *testing.T) {
+	t.Setenv("DEARMACHINE_HOME", t.TempDir())
+	bin := t.TempDir()
+	forge := filepath.Join(bin, "forge")
+	if err := os.WriteFile(forge, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	configPath := filepath.Join(t.TempDir(), "dearmachine.toml")
+	if err := os.WriteFile(configPath, []byte("version = 1\nbackends = [\"forge\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output strings.Builder
+	if err := run([]string{"backend", "resolve", "--config", configPath}, &output, io.Discard); err != nil {
+		t.Fatalf("run backend resolve: %v", err)
+	}
+	var resolved []struct {
+		ID         string `json:"id"`
+		Executable string `json:"executable"`
+		Path       string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(output.String()), &resolved); err != nil {
+		t.Fatalf("decode resolve output %q: %v", output.String(), err)
+	}
+	if len(resolved) != 1 || resolved[0].ID != "forge" ||
+		resolved[0].Executable != "forge" || resolved[0].Path != forge {
+		t.Fatalf("resolved backends = %+v", resolved)
 	}
 }
 

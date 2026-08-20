@@ -71,6 +71,11 @@
             postInstall = "";
             meta.mainProgram = "agent-manager";
           });
+          nativeServiceLauncher = if pkgs.stdenv.isLinux then pkgs.writeShellApplication {
+            name = "dearmachine-native-service";
+            runtimeInputs = [ pkgs.systemd ];
+            text = builtins.readFile ./scripts/nix/native-service-launch.sh;
+          } else null;
           codexTool = codexPkgs.codex;
           goTests = dearmachine.overrideAttrs (_: {
             pname = "dearmachine-go-tests";
@@ -331,13 +336,23 @@
             PROJECT_ROOT=${./.} bash ${./tests/nix/test-runbook-contracts.sh}
             touch $out
           '';
+          nativeServiceLauncherCheck = pkgs.runCommand "dearmachine-native-service-launcher-check" {
+            nativeBuildInputs = with pkgs; [ bash coreutils gnugrep ];
+          } ''
+            PROJECT_ROOT=${./.} \
+              NATIVE_SERVICE_LAUNCHER=${nativeServiceLauncher}/bin/dearmachine-native-service \
+              bash ${./tests/nix/test-native-service-launch.sh}
+            touch $out
+          '';
           shellCheck = pkgs.runCommand "dearmachine-shellcheck" {
             nativeBuildInputs = [ pkgs.shellcheck ];
           } ''
             shellcheck \
               ${./scripts/nix/host-lifecycle.sh} \
+              ${./scripts/nix/native-service-launch.sh} \
               ${./scripts/nix/stack-runtime.sh} \
               ${./tests/nix/test-host-lifecycle.sh} \
+              ${./tests/nix/test-native-service-launch.sh} \
               ${./tests/nix/test-host-podman-integration.sh} \
               ${./tests/nix/test-runbook-contracts.sh} \
               ${./tests/nix/test-state-migration.sh}
@@ -345,12 +360,12 @@
           '';
         in {
           inherit
-            pkgs dearmachine agentManager codexTool goTests install dearmachineImage composeBundle
+            pkgs dearmachine agentManager nativeServiceLauncher codexTool goTests install dearmachineImage composeBundle
             composeCheck stackRuntime stateMigration hostLifecycle
             hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
             containerLifecycle containerInstall containerUpgrade containerUninstall
             containerSecrets containerMigrate
-            unitCheck hostLifecycleCheck stateMigrationCheck runbookCheck shellCheck;
+            unitCheck hostLifecycleCheck stateMigrationCheck runbookCheck nativeServiceLauncherCheck shellCheck;
         };
     in {
       packages = forAllSystems (system:
@@ -366,6 +381,7 @@
           dearmachine-stack = project.stackRuntime;
           dearmachine-host-lifecycle = project.hostLifecycle;
           dearmachine-container-lifecycle = project.containerLifecycle;
+          dearmachine-native-service = project.nativeServiceLauncher;
         });
 
       apps = forAllSystems (system:
@@ -388,6 +404,10 @@
           dearmachine-host-lifecycle = {
             type = "app";
             program = "${self.packages.${system}.dearmachine-host-lifecycle}/bin/dearmachine-host-lifecycle";
+          };
+          dearmachine-native-service = {
+            type = "app";
+            program = "${project.nativeServiceLauncher}/bin/dearmachine-native-service";
           };
           host-install = {
             type = "app";
@@ -477,6 +497,7 @@
           state-migration-test = project.stateMigrationCheck;
           systemd-user-unit = project.unitCheck;
           runbook-contracts = project.runbookCheck;
+          native-service-launcher = project.nativeServiceLauncherCheck;
           shellcheck = project.shellCheck;
         });
     };

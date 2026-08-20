@@ -218,6 +218,15 @@ type HealthResult struct {
 	Reason  string
 }
 
+// ResolvedBackend is an approved backend together with the executable that
+// the current process environment will run.  Path is always absolute so a
+// launcher can safely derive an explicit service environment from it.
+type ResolvedBackend struct {
+	ID         string `json:"id"`
+	Executable string `json:"executable"`
+	Path       string `json:"path"`
+}
+
 func New(root string) *Manager {
 	m := &Manager{
 		Root: filepath.Clean(root),
@@ -271,6 +280,59 @@ func (m *Manager) BackendList() []string {
 	return append([]string(nil), m.ApprovedBackends...)
 }
 
+// ConfigureFromDeviceConfig loads the selected backends and their custom
+// definitions from one device configuration.  Keeping this here makes Agent
+// Manager the authority for the mapping from an approved backend ID to its
+// executable, including user-defined adapters.
+func (m *Manager) ConfigureFromDeviceConfig(configPath string) error {
+	configPath, err := filepath.Abs(configPath)
+	if err != nil {
+		return fmt.Errorf("resolve device config path: %w", err)
+	}
+	custom, err := client.LoadCustomBackends(filepath.Join(filepath.Dir(configPath), "custom-backends.toml"))
+	if err != nil {
+		return err
+	}
+	m.setCustomBackends(custom)
+	config, err := client.LoadDeviceConfigWithCustom(configPath, m.customBackends...)
+	if err != nil {
+		return err
+	}
+	return m.SetApprovedBackends(config.Backends)
+}
+
+// ResolveBackends verifies every approved backend against the current PATH
+// and returns its concrete executable path in priority order.  It is intended
+// for launch-time preflight, before a supervisor snapshots its environment.
+func (m *Manager) ResolveBackends() ([]ResolvedBackend, error) {
+	resolved := make([]ResolvedBackend, 0, len(m.ApprovedBackends))
+	for _, id := range m.ApprovedBackends {
+		backend, err := m.ResolveBackend(id)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, backend)
+	}
+	return resolved, nil
+}
+
+// ResolveBackend verifies one approved backend against the current PATH.
+func (m *Manager) ResolveBackend(backend string) (ResolvedBackend, error) {
+	adapter, err := m.approvedAdapter(backend)
+	if err != nil {
+		return ResolvedBackend{}, err
+	}
+	path, err := exec.LookPath(adapter.Executable())
+	if err != nil {
+		return ResolvedBackend{}, fmt.Errorf("backend %q is unavailable: %w", backend, err)
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return ResolvedBackend{}, fmt.Errorf("resolve backend %q executable path: %w", backend, err)
+	}
+	return ResolvedBackend{ID: backend, Executable: adapter.Executable(), Path: path}, nil
+}
+
 func (m *Manager) approvedAdapter(backend string) (Adapter, error) {
 	approved := false
 	for _, id := range m.ApprovedBackends {
@@ -290,12 +352,8 @@ func (m *Manager) approvedAdapter(backend string) (Adapter, error) {
 }
 
 func (m *Manager) Send(worker, requestPath, cwd string) (string, error) {
-	adapter, err := m.approvedAdapter(worker)
-	if err != nil {
+	if _, err := m.ResolveBackend(worker); err != nil {
 		return "", err
-	}
-	if _, err := exec.LookPath(adapter.Executable()); err != nil {
-		return "", fmt.Errorf("worker %q is unavailable: %w", worker, err)
 	}
 	request, err := os.ReadFile(requestPath)
 	if err != nil {
@@ -492,9 +550,9 @@ func (m *Manager) BackendHealth(ctx context.Context, backend, cwd string) (Healt
 		result.Reason = "not-approved"
 		return result, err
 	}
-	if _, err := exec.LookPath(adapter.Executable()); err != nil {
+	if _, err := m.ResolveBackend(backend); err != nil {
 		result.Reason = "unavailable"
-		return result, fmt.Errorf("backend %q is unavailable: %w", backend, err)
+		return result, err
 	}
 	cwd, err = filepath.Abs(cwd)
 	if err != nil {
@@ -648,8 +706,15 @@ func loadCustomAdapters(m *Manager, root string) []backendcatalog.Backend {
 		fmt.Fprintf(os.Stderr, "agent-manager: skip custom backends: %v\n", err)
 		return nil
 	}
-	if len(custom) == 0 {
-		return nil
+	m.setCustomBackends(custom)
+	return append([]backendcatalog.Backend(nil), m.customBackends...)
+}
+
+func (m *Manager) setCustomBackends(custom []client.CustomBackend) {
+	for _, backend := range m.customBackends {
+		if _, builtIn := backendcatalog.Lookup(backend.ID); !builtIn {
+			delete(m.Adapters, backend.ID)
+		}
 	}
 	catalogBackends := make([]backendcatalog.Backend, 0, len(custom))
 	for _, cb := range custom {
@@ -666,7 +731,7 @@ func loadCustomAdapters(m *Manager, root string) []backendcatalog.Backend {
 		)
 		m.Adapters[cb.ID] = adapter
 	}
-	return catalogBackends
+	m.customBackends = catalogBackends
 }
 
 func envSlice(m map[string]string) []string {

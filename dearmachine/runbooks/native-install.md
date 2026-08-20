@@ -111,6 +111,68 @@ choice, but DearMachine does not require or install one for native operation.
 Do not start a native process and a container deployment against the same
 inbox and database at the same time.
 
+## Optional transient user service (Linux)
+
+For an unattended native client, use the packaged transient-service launcher.
+It resolves every backend in the selected device configuration under the
+launching shell's `PATH`, then passes a validated, absolute-path snapshot to
+systemd. This keeps Node/NVM-style CLI wrappers and custom backend wrappers in
+the same runtime environment as their preflight check. The snapshot does not
+follow later shell changes; rerun the launcher after changing a backend
+installation, its runtime, or your relevant `PATH` entries.
+
+First stop any existing client for this inbox and database. Do not replace a
+live service or start a second poller:
+
+```bash
+systemctl --user stop dearmachine-native.service
+```
+
+Then start the service from a shell in which all selected backends resolve:
+
+```bash
+project="$HOME/.dearmachine/entrypoint/main"
+credential_file="$HOME/.config/dearmachine/agentmail-api-key"
+backend_environment_file="$HOME/.config/dearmachine/backends.env"
+
+nix run .#dearmachine-native-service -- \
+  --credential-file "$credential_file" \
+  --environment-file "$backend_environment_file" \
+  --working-directory "$project" \
+  -- dearmachine \
+    --inbox-id <inbox-id> \
+    --project "$project" \
+    --entry-point-repo "$project" \
+    --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
+    --verbose
+```
+
+The launcher reads `~/.dearmachine/config/dearmachine.toml` by default and
+adds its matching `--config` and absolute `--agent-manager` arguments to the
+client. Use `--config`, `--agent-manager`, `--home`, or `--unit` before the
+separator when the normal paths differ. `--environment-file` is optional, but
+use it for non-AgentMail backend credentials such as `DEEPSEEK_API_KEY`; it is
+recorded in the unit only as a path. The launcher passes the AgentMail
+credential *file path*, not its value, to systemd and force-unsets any
+`AGENTMAIL_API_KEY` supplied by that environment file.
+
+Confirm the unit and its runtime lookup environment before accepting work:
+
+```bash
+systemctl --user show dearmachine-native.service \
+  -p ActiveState -p SubState -p MainPID -p NRestarts
+
+service_pid=$(systemctl --user show dearmachine-native.service -p MainPID --value)
+service_path=$(tr '\0' '\n' <"/proc/$service_pid/environ" | sed -n 's/^PATH=//p')
+env -i HOME="$HOME" PATH="$service_path" \
+  agent-manager backend resolve --config "$HOME/.dearmachine/config/dearmachine.toml"
+```
+
+Finally, run `agent-manager backend health <backend>` from that same service
+environment and send one controlled AgentMail request. The health command
+invokes the selected backend and may incur model-provider cost; an actual mail
+round trip is the required end-to-end check.
+
 ## Optional container deployment
 
 Use [`host-install.md`](./host-install.md) when the Nix OCI image, explicit
