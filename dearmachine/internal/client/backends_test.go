@@ -255,6 +255,30 @@ func TestSetupAgentsPreferredOverrideStillRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestSetupAgentsLabelsUnapprovedMissingBackendsAsSkipped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dearmachine.toml")
+	var output strings.Builder
+	config, err := SetupAgents(
+		strings.NewReader("yes\n"),
+		&output,
+		path,
+		[]string{"forge"},
+		fakeBackendLookup("forge"),
+	)
+	if err != nil || !reflect.DeepEqual(config.Backends, []string{"forge"}) {
+		t.Fatalf("preferred SetupAgents = %+v, %v", config, err)
+	}
+	for _, want := range []string{
+		"not on PATH codex",
+		"not approved, skipped",
+		"found   forge",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("setup output missing %q:\n%s", want, output.String())
+		}
+	}
+}
+
 func TestSetupAgentsRequiresExplicitCodexYoloOptIn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dearmachine.toml")
 	var output strings.Builder

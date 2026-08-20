@@ -214,6 +214,10 @@ func SetupAgents(
 	}
 	detections := DetectBackends(lookPath)
 	found := make(map[string]BackendDetection)
+	approved := make(map[string]struct{}, len(preferred))
+	for _, id := range preferred {
+		approved[id] = struct{}{}
+	}
 	defaultOrder := make([]string, 0, len(detections))
 	fmt.Fprintln(output, "Coding agents on PATH:")
 	for _, detection := range detections {
@@ -227,8 +231,10 @@ func SetupAgents(
 				suffix = " (explicit opt-in)"
 			}
 			fmt.Fprintf(output, "  found   %-10s %s%s\n", detection.Backend.ID, detection.Path, suffix)
+		} else if _, ok := approved[detection.Backend.ID]; ok {
+			fmt.Fprintf(output, "  missing %-10s (%s; approved but not found)\n", detection.Backend.ID, detection.Backend.Executable)
 		} else {
-			fmt.Fprintf(output, "  missing %-10s (%s)\n", detection.Backend.ID, detection.Backend.Executable)
+			fmt.Fprintf(output, "  not on PATH %-10s (%s; not approved, skipped)\n", detection.Backend.ID, detection.Backend.Executable)
 		}
 	}
 	if len(found) == 0 {
