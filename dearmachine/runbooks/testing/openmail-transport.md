@@ -20,6 +20,10 @@ deployment path.
 - Load the key through `OPENMAIL_API_KEY` or `OPENMAIL_API_KEY_FILE`. Never
   print it, place it in a command argument, copy it into evidence, or retain an
   HTTP trace containing request headers.
+- Provisioning requires an account-wide operator key: the OpenAPI contract
+  requires that scope for pod discovery, inbox provisioning, and policy-rule
+  operations. A narrower key may still be suitable for the read/send paths,
+  but it is not sufficient for this runbook's provisioning or policy changes.
 - Use two temporary OpenMail inboxes when account capacity and policy permit.
   Record their exact IDs privately, and never delete or change an inbox the run
   did not create.
@@ -40,7 +44,9 @@ deployment path.
 
 Check these operations in the current official OpenAPI document:
 
-- `GET /v1/inboxes` and `POST /v1/inboxes` list and create inboxes;
+- `GET /v1/pods` discovers the account pod used for new inboxes;
+- `GET /v1/inboxes` lists inboxes, and `POST /v1/inboxes` creates one with
+  that pod's `podId`;
 - `GET /v1/inboxes/{id}` verifies an inbox ID;
 - `POST /v1/inboxes/{id}/send` sends with `Idempotency-Key`;
 - `GET /v1/inboxes/{id}/threads?is_read=false` lists unread threads;
@@ -60,9 +66,11 @@ used during teardown only for exact IDs created by the current run.
 2. Build `dearmachine` and `agent-manager` from the revision under test. Create
    a temporary Git project and initialize it with Machtiani using isolated
    home and session-temp roots.
-3. List inboxes without printing the credential. Create and verify a temporary
-   receiver if no suitable run-created receiver exists. Prefer a second
-   temporary inbox as the sender.
+3. Discover the account pod with `GET /v1/pods` without printing the
+   credential. List inboxes, then create and verify a temporary receiver if no
+   suitable run-created receiver exists, passing the discovered `podId` on
+   each `POST /v1/inboxes` request. Prefer a second temporary inbox as the
+   sender.
 4. Leave both mutation gates unset and run one empty poll:
 
    ```bash

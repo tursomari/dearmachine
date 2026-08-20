@@ -56,6 +56,12 @@ export DEARMACHINE_SENDMUX_ALLOWED_TO="$SENDMUX_QSE_CORRESPONDENT"
 Before continuing, require that the credential file and operator environment
 file are regular files owned by the current user with no group or other bits.
 
+The operator environment file remains the canonical source for
+`SENDMUX_QSE_INBOX`. When necessary, it may be resolved through the mailbox-
+scoped key's self endpoint using the Go mailbox SDK's `MailboxGetMe`, which
+returns the granted mailbox ID/email. Do this without printing the key or any
+addresses.
+
 ## Isolated inspect
 
 1. Create a runtime root with `mktemp -d` and require mode `0700`. Put the

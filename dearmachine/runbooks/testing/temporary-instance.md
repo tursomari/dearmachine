@@ -15,7 +15,7 @@ Current protocols include:
 - [`live-backends.md`](./live-backends.md) for Forge, Codex, and
   ordered fallback; and
 - [`apple-mail-html-fallback.md`](./apple-mail-html-fallback.md) for the live
-  AgentMail HTML-only normalization regression; and
+  HTML-only normalization regression; and
 - [`update-sync.md`](./update-sync.md) for rolling
   session checkpoints and internal-README update sync.
 
@@ -44,27 +44,24 @@ Identify or ask the tester for:
 - the DearMachine source directory and revision to test;
 - the project arrangement required by the protocol;
 - the ordered backend list;
-- the AgentMail API credential location;
-- one or more email accounts authorized to send the live messages;
+- the credential location for the transport under test;
+- one or more transport accounts authorized to send the live messages;
 - the machtiani executable or source revision; and
-- authorization to create and permanently delete a temporary AgentMail inbox
+- authorization to create and permanently delete temporary transport inboxes
   and to send the protocol's messages; and
-- authorization to create and delete exact temporary mail-list entries when an
-  active AgentMail allow-list would otherwise reject the test exchange.
+- authorization to create and delete exact temporary policy entries when an
+  inherited allow-list would otherwise reject the test exchange.
 
-Prefer two temporary AgentMail inboxes, one sender and one receiver, when a
-fully isolated test requires both delivery and reply proof. A normal AgentMail
-inbox may already be polled by the normal DearMachine Client, which could consume a
-test reply and invalidate the isolation claim. Confirm the sender is accepted
-by the temporary receiver before sending. Adding a sender after a rejected
-message does not recover that message. Before the first protocol message,
-inspect the applicable organization, pod, and inbox `send`, `receive`, and
-`reply` allow-lists. When an active organization-level allow-list governs two
-temporary inboxes, the complete exchange may require four run-created entries:
-both destination addresses on `send`, the sender on `receive`, and the receiver
-on `reply`. Record which entries the run created so teardown never removes a
-pre-existing policy entry. The user's Gmail address is a protected pre-existing
-allow-list entry and must never be removed.
+Prefer two temporary inboxes for the transport under test, one sender and one
+receiver, when a fully isolated test requires both delivery and reply proof. A
+normal inbox may already be polled by the normal DearMachine Client, which
+could consume a test reply and invalidate the isolation claim. Confirm the
+sender is accepted by the temporary receiver before sending. Adding a sender
+after a rejected message does not recover that message. Before the first
+protocol message, inspect applicable organization-, pod-, account-, and
+inbox-level `send`, `receive`, and `reply` policies. Refer to the transport
+runbook for provider-specific provisioning and policy scopes. Record which
+entries the run created so teardown never removes a pre-existing policy entry.
 
 ### Isolation contract
 
@@ -82,10 +79,11 @@ Apply these boundaries throughout the exercise:
 1. Create a unique runtime root with `mktemp -d`, require mode `0700`, and keep
    its exact absolute path. Use a task-specific prefix such as
    `dearmachine-live-test.XXXXXXXX`.
-2. Create a dedicated AgentMail receiver whose display name and metadata
-   identify the protocol and run. Create a temporary sender too when needed for
-   complete isolation. Never point a temporary client at the normal inbox or
-   use an inbox polled by the normal client as the isolated sender.
+2. Create a dedicated receiver for the transport under test whose display name
+   and metadata identify the protocol and run. Create a temporary sender too
+   when needed for complete isolation. Never point a temporary client at the
+   normal inbox or use an inbox polled by the normal client as the isolated
+   sender.
 3. Keep backend configuration, SQLite database, PID file, logs, Agent Manager
    home, evidence staging, and disposable project files beneath the runtime
    root unless the protocol names a private retained evidence directory. The
@@ -150,7 +148,7 @@ Compose, mount, secret, or container-health paths.
    backends = ["forge", "codex"]
    ```
 
-5. Create the temporary inbox or inbox pair through the installed AgentMail
+5. Create the temporary inbox or inbox pair through the transport's documented
    SDK or API. Use descriptive disposable metadata and verify every returned
    inbox with a read operation. Do not invent or reuse an inbox ID.
 
@@ -168,7 +166,7 @@ Compose, mount, secret, or container-health paths.
 > Confirm the variable is absent in the launch environment before
 > proceeding.
 
-6. Load the AgentMail credential without displaying it, export the isolated
+6. Load the transport credential without displaying it, export the isolated
    `DEARMACHINE_HOME`, and launch the freshly built client in an observable
    foreground terminal or a bounded service owned by the test. The effective
    command must explicitly provide:
@@ -261,7 +259,7 @@ store can therefore spend the entire PID health window doing a legitimate live
 README sync and make an otherwise working container appear unhealthy.
 
 Write `stack.env` with the temporary receiver and project, then synchronize the
-AgentMail key into the isolated Podman secret without printing it:
+transport credential into the isolated Podman secret without printing it:
 
 ```bash
 cat >"$XDG_CONFIG_HOME/dearmachine/stack.env" <<EOF
@@ -278,7 +276,7 @@ source "$XDG_CONFIG_HOME/dearmachine/stack.env"
 set +a
 
 cd "$repository"
-nix run .#dearmachine-stack -- secrets sync --file <mode-0600-AgentMail-key-file>
+nix run .#dearmachine-stack -- secrets sync --file <mode-0600-transport-key-file>
 nix run .#dearmachine-stack -- up
 nix run .#dearmachine-stack -- health
 nix run .#dearmachine-stack -- status
@@ -302,8 +300,8 @@ conversation. Record the image revision and container ID with that evidence.
 
 Teardown must bring down the exact Compose project, remove the isolated Podman
 secret, prove no test container remains, inspect and then remove only the
-validated scratch root, and delete only run-created inboxes/allow-list entries
-under the earlier authorization. The protected Gmail allow-list entry remains
+validated scratch root, and delete only run-created inboxes/policy entries
+under the earlier authorization. Protected pre-existing policy entries remain
 untouched.
 
 ```bash
@@ -336,7 +334,7 @@ Depending on the protocol, inspect:
 - Agent Manager health and ticket state through its CLI;
 - source and artifact Git history, hashes, and status;
 - session-sync checkpoint contents and modification times; and
-- AgentMail thread membership and replies.
+- mail transport thread membership and replies.
 
 A managed implementation worker may be able to write the project contents but
 not Git metadata in its sandbox, commonly surfacing as an inability to create
@@ -346,9 +344,9 @@ the next configured backend. Treat that active fallback as progress. Do not
 manually commit test output while the agent-guided workflow can still complete
 it, because doing so would invalidate the maintenance result.
 
-Record both sender-side and receiver-side thread identifiers. AgentMail may
+Record both sender-side and receiver-side thread identifiers. A transport may
 assign different thread IDs at the two inboxes even though they represent the
-same email exchange; the DearMachine Client and mct session map to the receiver-side
+same exchange; the DearMachine Client and mct session map to the receiver-side
 thread.
 
 Do not infer success from a reply or a single log message. Verify the protocol's
@@ -382,12 +380,11 @@ Treat teardown as part of every pass or failure:
 1. Stop the temporary DearMachine Client gracefully. Confirm its PID and PID file
    are gone and no child machtiani, Agent Manager, or backend process remains.
 2. Preserve the approved evidence before deleting runtime data.
-3. Delete only the exact mail-list entries created for the run, and confirm
-   each is absent without disturbing pre-existing entries. Never remove the
-   user's protected Gmail address from an AgentMail allow-list.
+3. Delete only the exact policy entries created for the run, and confirm each
+   is absent without disturbing pre-existing entries.
 4. Retrieve and verify every temporary inbox's exact ID and disposable
-   metadata, delete each through AgentMail, and confirm subsequent lookups
-   report them absent. Inbox deletion is permanent.
+   metadata, delete each through the transport's documented API, and confirm
+   subsequent lookups report them absent. Inbox deletion is permanent.
 5. Resolve the disposable project's UUID-backed store with
    `machtiani project show --json`. Delete that exact store only after proving
    its project root equals the disposable project and no process uses it.
