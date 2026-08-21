@@ -93,7 +93,7 @@ func TestProcessOnceLimitsConcurrentThreadsAndPreservesThreadFIFO(t *testing.T) 
 			_, err := io.WriteString(command.Stdout, `{"status":"success"}`)
 			return err
 		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "fork":
-			_, err := fmt.Fprintf(command.Stdout, "checkpoint-%s\n", command.Args[3])
+			_, err := fmt.Fprintln(command.Stdout, newConversationReference())
 			return err
 		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "delete":
 			return nil
@@ -540,7 +540,7 @@ func gatedRunInvoker(started chan<- gatedRun, release <-chan struct{}) func(*exe
 			_, err := io.WriteString(command.Stdout, `{"status":"success"}`)
 			return err
 		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "fork":
-			_, err := fmt.Fprintf(command.Stdout, "checkpoint-%s\n", command.Args[3])
+			_, err := fmt.Fprintln(command.Stdout, newConversationReference())
 			return err
 		case len(command.Args) > 2 && command.Args[1] == "session" && command.Args[2] == "delete":
 			return nil
