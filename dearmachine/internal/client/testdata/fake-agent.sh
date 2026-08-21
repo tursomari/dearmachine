@@ -27,6 +27,10 @@ if [ "$1" = "sync" ]; then
 fi
 
 if [ "$1" = "session" ] && [ "$2" = "show" ]; then
+	if [ -n "${FAKE_AGENT_SHOW_UNKNOWN_ID-}" ] && [ "$FAKE_AGENT_SHOW_UNKNOWN_ID" = "$3" ]; then
+		printf 'unknown session: %s\n' "$3" >&2
+		exit 1
+	fi
 	if [ -n "${FAKE_AGENT_SHOW_DELAY-}" ]; then
 		sleep "$FAKE_AGENT_SHOW_DELAY"
 	fi

@@ -87,8 +87,8 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	if session.Sequence != 1 || session.Status != "completed" {
 		t.Fatalf("unexpected session: %+v", session)
 	}
-	if got := rig.capture("session-env-1"); got != session.SessionID {
-		t.Fatalf("MACHTIANI_SESSION_ID = %q, want %q", got, session.SessionID)
+	if got := rig.capture("session-env-1"); got != session.ConversationReference {
+		t.Fatalf("MACHTIANI_SESSION_ID = %q, want %q", got, session.ConversationReference)
 	}
 	args := rig.captureLines("args-1")
 	if slices.Contains(args, "--session-id") {
@@ -223,11 +223,11 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	if resumed.Sequence != 2 {
 		t.Fatalf("sequence = %d, want 2", resumed.Sequence)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", original.SessionID)
+	assertArg(t, rig.captureLines("args-2"), "--session-id", original.ConversationReference)
 	if got := rig.capture("session-env-2"); got != "" {
 		t.Fatalf("resumed run set MACHTIANI_SESSION_ID = %q", got)
 	}
-	if got := rig.capture("forked-sessions"); got != original.SessionID+"\n" {
+	if got := rig.capture("forked-sessions"); got != original.ConversationReference+"\n" {
 		t.Fatalf("checkpointed sessions = %q, want original session", got)
 	}
 	if got := rig.capture("deleted-sessions"); got != "forked-session\n" {
@@ -249,6 +249,31 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 
 	replies := rig.mail.sentReplies()
 	assertReplyText(t, replies[len(replies)-1].Text, "Here is the regional breakdown.")
+}
+
+func TestFollowUpOnPreUpgradeThreadUsesLegacyMachtianiSessionID(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage("msg-legacy-1", "thread-legacy", "Start the report."))
+	rig.setAnswer("Initial report.")
+	mustProcess(t, rig)
+	original := rig.session("thread-legacy")
+	t.Setenv("FAKE_AGENT_SHOW_UNKNOWN_ID", original.ConversationReference)
+
+	rig.mail.add(testMessage("msg-legacy-2", "thread-legacy", "Continue the report."))
+	rig.setAnswer("Continued report.")
+	mustProcess(t, rig)
+
+	continued := rig.session("thread-legacy")
+	if continued.SessionID != original.SessionID || continued.Sequence != 2 {
+		t.Fatalf("legacy follow-up changed routing or sequence: original=%+v continued=%+v", original, continued)
+	}
+	assertArg(t, rig.captureLines("args-2"), "--session-id", original.SessionID)
+	if got := rig.capture("session-env-2"); got != "" {
+		t.Fatalf("legacy continuation set MACHTIANI_SESSION_ID = %q", got)
+	}
+	if got := rig.capture("forked-sessions"); got != original.SessionID+"\n" {
+		t.Fatalf("legacy checkpointed sessions = %q, want %q", got, original.SessionID+"\n")
+	}
 }
 
 func TestFooterReferenceContinuesSessionWhenTransportThreadAndAncestryChange(t *testing.T) {
@@ -289,7 +314,7 @@ func TestFooterReferenceContinuesSessionWhenTransportThreadAndAncestryChange(t *
 	if continued.ConversationReference != first.ConversationReference {
 		t.Fatalf("reference changed: %q -> %q", first.ConversationReference, continued.ConversationReference)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", first.SessionID)
+	assertArg(t, rig.captureLines("args-2"), "--session-id", first.ConversationReference)
 	prompt := rig.capture("text-2")
 	if !strings.Contains(prompt, "Add a regional breakdown.") {
 		t.Fatalf("continuation prompt omitted request:\n%s", prompt)
@@ -337,7 +362,7 @@ func TestShortSessionFooterContinuesSessionWhenTransportThreadAndAncestryChange(
 	if continued.ConversationReference != first.ConversationReference {
 		t.Fatalf("reference changed: %q -> %q", first.ConversationReference, continued.ConversationReference)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", first.SessionID)
+	assertArg(t, rig.captureLines("args-2"), "--session-id", first.ConversationReference)
 }
 
 func TestFollowUpCheckpointFailureLeavesMessageReceived(t *testing.T) {
@@ -405,7 +430,7 @@ func TestAskUserThenResumeWithAnswer(t *testing.T) {
 	if completed.Status != "completed" || completed.Sequence != 2 {
 		t.Fatalf("unexpected completed session: %+v", completed)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", completed.SessionID)
+	assertArg(t, rig.captureLines("args-2"), "--session-id", completed.ConversationReference)
 	replies := rig.mail.sentReplies()
 	if len(replies) != 2 {
 		t.Fatalf("unexpected replies: %+v", replies)
