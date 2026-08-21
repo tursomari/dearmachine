@@ -1,9 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,6 +305,102 @@ func TestStoreUnknownValidReferenceCannotAttachToExistingSession(t *testing.T) {
 	}
 	if second.Session.ConversationReference == first.Session.ConversationReference {
 		t.Fatalf("new conversation reused reference %q", first.Session.ConversationReference)
+	}
+}
+
+func TestStoreShortReferenceCandidateContinuesExistingSession(t *testing.T) {
+	store := openTestStore(t)
+	first, existed, err := store.BeginMessageWithReference("message-1", "thread-a", "", TierPlain)
+	if err != nil || existed {
+		t.Fatalf("first BeginMessageWithReference = %+v, %v, %v", first, existed, err)
+	}
+	if err := store.MarkRunning(first.MessageID, "first prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(first.MessageID, RunResult{Kind: ResultAnswer, Text: "first answer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(first.MessageID, "completed", "outbound-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	second, existed, err := store.BeginMessageWithReference(
+		"message-2", "thread-b", shortConversationReference(first.Session.ConversationReference), TierPlain,
+	)
+	if err != nil || existed {
+		t.Fatalf("short BeginMessageWithReference = %+v, %v, %v", second, existed, err)
+	}
+	if second.ThreadID != first.ThreadID || second.Session.SessionID != first.Session.SessionID {
+		t.Fatalf("short reference created another session: first=%+v second=%+v", first, second)
+	}
+	if second.Session.Sequence != 2 || second.Session.IsNew {
+		t.Fatalf("short-reference continuation = %+v, want sequence 2 existing", second.Session)
+	}
+}
+
+func TestStoreUnknownShortReferenceStartsFreshSession(t *testing.T) {
+	store := openTestStore(t)
+	pending, existed, err := store.BeginMessageWithReference(
+		"message-new", "thread-new", "dm1-kyf1e-4cze7x", TierPlain,
+	)
+	if err != nil || existed {
+		t.Fatalf("BeginMessageWithReference = %+v, %v, %v", pending, existed, err)
+	}
+	if !pending.Session.IsNew || pending.Session.Sequence != 1 {
+		t.Fatalf("unknown short reference session = %+v, want fresh session", pending.Session)
+	}
+	if !validConversationReference(pending.Session.ConversationReference) {
+		t.Fatalf("fresh conversation reference = %q", pending.Session.ConversationReference)
+	}
+	if pending.Session.ConversationReference == "DM1-KYF1E4CZE7X" {
+		t.Fatal("fresh session stored the inbound short token as its full reference")
+	}
+}
+
+func TestStoreCollidingShortReferenceStartsFreshSessionAndLogsWarning(t *testing.T) {
+	store := openTestStore(t)
+	firstReference := referenceFromPayload(t, "0123456789ABCDEFGHJKMNPQRC")
+	secondReference := referenceFromPayload(t, "0123456789ASTVWXYZ0123456W")
+	for _, existing := range []struct {
+		threadID  string
+		sessionID string
+		reference string
+	}{
+		{threadID: "thread-first", sessionID: "session-first", reference: firstReference},
+		{threadID: "thread-second", sessionID: "session-second", reference: secondReference},
+	} {
+		if _, err := store.db.Exec(
+			`INSERT INTO thread_sessions
+			     (thread_id, session_id, conversation_ref, sequence, status, response_tier, created_at, updated_at)
+			 VALUES (?, ?, ?, 3, 'completed', ?, 'created', 'updated')`,
+			existing.threadID,
+			existing.sessionID,
+			existing.reference,
+			TierPlain,
+		); err != nil {
+			t.Fatalf("insert colliding reference %q: %v", existing.reference, err)
+		}
+	}
+	var warnings bytes.Buffer
+	store.warnings = log.New(&warnings, "", 0)
+
+	pending, existed, err := store.BeginMessageWithReference(
+		"message-collision", "thread-new", "dm1-01234-56789a", TierPlain,
+	)
+	if err != nil || existed {
+		t.Fatalf("BeginMessageWithReference = %+v, %v, %v", pending, existed, err)
+	}
+	if !pending.Session.IsNew || pending.ThreadID != "thread-new" {
+		t.Fatalf("collision did not start fresh session: %+v", pending)
+	}
+	for _, existingSessionID := range []string{"session-first", "session-second"} {
+		if pending.Session.SessionID == existingSessionID {
+			t.Fatalf("collision selected existing session %q", existingSessionID)
+		}
+	}
+	if output := warnings.String(); !strings.Contains(output, `short reference "DM1-0123456789A" matches 2 conversations`) ||
+		!strings.Contains(output, "starting a new session") {
+		t.Fatalf("collision warning = %q", output)
 	}
 }
 

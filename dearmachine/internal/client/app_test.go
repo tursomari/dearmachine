@@ -305,6 +305,41 @@ func TestFooterReferenceContinuesSessionWhenTransportThreadAndAncestryChange(t *
 	}
 }
 
+func TestShortSessionFooterContinuesSessionWhenTransportThreadAndAncestryChange(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage("msg-short-footer-1", "provider-thread-short-a", "Start the report."))
+	rig.setAnswer("Initial report.")
+	mustProcess(t, rig)
+
+	first := rig.session("provider-thread-short-a")
+	firstReply := rig.mail.sentReplies()[0].Text
+	if !strings.Contains(firstReply, "\nDear Machine\nsession: dm1-") {
+		t.Fatalf("first reply omitted short session footer:\n%s", firstReply)
+	}
+
+	rig.restartStore(t)
+	reply := testMessage(
+		"msg-short-footer-2",
+		"provider-thread-short-b",
+		"Add a regional breakdown.\n\n> "+strings.ReplaceAll(firstReply, "\n", "\n> "),
+	)
+	reply.ExtractedText = "Add a regional breakdown."
+	reply.InReplyTo = ""
+	reply.References = nil
+	rig.mail.add(reply)
+	rig.setAnswer("Regional breakdown added.")
+	mustProcess(t, rig)
+
+	continued := rig.session("provider-thread-short-b")
+	if continued.SessionID != first.SessionID || continued.Sequence != 2 {
+		t.Fatalf("short-footer reply did not continue session: first=%+v continued=%+v", first, continued)
+	}
+	if continued.ConversationReference != first.ConversationReference {
+		t.Fatalf("reference changed: %q -> %q", first.ConversationReference, continued.ConversationReference)
+	}
+	assertArg(t, rig.captureLines("args-2"), "--session-id", first.SessionID)
+}
+
 func TestFollowUpCheckpointFailureLeavesMessageReceived(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-001", "thread-001", "Initial request."))
