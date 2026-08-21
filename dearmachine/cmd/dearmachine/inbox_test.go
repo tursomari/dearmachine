@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"io"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/dearmachine/dearmachine/internal/client"
 )
+
+const testCheckpointSessionID = "DM1-KYF1E4CZE7XBCDEFGHJKMNPQRCH"
 
 func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	for _, test := range []struct {
@@ -63,6 +66,65 @@ func TestInboxSkipUsesSelectedTransportConstructor(t *testing.T) {
 	}
 }
 
+func TestInboxSkipDeletesCanonicalOnDiskSession(t *testing.T) {
+	home := t.TempDir()
+	dbPath := filepath.Join(home, "state", "dearmachine.db")
+	store, err := client.OpenStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err := store.BeginMessage("message-1", "thread-1", client.TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireCanonicalSessionID(t, pending.Session.SessionID)
+	if err := store.MarkRunning(pending.MessageID, "partial prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	fixturePath, err := filepath.Abs(filepath.Join(
+		"..", "..", "internal", "client", "testdata", "fake-agent.sh",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureDir := t.TempDir()
+	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
+	t.Setenv("FAKE_AGENT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
+	t.Setenv("FAKE_AGENT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
+	transport := inboxTestTransport{message: client.Message{
+		MessageID: pending.MessageID,
+		ThreadID:  pending.ThreadID,
+	}}
+	deps := dependencies{
+		newTransport: func(string) (client.Transport, error) { return transport, nil },
+		openStore:    client.OpenStore,
+		stdout:       io.Discard,
+		flagOutput:   io.Discard,
+		userHomeDir:  func() (string, error) { return home, nil },
+	}
+	if err := runInboxSkip(
+		[]string{
+			"--inbox-id", "test-inbox",
+			"--db", dbPath,
+			"--pidfile", filepath.Join(home, "missing.pid"),
+			"--project", home,
+			"--agent-bin", fixturePath,
+			pending.MessageID,
+		},
+		deps,
+	); err != nil {
+		t.Fatalf("runInboxSkip: %v", err)
+	}
+	deleted, err := os.ReadFile(filepath.Join(captureDir, "deleted-sessions"))
+	if err != nil || string(deleted) != pending.Session.SessionID+"\n" {
+		t.Fatalf("deleted sessions = %q, %v; want canonical %q", deleted, err, pending.Session.SessionID)
+	}
+}
+
 func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	home := t.TempDir()
 	dbPath := filepath.Join(home, "state", "dearmachine.db")
@@ -74,6 +136,7 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireCanonicalSessionID(t, first.Session.SessionID)
 	if err := store.MarkRunning(first.MessageID, "first prompt"); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +156,7 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	if err := store.MarkRunningWithCheckpoint(
 		second.MessageID,
 		"partial follow-up",
-		"replacement-session",
+		testCheckpointSessionID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +174,7 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
 	t.Setenv("FAKE_AGENT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
 	t.Setenv("FAKE_AGENT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
-	t.Setenv("FAKE_AGENT_FORK_ID", "replacement-session")
+	t.Setenv("FAKE_AGENT_FORK_ID", testCheckpointSessionID)
 	runner, err := client.NewAgentRunner(fixturePath, home, "")
 	if err != nil {
 		t.Fatal(err)
@@ -154,7 +217,7 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 		t.Fatalf("IsSkipped = %v, %v", skipped, err)
 	}
 	session, err := store.Session(second.ThreadID)
-	if err != nil || session.SessionID != "replacement-session" || session.Sequence != 1 {
+	if err != nil || session.SessionID != testCheckpointSessionID || session.Sequence != 1 {
 		t.Fatalf("Session = %+v, %v", session, err)
 	}
 }
@@ -170,6 +233,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	requireCanonicalSessionID(t, first.Session.SessionID)
 	if err := store.MarkRunning(first.MessageID, "first prompt"); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +253,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	if err := store.MarkRunningWithCheckpoint(
 		second.MessageID,
 		"partial follow-up",
-		"replacement-session",
+		testCheckpointSessionID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +295,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
 	t.Setenv("FAKE_AGENT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
 	t.Setenv("FAKE_AGENT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
-	t.Setenv("FAKE_AGENT_FORK_ID", "replacement-session")
+	t.Setenv("FAKE_AGENT_FORK_ID", testCheckpointSessionID)
 	runner, err := client.NewAgentRunner(fixturePath, home, "")
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +338,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 		t.Fatalf("IsSkipped = %v, %v", skipped, err)
 	}
 	session, err := store.Session(second.ThreadID)
-	if err != nil || session.SessionID != "replacement-session" || session.Sequence != 1 {
+	if err != nil || session.SessionID != testCheckpointSessionID || session.Sequence != 1 {
 		t.Fatalf("Session = %+v, %v", session, err)
 	}
 	if _, err := os.Stat(abandonInbox); !os.IsNotExist(err) {
@@ -451,5 +515,52 @@ func TestInboxMutationRefusesLiveDeviceClientPID(t *testing.T) {
 	defer store.Close()
 	if skipped, err := store.IsSkipped("message-1"); err != nil || !skipped {
 		t.Fatalf("IsSkipped after refusal = %v, %v", skipped, err)
+	}
+}
+
+type inboxTestTransport struct {
+	message client.Message
+}
+
+func (f inboxTestTransport) Poll(context.Context) ([]client.Message, error) {
+	return []client.Message{f.message}, nil
+}
+
+func (f inboxTestTransport) Thread(context.Context, string) ([]client.Message, error) {
+	return nil, nil
+}
+
+func (f inboxTestTransport) Message(context.Context, string) (client.Message, error) {
+	return f.message, nil
+}
+
+func (f inboxTestTransport) Reply(
+	context.Context,
+	string,
+	client.ReplyPayload,
+	string,
+) (string, error) {
+	return "", nil
+}
+
+func (f inboxTestTransport) ReplyReceipt(
+	context.Context,
+	client.Message,
+) (string, bool, error) {
+	return "", false, nil
+}
+
+func (f inboxTestTransport) MarkProcessed(context.Context, string) error {
+	return nil
+}
+
+func (f inboxTestTransport) FetchAttachment(context.Context, string, int64) ([]byte, error) {
+	return nil, nil
+}
+
+func requireCanonicalSessionID(t *testing.T, sessionID string) {
+	t.Helper()
+	if len(sessionID) != 31 || !strings.HasPrefix(sessionID, "DM1-") || sessionID != strings.ToUpper(sessionID) {
+		t.Fatalf("SessionID = %q, want full canonical DM1 conversation reference", sessionID)
 	}
 }

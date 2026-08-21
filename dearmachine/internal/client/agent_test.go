@@ -161,29 +161,35 @@ func TestAgentRunnerNonzeroExitContracts(t *testing.T) {
 
 func TestAgentRunnerForkAndDeleteSession(t *testing.T) {
 	fixture := newAgentTestFixture(t)
-	t.Setenv("FAKE_AGENT_FORK_ID", "replacement-session")
+	forkedSessionID := newConversationReference()
+	t.Setenv("FAKE_AGENT_FORK_ID", forkedSessionID)
 	forked, err := fixture.runner.ForkSession(
 		context.Background(),
-		fixture.session.ConversationReference,
+		fixture.session.SessionID,
 	)
-	if err != nil || forked != "replacement-session" {
+	if err != nil || forked != forkedSessionID {
 		t.Fatalf("ForkSession = %q, %v", forked, err)
 	}
 	if err := fixture.runner.DeleteSession(
 		context.Background(),
-		fixture.session.ConversationReference,
+		fixture.session.SessionID,
 	); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 	deleted, err := os.ReadFile(filepath.Join(os.Getenv("FAKE_AGENT_CAPTURE"), "deleted-sessions"))
-	if err != nil || string(deleted) != fixture.session.ConversationReference+"\n" {
+	if err != nil || string(deleted) != fixture.session.SessionID+"\n" {
 		t.Fatalf("deleted sessions = %q, %v", deleted, err)
 	}
 }
 
 func TestAgentRunnerForkRejectsInvalidSessionID(t *testing.T) {
 	fixture := newAgentTestFixture(t)
-	for _, forkedID := range []string{"", "two session-ids", fixture.session.SessionID} {
+	for _, forkedID := range []string{
+		"",
+		"two session-ids",
+		"6de419b9-286d-4af7-8803-7ba6f475a8ce",
+		fixture.session.SessionID,
+	} {
 		t.Run(strings.ReplaceAll(forkedID, " ", "_"), func(t *testing.T) {
 			t.Setenv("FAKE_AGENT_FORK_ID", forkedID)
 			if _, err := fixture.runner.ForkSession(
@@ -453,7 +459,7 @@ func TestRunExposesAttachmentEnvironmentExactly(t *testing.T) {
 	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_INBOX", fixture.turn.InboxPath)
 	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_OUTBOX", fixture.turn.OutboxPath)
 	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_MANIFEST", fixture.turn.ManifestPath)
-	requireUniqueEnv(t, env, "MACHTIANI_SESSION_ID", fixture.session.ConversationReference)
+	requireUniqueEnv(t, env, "MACHTIANI_SESSION_ID", fixture.session.SessionID)
 	requireUniqueEnv(t, env, "AGENT_MANAGER_PATH", "/test/agent-manager")
 	if values := envValues(env, "DEARMACHINE_BACKEND"); len(values) != 0 {
 		t.Fatalf("DEARMACHINE_BACKEND = %q, want unset", values)
@@ -461,7 +467,7 @@ func TestRunExposesAttachmentEnvironmentExactly(t *testing.T) {
 
 	captureDir := os.Getenv("FAKE_AGENT_CAPTURE")
 	sessionID, err := os.ReadFile(filepath.Join(captureDir, "session-env-1"))
-	if err != nil || string(sessionID) != fixture.session.ConversationReference {
+	if err != nil || string(sessionID) != fixture.session.SessionID {
 		t.Fatalf("MACHTIANI_SESSION_ID = %q, %v", sessionID, err)
 	}
 	backend, err := os.ReadFile(filepath.Join(captureDir, "backend-env-1"))
@@ -547,12 +553,11 @@ func newAgentTestFixture(t *testing.T) *agentTestFixture {
 		answerFile: answerFile,
 		finalPath:  filepath.Join(t.TempDir(), "final.md"),
 		session: Session{
-			ThreadID:              "thread-1",
-			SessionID:             "session-1",
-			ConversationReference: referenceFromPayload(t, testConversationPayload),
-			Sequence:              1,
-			Status:                "active",
-			IsNew:                 true,
+			ThreadID:  "thread-1",
+			SessionID: referenceFromPayload(t, testConversationPayload),
+			Sequence:  1,
+			Status:    "active",
+			IsNew:     true,
 		},
 		turn: validTurnContext(),
 	}

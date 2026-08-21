@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -86,68 +85,39 @@ func TestOpenStoreCreatesPrivateStateAndTightensExistingFile(t *testing.T) {
 	}
 }
 
-func TestStoreMigratesPreOutboundMessageIDSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		t.Fatalf("open legacy database: %v", err)
-	}
-	legacySchema := `
-CREATE TABLE thread_sessions (
-    thread_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL UNIQUE,
-    sequence INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE processed_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    processed_at TEXT NOT NULL
-);
-INSERT INTO thread_sessions VALUES
-    ('legacy-thread', 'legacy-session', 1, 'completed', 'created', 'updated');
-INSERT INTO processed_messages VALUES
-    ('legacy-message', 'legacy-thread', 'processed');`
-	if _, err := db.Exec(legacySchema); err != nil {
-		t.Fatalf("create legacy schema: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close legacy database: %v", err)
-	}
+func TestFreshStoreUsesCanonicalSessionIDSchema(t *testing.T) {
+	store := openTestStore(t)
 
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatalf("migrate legacy store: %v", err)
-	}
-	var outboundID string
+	var schema string
 	if err := store.db.QueryRow(
-		`SELECT outbound_message_id FROM processed_messages WHERE message_id = ?`,
-		"legacy-message",
-	).Scan(&outboundID); err != nil {
-		t.Fatalf("query migrated row: %v", err)
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'thread_sessions'`,
+	).Scan(&schema); err != nil {
+		t.Fatalf("query thread_sessions schema: %v", err)
 	}
-	if outboundID != "" {
-		t.Fatalf("migrated outbound_message_id = %q, want empty", outboundID)
+	normalizedSchema := strings.Join(strings.Fields(schema), " ")
+	if !strings.Contains(normalizedSchema, "session_id TEXT NOT NULL UNIQUE") {
+		t.Fatalf("thread_sessions session_id is not TEXT NOT NULL UNIQUE:\n%s", schema)
 	}
-	if seen, err := store.Seen("legacy-message"); err != nil || !seen {
-		t.Fatalf("Seen legacy message = %v, %v", seen, err)
-	}
-	if _, _, err := store.BeginMessage("new-message", "new-thread", TierPlain); err != nil {
-		t.Fatalf("pending_messages migration missing: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close migrated store: %v", err)
+	if strings.Contains(normalizedSchema, "conversation_ref") {
+		t.Fatalf("thread_sessions retained conversation_ref:\n%s", schema)
 	}
 
-	reopened, err := OpenStore(path)
-	if err != nil {
-		t.Fatalf("repeat migration: %v", err)
+	pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil || existed {
+		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
 	}
-	defer reopened.Close()
-	if seen, err := reopened.Seen("legacy-message"); err != nil || !seen {
-		t.Fatalf("Seen after repeat migration = %v, %v", seen, err)
+	if !validConversationReference(pending.Session.SessionID) {
+		t.Fatalf("SessionID = %q, want full canonical conversation reference", pending.Session.SessionID)
+	}
+	var storedSessionID string
+	if err := store.db.QueryRow(
+		`SELECT session_id FROM thread_sessions WHERE thread_id = ?`,
+		pending.ThreadID,
+	).Scan(&storedSessionID); err != nil {
+		t.Fatalf("query stored session ID: %v", err)
+	}
+	if storedSessionID != pending.Session.SessionID {
+		t.Fatalf("stored session_id = %q, want %q", storedSessionID, pending.Session.SessionID)
 	}
 }
 
@@ -224,8 +194,8 @@ func TestStoreReferenceAssociatesChangedThreadWithExistingSessionAcrossRestart(t
 	if err != nil || existed {
 		t.Fatalf("first BeginMessageWithReference = %+v, %v, %v", first, existed, err)
 	}
-	if !validConversationReference(first.Session.ConversationReference) {
-		t.Fatalf("conversation reference = %q", first.Session.ConversationReference)
+	if !validConversationReference(first.Session.SessionID) {
+		t.Fatalf("canonical session ID = %q", first.Session.SessionID)
 	}
 	if err := store.MarkRunning(first.MessageID, "first prompt"); err != nil {
 		t.Fatal(err)
@@ -236,7 +206,7 @@ func TestStoreReferenceAssociatesChangedThreadWithExistingSessionAcrossRestart(t
 	if err := store.Complete(first.MessageID, "completed", "outbound-1"); err != nil {
 		t.Fatal(err)
 	}
-	reference := first.Session.ConversationReference
+	reference := first.Session.SessionID
 	if err := store.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
@@ -255,7 +225,7 @@ func TestStoreReferenceAssociatesChangedThreadWithExistingSessionAcrossRestart(t
 	if second.ThreadID != first.ThreadID || second.Session.SessionID != first.Session.SessionID {
 		t.Fatalf("changed thread created another session: first=%+v second=%+v", first, second)
 	}
-	if second.Session.Sequence != 2 || second.Session.ConversationReference != reference {
+	if second.Session.Sequence != 2 || second.Session.SessionID != reference {
 		t.Fatalf("changed-thread continuation = %+v", second.Session)
 	}
 	aliased, err := store.Session("provider-thread-b")
@@ -278,7 +248,7 @@ func TestStoreKnownThreadWinsOverForeignFooterReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending, _, err := store.BeginMessageWithReference(
-		"message-a-2", "thread-a", second.Session.ConversationReference, TierPlain,
+		"message-a-2", "thread-a", second.Session.SessionID, TierPlain,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -290,12 +260,15 @@ func TestStoreKnownThreadWinsOverForeignFooterReference(t *testing.T) {
 
 func TestStoreUnknownValidReferenceCannotAttachToExistingSession(t *testing.T) {
 	store := openTestStore(t)
+	var warnings bytes.Buffer
+	store.warnings = log.New(&warnings, "", 0)
 	first, _, err := store.BeginMessageWithReference("message-a", "thread-a", "", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
+	unknownReference := newConversationReference()
 	second, _, err := store.BeginMessageWithReference(
-		"message-b", "thread-b", newConversationReference(), TierPlain,
+		"message-b", "thread-b", unknownReference, TierPlain,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -303,8 +276,34 @@ func TestStoreUnknownValidReferenceCannotAttachToExistingSession(t *testing.T) {
 	if second.Session.SessionID == first.Session.SessionID || second.ThreadID == first.ThreadID {
 		t.Fatalf("unknown reference attached to existing session: first=%+v second=%+v", first, second)
 	}
-	if second.Session.ConversationReference == first.Session.ConversationReference {
-		t.Fatalf("new conversation reused reference %q", first.Session.ConversationReference)
+	if second.Session.SessionID == first.Session.SessionID {
+		t.Fatalf("new conversation reused canonical ID %q", first.Session.SessionID)
+	}
+	if !validConversationReference(second.Session.SessionID) || second.Session.SessionID == unknownReference {
+		t.Fatalf("unknown reference did not create a distinct canonical session: %+v", second.Session)
+	}
+	if output := warnings.String(); !strings.Contains(output, "unknown conversation reference") ||
+		!strings.Contains(output, unknownReference) || strings.Contains(output, "collision") {
+		t.Fatalf("unknown-reference warning = %q", output)
+	}
+}
+
+func TestStoreEmptyReferenceStartsFreshSessionWithoutWarning(t *testing.T) {
+	store := openTestStore(t)
+	var warnings bytes.Buffer
+	store.warnings = log.New(&warnings, "", 0)
+
+	pending, existed, err := store.BeginMessageWithReference(
+		"message-new", "thread-new", "", TierPlain,
+	)
+	if err != nil || existed {
+		t.Fatalf("BeginMessageWithReference = %+v, %v, %v", pending, existed, err)
+	}
+	if !pending.Session.IsNew || !validConversationReference(pending.Session.SessionID) {
+		t.Fatalf("plain inbound message session = %+v", pending.Session)
+	}
+	if output := warnings.String(); output != "" {
+		t.Fatalf("empty reference logged warning %q", output)
 	}
 }
 
@@ -325,7 +324,7 @@ func TestStoreShortReferenceCandidateContinuesExistingSession(t *testing.T) {
 	}
 
 	second, existed, err := store.BeginMessageWithReference(
-		"message-2", "thread-b", shortConversationReference(first.Session.ConversationReference), TierPlain,
+		"message-2", "thread-b", shortConversationReference(first.Session.SessionID), TierPlain,
 	)
 	if err != nil || existed {
 		t.Fatalf("short BeginMessageWithReference = %+v, %v, %v", second, existed, err)
@@ -340,6 +339,8 @@ func TestStoreShortReferenceCandidateContinuesExistingSession(t *testing.T) {
 
 func TestStoreUnknownShortReferenceStartsFreshSession(t *testing.T) {
 	store := openTestStore(t)
+	var warnings bytes.Buffer
+	store.warnings = log.New(&warnings, "", 0)
 	pending, existed, err := store.BeginMessageWithReference(
 		"message-new", "thread-new", "dm1-kyf1e-4cze7x", TierPlain,
 	)
@@ -349,11 +350,15 @@ func TestStoreUnknownShortReferenceStartsFreshSession(t *testing.T) {
 	if !pending.Session.IsNew || pending.Session.Sequence != 1 {
 		t.Fatalf("unknown short reference session = %+v, want fresh session", pending.Session)
 	}
-	if !validConversationReference(pending.Session.ConversationReference) {
-		t.Fatalf("fresh conversation reference = %q", pending.Session.ConversationReference)
+	if !validConversationReference(pending.Session.SessionID) {
+		t.Fatalf("fresh canonical session ID = %q", pending.Session.SessionID)
 	}
-	if pending.Session.ConversationReference == "DM1-KYF1E4CZE7X" {
+	if pending.Session.SessionID == "DM1-KYF1E4CZE7X" {
 		t.Fatal("fresh session stored the inbound short token as its full reference")
+	}
+	if output := warnings.String(); !strings.Contains(output, "unknown conversation reference") ||
+		!strings.Contains(output, "DM1-KYF1E4CZE7X") || strings.Contains(output, "collision") {
+		t.Fatalf("unknown-reference warning = %q", output)
 	}
 }
 
@@ -364,21 +369,19 @@ func TestStoreCollidingShortReferenceStartsFreshSessionAndLogsWarning(t *testing
 	for _, existing := range []struct {
 		threadID  string
 		sessionID string
-		reference string
 	}{
-		{threadID: "thread-first", sessionID: "session-first", reference: firstReference},
-		{threadID: "thread-second", sessionID: "session-second", reference: secondReference},
+		{threadID: "thread-first", sessionID: firstReference},
+		{threadID: "thread-second", sessionID: secondReference},
 	} {
 		if _, err := store.db.Exec(
 			`INSERT INTO thread_sessions
-			     (thread_id, session_id, conversation_ref, sequence, status, response_tier, created_at, updated_at)
-			 VALUES (?, ?, ?, 3, 'completed', ?, 'created', 'updated')`,
+			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
+			 VALUES (?, ?, 3, 'completed', ?, 'created', 'updated')`,
 			existing.threadID,
 			existing.sessionID,
-			existing.reference,
 			TierPlain,
 		); err != nil {
-			t.Fatalf("insert colliding reference %q: %v", existing.reference, err)
+			t.Fatalf("insert colliding reference %q: %v", existing.sessionID, err)
 		}
 	}
 	var warnings bytes.Buffer
@@ -393,7 +396,7 @@ func TestStoreCollidingShortReferenceStartsFreshSessionAndLogsWarning(t *testing
 	if !pending.Session.IsNew || pending.ThreadID != "thread-new" {
 		t.Fatalf("collision did not start fresh session: %+v", pending)
 	}
-	for _, existingSessionID := range []string{"session-first", "session-second"} {
+	for _, existingSessionID := range []string{firstReference, secondReference} {
 		if pending.Session.SessionID == existingSessionID {
 			t.Fatalf("collision selected existing session %q", existingSessionID)
 		}
@@ -420,7 +423,7 @@ func TestStoreSkipAcceptsLearnedExternalThreadAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, _, err := store.BeginMessageWithReference(
-		"message-2", "thread-b", first.Session.ConversationReference, TierPlain,
+		"message-2", "thread-b", first.Session.SessionID, TierPlain,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -823,6 +826,7 @@ func TestStoreRejectsRunningFollowupSkipAtomically(t *testing.T) {
 
 func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	store := openTestStore(t)
+	checkpointSessionID := newConversationReference()
 	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
@@ -843,7 +847,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	if err := store.MarkRunningWithCheckpoint(
 		second.MessageID,
 		"partial follow-up",
-		"replacement-session",
+		checkpointSessionID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -856,7 +860,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 		plan.CommittedSequence != 1 {
 		t.Fatalf("abandon plan = %+v", plan)
 	}
-	if plan.CheckpointSessionID != "replacement-session" {
+	if plan.CheckpointSessionID != checkpointSessionID {
 		t.Fatalf("checkpoint session = %q", plan.CheckpointSessionID)
 	}
 	if err := store.CommitAbandon(plan, "stuck test client"); err != nil {
@@ -872,7 +876,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.SessionID != "replacement-session" || session.Sequence != 1 {
+	if session.SessionID != checkpointSessionID || session.Sequence != 1 {
 		t.Fatalf("replacement session = %+v", session)
 	}
 
@@ -883,7 +887,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	if err != nil || existed {
 		t.Fatalf("BeginMessage after unskip = %+v, %v, %v", restarted, existed, err)
 	}
-	if restarted.Session.SessionID != "replacement-session" || restarted.Session.Sequence != 2 ||
+	if restarted.Session.SessionID != checkpointSessionID || restarted.Session.Sequence != 2 ||
 		restarted.Session.IsNew {
 		t.Fatalf("clean continuation = %+v", restarted.Session)
 	}
@@ -908,8 +912,30 @@ func TestStoreAbandonRejectsNonRunningOrProvisionalMessage(t *testing.T) {
 	}
 }
 
+func TestStoreMarkRunningRejectsNonCanonicalCheckpointSessionID(t *testing.T) {
+	store := openTestStore(t)
+	pending, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.MarkRunningWithCheckpoint(
+		pending.MessageID,
+		"prompt",
+		"6de419b9-286d-4af7-8803-7ba6f475a8ce",
+	)
+	if err == nil || !strings.Contains(err.Error(), "canonical conversation reference") {
+		t.Fatalf("MarkRunningWithCheckpoint error = %v", err)
+	}
+	got, found, err := store.PendingByID(pending.MessageID)
+	if err != nil || !found || got.State != messageReceived || got.CheckpointSessionID != "" {
+		t.Fatalf("pending after invalid checkpoint = %+v, %v, %v", got, found, err)
+	}
+}
+
 func TestStoreAbandonRejectsStalePlanAtomically(t *testing.T) {
 	store := openTestStore(t)
+	checkpointSessionID := newConversationReference()
 	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
@@ -930,7 +956,7 @@ func TestStoreAbandonRejectsStalePlanAtomically(t *testing.T) {
 	if err := store.MarkRunningWithCheckpoint(
 		second.MessageID,
 		"partial",
-		"replacement-session",
+		checkpointSessionID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -1065,94 +1091,6 @@ func TestBeginMessageRejectsInvalidResponseTierOnNewThread(t *testing.T) {
 	}
 }
 
-func TestStoreMigratesPreResponseTierSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		t.Fatalf("open legacy database: %v", err)
-	}
-	legacySchema := `
-CREATE TABLE thread_sessions (
-    thread_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL UNIQUE,
-    sequence INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE processed_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    outbound_message_id TEXT NOT NULL DEFAULT '',
-    processed_at TEXT NOT NULL
-);
-CREATE TABLE pending_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    sequence INTEGER NOT NULL,
-    state TEXT NOT NULL,
-    prompt TEXT NOT NULL DEFAULT '',
-    result_kind TEXT NOT NULL DEFAULT '',
-    result_text TEXT NOT NULL DEFAULT '',
-    checkpoint_session_id TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(thread_id, sequence)
-);
-CREATE TABLE skipped_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    reason TEXT NOT NULL DEFAULT '',
-    skipped_at TEXT NOT NULL
-);
-INSERT INTO thread_sessions VALUES
-    ('legacy-thread', 'legacy-session', 1, 'completed', 'created', 'updated');`
-	if _, err := db.Exec(legacySchema); err != nil {
-		t.Fatalf("create legacy schema: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close legacy database: %v", err)
-	}
-
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatalf("migrate legacy store: %v", err)
-	}
-	defer store.Close()
-	var tier string
-	if err := store.db.QueryRow(
-		`SELECT response_tier FROM thread_sessions WHERE thread_id = ?`,
-		"legacy-thread",
-	).Scan(&tier); err != nil {
-		t.Fatalf("query migrated response tier: %v", err)
-	}
-	if tier != "plain" {
-		t.Fatalf("migrated response_tier = %q, want plain", tier)
-	}
-	legacy, err := store.Session("legacy-thread")
-	if err != nil {
-		t.Fatalf("Session after conversation-reference migration: %v", err)
-	}
-	if !validConversationReference(legacy.ConversationReference) {
-		t.Fatalf("migrated conversation reference = %q", legacy.ConversationReference)
-	}
-
-	pending, existed, err := store.BeginMessage("new", "legacy-thread", TierComplete)
-	if err != nil || existed {
-		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
-	}
-	if pending.Session.ResponseTier != TierPlain {
-		t.Fatalf("pending response tier = %q, want stored %q", pending.Session.ResponseTier, TierPlain)
-	}
-	session, err := store.Session("legacy-thread")
-	if err != nil {
-		t.Fatalf("Session: %v", err)
-	}
-	if session.ResponseTier != TierPlain {
-		t.Fatalf("session response tier = %q, want %q", session.ResponseTier, TierPlain)
-	}
-}
-
 func TestStoreResultWithManifestPersistsManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
 	store, err := OpenStore(path)
@@ -1198,123 +1136,6 @@ func TestStoreResultWithManifestPersistsManifest(t *testing.T) {
 	}
 	if err := reopened.Complete(pending.MessageID, "completed", "reply-1"); err != nil {
 		t.Fatalf("Complete: %v", err)
-	}
-}
-
-func TestStoreMigratesPreResultManifestSchema(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	db, err := sql.Open("sqlite3", path)
-	if err != nil {
-		t.Fatalf("open legacy database: %v", err)
-	}
-	legacySchema := `
-CREATE TABLE thread_sessions (
-    thread_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL UNIQUE,
-    sequence INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'active',
-    response_tier TEXT NOT NULL DEFAULT 'plain',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-CREATE TABLE processed_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    outbound_message_id TEXT NOT NULL DEFAULT '',
-    processed_at TEXT NOT NULL
-);
-CREATE TABLE pending_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    sequence INTEGER NOT NULL,
-    state TEXT NOT NULL,
-    prompt TEXT NOT NULL DEFAULT '',
-    result_kind TEXT NOT NULL DEFAULT '',
-    result_text TEXT NOT NULL DEFAULT '',
-    checkpoint_session_id TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    UNIQUE(thread_id, sequence)
-);
-CREATE TABLE skipped_messages (
-    message_id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    reason TEXT NOT NULL DEFAULT '',
-    skipped_at TEXT NOT NULL
-);`
-	if _, err := db.Exec(legacySchema); err != nil {
-		t.Fatalf("create legacy schema: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close legacy database: %v", err)
-	}
-
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatalf("migrate legacy store: %v", err)
-	}
-	defer store.Close()
-
-	rows, err := store.db.Query(`PRAGMA table_info(pending_messages)`)
-	if err != nil {
-		t.Fatalf("PRAGMA table_info: %v", err)
-	}
-	found := false
-	var defaultVal any
-	for rows.Next() {
-		var (
-			index      int
-			name       string
-			columnType string
-			notNull    int
-			value      any
-			primaryKey int
-		)
-		if err := rows.Scan(&index, &name, &columnType, &notNull, &value, &primaryKey); err != nil {
-			_ = rows.Close()
-			t.Fatalf("scan table info: %v", err)
-		}
-		if name == "result_manifest" {
-			found = true
-			defaultVal = value
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		t.Fatalf("iterate table info: %v", err)
-	}
-	if err := rows.Close(); err != nil {
-		t.Fatalf("close table info: %v", err)
-	}
-	if !found {
-		t.Fatal("pending_messages missing result_manifest column after migration")
-	}
-	if got := fmt.Sprint(defaultVal); got != "''" && got != "" {
-		t.Fatalf("result_manifest default = %#v, want empty string", defaultVal)
-	}
-
-	pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
-	if err != nil || existed {
-		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
-	}
-	if pending.ResultManifest != "" {
-		t.Fatalf("BeginMessage ResultManifest = %q, want empty", pending.ResultManifest)
-	}
-	if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
-		t.Fatalf("MarkRunning: %v", err)
-	}
-	if err := store.StoreResult(pending.MessageID, RunResult{Kind: ResultAnswer, Text: "answer"}); err != nil {
-		t.Fatalf("StoreResult: %v", err)
-	}
-	got, foundPending, err := store.PendingByID(pending.MessageID)
-	if err != nil || !foundPending {
-		t.Fatalf("PendingByID = %+v, %v, %v", got, foundPending, err)
-	}
-	if got.ResultManifest != "" {
-		t.Fatalf("ResultManifest after StoreResult = %q, want empty", got.ResultManifest)
-	}
-	if got.State != messageResultReady || got.ResultText != "answer" {
-		t.Fatalf("round-trip pending = %+v", got)
 	}
 }
 
