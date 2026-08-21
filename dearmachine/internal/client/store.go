@@ -798,11 +798,11 @@ func (s *Store) BeginMessageWithReference(
 		return PendingMessage{}, false, fmt.Errorf("resolve external thread: %w", err)
 	}
 	if !found {
-		conversationReference = canonicalConversationReference(conversationReference)
-		if conversationReference != "" {
+		fullReference := canonicalConversationReference(conversationReference)
+		if fullReference != "" {
 			err = tx.QueryRow(
 				`SELECT thread_id FROM thread_sessions WHERE conversation_ref = ?`,
-				conversationReference,
+				fullReference,
 			).Scan(&canonicalThreadID)
 			switch {
 			case err == nil:
@@ -811,6 +811,45 @@ func (s *Store) BeginMessageWithReference(
 				err = nil
 			default:
 				return PendingMessage{}, false, fmt.Errorf("resolve conversation reference: %w", err)
+			}
+		} else if shortReference := canonicalShortConversationReference(conversationReference); shortReference != "" {
+			rows, queryErr := tx.Query(
+				`SELECT thread_id, session_id, conversation_ref
+				   FROM thread_sessions
+				  WHERE conversation_ref LIKE ?`,
+				shortReference+"%",
+			)
+			if queryErr != nil {
+				return PendingMessage{}, false, fmt.Errorf("resolve short conversation reference: %w", queryErr)
+			}
+			candidateCount := 0
+			for rows.Next() {
+				var sessionID, candidateReference string
+				if err := rows.Scan(&canonicalThreadID, &sessionID, &candidateReference); err != nil {
+					rows.Close()
+					return PendingMessage{}, false, fmt.Errorf("scan short conversation reference: %w", err)
+				}
+				candidateCount++
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return PendingMessage{}, false, fmt.Errorf("query short conversation references: %w", err)
+			}
+			if err := rows.Close(); err != nil {
+				return PendingMessage{}, false, fmt.Errorf("close short conversation references: %w", err)
+			}
+			switch candidateCount {
+			case 1:
+				found = true
+			case 0:
+			default:
+				if s.warnings != nil {
+					s.warnings.Printf(
+						"conversation reference collision: short reference %q matches %d conversations; starting a new session",
+						shortReference,
+						candidateCount,
+					)
+				}
 			}
 		}
 	}

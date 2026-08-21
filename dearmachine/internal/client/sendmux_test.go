@@ -144,7 +144,8 @@ func TestSendmuxTransportContract(t *testing.T) {
 	if err != nil || !slices.Equal(messageIDs(messages), []string{"message-old-2", "message-new"}) {
 		t.Fatalf("Poll = %+v, %v", messages, err)
 	}
-	if messages[0].Body != "second" || !slices.Equal(messages[0].ConversationReferences, []string{fake.conversationReference}) || len(messages[0].Attachments) != 1 {
+	wantReference := canonicalInboundReference(shortConversationReference(fake.conversationReference))
+	if messages[0].Body != "second" || !slices.Equal(messages[0].ConversationReferences, []string{wantReference}) || len(messages[0].Attachments) != 1 {
 		t.Fatalf("normalized message = %+v", messages[0])
 	}
 

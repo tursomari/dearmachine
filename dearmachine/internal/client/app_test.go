@@ -1735,8 +1735,8 @@ func assertReplyText(t *testing.T, reply, want string) {
 	if clean != want {
 		t.Fatalf("reply body = %q, want %q", clean, want)
 	}
-	if len(references) != 1 || !validConversationReference(references[0]) {
-		t.Fatalf("reply references = %v, want one valid conversation reference", references)
+	if len(references) != 1 || canonicalShortConversationReference(references[0]) == "" {
+		t.Fatalf("reply references = %v, want one valid short conversation reference", references)
 	}
 }
 

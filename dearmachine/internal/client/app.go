@@ -70,6 +70,7 @@ func New(
 	if _, err := ParseResponseTier(string(responseTier)); err != nil {
 		return nil, err
 	}
+	store.warnings = logger
 	return &App{
 		transport:        transport,
 		store:            store,
