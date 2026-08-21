@@ -260,9 +260,8 @@ func (r *AgentRunner) Recover(
 }
 
 func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error {
-	sessionID = strings.TrimSpace(sessionID)
-	if !isCanonicalConversationReference(sessionID) {
-		return fmt.Errorf("agent session ID must be a canonical conversation reference")
+	if !isValidOpaqueSessionID(sessionID) {
+		return fmt.Errorf("agent session ID is invalid")
 	}
 	command := exec.CommandContext(
 		ctx,
@@ -315,15 +314,20 @@ func (r *AgentRunner) ForkSession(ctx context.Context, sessionID string) (string
 		)
 	}
 	forkedID := strings.TrimSpace(stdout.String())
-	if !isCanonicalConversationReference(forkedID) {
-		return "", fmt.Errorf(
-			"machtiani session fork returned a non-canonical conversation reference",
-		)
+	if !isValidOpaqueSessionID(forkedID) {
+		return "", fmt.Errorf("machtiani session fork returned an invalid session ID")
 	}
 	if forkedID == sessionID {
 		return "", fmt.Errorf("machtiani session fork returned the source session ID")
 	}
 	return forkedID, nil
+}
+
+func isValidOpaqueSessionID(sessionID string) bool {
+	return sessionID != "" &&
+		sessionID == strings.TrimSpace(sessionID) &&
+		len(strings.Fields(sessionID)) == 1 &&
+		!strings.ContainsAny(sessionID, "\r\n\x00")
 }
 
 func RemoveRecoveryResult(sessionID, messageID string) error {

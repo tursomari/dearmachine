@@ -408,9 +408,9 @@ func (s *Store) PrepareAbandon(messageID string) (AbandonPlan, error) {
 	if !isCanonicalConversationReference(plan.SessionID) {
 		return AbandonPlan{}, fmt.Errorf("stored canonical session ID %q is invalid", plan.SessionID)
 	}
-	if !isCanonicalConversationReference(plan.CheckpointSessionID) {
+	if !isValidOpaqueSessionID(plan.CheckpointSessionID) {
 		return AbandonPlan{}, fmt.Errorf(
-			"stored checkpoint session ID %q is not a canonical conversation reference",
+			"stored checkpoint session ID %q is invalid",
 			plan.CheckpointSessionID,
 		)
 	}
@@ -430,9 +430,11 @@ func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
 		plan.CheckpointSessionID == plan.SessionID {
 		return fmt.Errorf("valid pre-run session checkpoint is required")
 	}
-	if !isCanonicalConversationReference(plan.SessionID) ||
-		!isCanonicalConversationReference(plan.CheckpointSessionID) {
-		return fmt.Errorf("abandon session IDs must be canonical conversation references")
+	if !isCanonicalConversationReference(plan.SessionID) {
+		return fmt.Errorf("abandon source session ID must be a canonical conversation reference")
+	}
+	if !isValidOpaqueSessionID(plan.CheckpointSessionID) {
+		return fmt.Errorf("abandon checkpoint session ID is invalid")
 	}
 
 	tx, err := s.db.Begin()
@@ -898,8 +900,8 @@ func (s *Store) MarkRunning(messageID, prompt string) error {
 
 func (s *Store) MarkRunningWithCheckpoint(messageID, prompt, checkpointSessionID string) error {
 	checkpointSessionID = strings.TrimSpace(checkpointSessionID)
-	if checkpointSessionID != "" && !isCanonicalConversationReference(checkpointSessionID) {
-		return fmt.Errorf("checkpoint session ID must be a canonical conversation reference")
+	if checkpointSessionID != "" && !isValidOpaqueSessionID(checkpointSessionID) {
+		return fmt.Errorf("checkpoint session ID is invalid")
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(
@@ -1106,9 +1108,9 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		)
 	}
 	if pending.CheckpointSessionID != "" &&
-		!isCanonicalConversationReference(pending.CheckpointSessionID) {
+		!isValidOpaqueSessionID(pending.CheckpointSessionID) {
 		return PendingMessage{}, fmt.Errorf(
-			"stored checkpoint session ID %q is not a canonical conversation reference",
+			"stored checkpoint session ID %q is invalid",
 			pending.CheckpointSessionID,
 		)
 	}
