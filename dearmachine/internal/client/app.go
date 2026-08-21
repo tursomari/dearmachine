@@ -357,11 +357,7 @@ func (a *App) processPending(
 	case messageReceived:
 		checkpointSessionID := ""
 		if !pending.Session.IsNew {
-			machtianiID, resolveErr := a.runner.machtianiSessionID(ctx, pending.Session)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			checkpointSessionID, err = a.runner.ForkSession(ctx, machtianiID)
+			checkpointSessionID, err = a.runner.ForkSession(ctx, pending.Session.SessionID)
 			if err != nil {
 				return fmt.Errorf("checkpoint committed agent session before follow-up: %w", err)
 			}
@@ -418,7 +414,7 @@ func (a *App) processPending(
 		}
 	}
 
-	replyText := appendConversationFooter(result.Text, pending.Session.ConversationReference)
+	replyText := appendConversationFooter(result.Text, pending.Session.SessionID)
 	payload := ReplyPayload{Text: replyText}
 	tier := a.tierFor(pending)
 	if tier != TierPlain {

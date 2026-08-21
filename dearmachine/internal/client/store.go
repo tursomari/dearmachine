@@ -1,7 +1,6 @@
 package client
 
 import (
-	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -20,13 +19,12 @@ type Store struct {
 }
 
 type Session struct {
-	ThreadID              string
-	SessionID             string
-	ConversationReference string
-	Sequence              int
-	Status                string
-	IsNew                 bool
-	ResponseTier          ResponseTier
+	ThreadID     string
+	SessionID    string
+	Sequence     int
+	Status       string
+	IsNew        bool
+	ResponseTier ResponseTier
 }
 
 type PendingMessage struct {
@@ -137,7 +135,6 @@ func (s *Store) migrate() error {
 CREATE TABLE IF NOT EXISTS thread_sessions (
     thread_id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL UNIQUE,
-    conversation_ref TEXT NOT NULL DEFAULT '',
     sequence INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',
     response_tier TEXT NOT NULL DEFAULT 'plain',
@@ -180,91 +177,6 @@ CREATE TABLE IF NOT EXISTS thread_aliases (
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
-	}
-	if err := s.addColumnIfMissing(
-		"thread_sessions",
-		"response_tier",
-		`TEXT NOT NULL DEFAULT 'plain'`,
-	); err != nil {
-		return err
-	}
-	if err := s.addColumnIfMissing(
-		"thread_sessions",
-		"conversation_ref",
-		`TEXT NOT NULL DEFAULT ''`,
-	); err != nil {
-		return err
-	}
-	if err := s.addColumnIfMissing(
-		"processed_messages",
-		"outbound_message_id",
-		`TEXT NOT NULL DEFAULT ''`,
-	); err != nil {
-		return err
-	}
-	if err := s.addColumnIfMissing(
-		"pending_messages",
-		"checkpoint_session_id",
-		`TEXT NOT NULL DEFAULT ''`,
-	); err != nil {
-		return err
-	}
-	if err := s.addColumnIfMissing(
-		"pending_messages",
-		"result_manifest",
-		`TEXT NOT NULL DEFAULT ''`,
-	); err != nil {
-		return err
-	}
-	return s.migrateConversationReferences()
-}
-
-func (s *Store) migrateConversationReferences() error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin conversation-reference migration: %w", err)
-	}
-	defer tx.Rollback()
-
-	rows, err := tx.Query(`SELECT thread_id FROM thread_sessions WHERE conversation_ref = ''`)
-	if err != nil {
-		return fmt.Errorf("query conversations without references: %w", err)
-	}
-	var threadIDs []string
-	for rows.Next() {
-		var threadID string
-		if err := rows.Scan(&threadID); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan conversation without reference: %w", err)
-		}
-		threadIDs = append(threadIDs, threadID)
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close conversation-reference migration rows: %w", err)
-	}
-	for _, threadID := range threadIDs {
-		if _, err := tx.Exec(
-			`UPDATE thread_sessions SET conversation_ref = ? WHERE thread_id = ? AND conversation_ref = ''`,
-			newConversationReference(),
-			threadID,
-		); err != nil {
-			return fmt.Errorf("backfill conversation reference for thread %s: %w", threadID, err)
-		}
-	}
-	if _, err := tx.Exec(
-		`CREATE UNIQUE INDEX IF NOT EXISTS thread_sessions_conversation_ref
-		     ON thread_sessions(conversation_ref) WHERE conversation_ref <> ''`,
-	); err != nil {
-		return fmt.Errorf("index conversation references: %w", err)
-	}
-	if _, err := tx.Exec(
-		`INSERT OR IGNORE INTO thread_aliases (external_thread_id, canonical_thread_id)
-		 SELECT thread_id, thread_id FROM thread_sessions`,
-	); err != nil {
-		return fmt.Errorf("seed canonical thread aliases: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit conversation-reference migration: %w", err)
 	}
 	return nil
 }
@@ -361,6 +273,9 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 				pendingThread,
 				externalThreadID,
 			)
+		}
+		if err == nil && !isCanonicalConversationReference(sessionID) {
+			return nil, fmt.Errorf("stored canonical session ID %q is invalid", sessionID)
 		}
 		if err == nil && pendingState != messageReceived && committedSequence > 0 {
 			return nil, fmt.Errorf(
@@ -490,6 +405,15 @@ func (s *Store) PrepareAbandon(messageID string) (AbandonPlan, error) {
 			messageID,
 		)
 	}
+	if !isCanonicalConversationReference(plan.SessionID) {
+		return AbandonPlan{}, fmt.Errorf("stored canonical session ID %q is invalid", plan.SessionID)
+	}
+	if !isCanonicalConversationReference(plan.CheckpointSessionID) {
+		return AbandonPlan{}, fmt.Errorf(
+			"stored checkpoint session ID %q is not a canonical conversation reference",
+			plan.CheckpointSessionID,
+		)
+	}
 	return plan, nil
 }
 
@@ -505,6 +429,10 @@ func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
 	if strings.TrimSpace(plan.CheckpointSessionID) == "" ||
 		plan.CheckpointSessionID == plan.SessionID {
 		return fmt.Errorf("valid pre-run session checkpoint is required")
+	}
+	if !isCanonicalConversationReference(plan.SessionID) ||
+		!isCanonicalConversationReference(plan.CheckpointSessionID) {
+		return fmt.Errorf("abandon session IDs must be canonical conversation references")
 	}
 
 	tx, err := s.db.Begin()
@@ -686,47 +614,6 @@ func (s *Store) SkippedMessages() ([]SkippedMessage, error) {
 	return messages, nil
 }
 
-func (s *Store) addColumnIfMissing(table, column, declaration string) error {
-	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return fmt.Errorf("inspect SQLite table %s: %w", table, err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var (
-			index      int
-			name       string
-			columnType string
-			notNull    int
-			defaultVal any
-			primaryKey int
-		)
-		if err := rows.Scan(
-			&index,
-			&name,
-			&columnType,
-			&notNull,
-			&defaultVal,
-			&primaryKey,
-		); err != nil {
-			return fmt.Errorf("scan SQLite table %s: %w", table, err)
-		}
-		if name == column {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("inspect SQLite table %s: %w", table, err)
-	}
-	if _, err := s.db.Exec(
-		`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + declaration,
-	); err != nil {
-		return fmt.Errorf("add SQLite column %s.%s: %w", table, column, err)
-	}
-	return nil
-}
-
 func (s *Store) Seen(messageID string) (bool, error) {
 	var found int
 	err := s.db.QueryRow(
@@ -755,6 +642,15 @@ func (s *Store) CountProcessedSince(since time.Time) (int, error) {
 
 func (s *Store) BeginMessage(messageID, threadID string, responseTier ResponseTier) (PendingMessage, bool, error) {
 	return s.BeginMessageWithReference(messageID, threadID, "", responseTier)
+}
+
+func (s *Store) warnUnknownConversationReference(reference string) {
+	if s.warnings != nil {
+		s.warnings.Printf(
+			"unknown conversation reference: reference %q matches no conversations; starting a new session",
+			reference,
+		)
+	}
 }
 
 func (s *Store) BeginMessageWithReference(
@@ -801,7 +697,7 @@ func (s *Store) BeginMessageWithReference(
 		fullReference := canonicalConversationReference(conversationReference)
 		if fullReference != "" {
 			err = tx.QueryRow(
-				`SELECT thread_id FROM thread_sessions WHERE conversation_ref = ?`,
+				`SELECT thread_id FROM thread_sessions WHERE session_id = ?`,
 				fullReference,
 			).Scan(&canonicalThreadID)
 			switch {
@@ -809,14 +705,15 @@ func (s *Store) BeginMessageWithReference(
 				found = true
 			case errors.Is(err, sql.ErrNoRows):
 				err = nil
+				s.warnUnknownConversationReference(fullReference)
 			default:
 				return PendingMessage{}, false, fmt.Errorf("resolve conversation reference: %w", err)
 			}
 		} else if shortReference := canonicalShortConversationReference(conversationReference); shortReference != "" {
 			rows, queryErr := tx.Query(
-				`SELECT thread_id, session_id, conversation_ref
+				`SELECT thread_id
 				   FROM thread_sessions
-				  WHERE conversation_ref LIKE ?`,
+				  WHERE session_id LIKE ?`,
 				shortReference+"%",
 			)
 			if queryErr != nil {
@@ -824,11 +721,12 @@ func (s *Store) BeginMessageWithReference(
 			}
 			candidateCount := 0
 			for rows.Next() {
-				var sessionID, candidateReference string
-				if err := rows.Scan(&canonicalThreadID, &sessionID, &candidateReference); err != nil {
+				var candidateThreadID string
+				if err := rows.Scan(&candidateThreadID); err != nil {
 					rows.Close()
 					return PendingMessage{}, false, fmt.Errorf("scan short conversation reference: %w", err)
 				}
+				canonicalThreadID = candidateThreadID
 				candidateCount++
 			}
 			if err := rows.Err(); err != nil {
@@ -842,6 +740,7 @@ func (s *Store) BeginMessageWithReference(
 			case 1:
 				found = true
 			case 0:
+				s.warnUnknownConversationReference(shortReference)
 			default:
 				if s.warnings != nil {
 					s.warnings.Printf(
@@ -857,7 +756,7 @@ func (s *Store) BeginMessageWithReference(
 	var session Session
 	if found {
 		err = scanSession(tx.QueryRow(
-			`SELECT thread_id, session_id, conversation_ref, sequence, status, response_tier
+			`SELECT thread_id, session_id, sequence, status, response_tier
 			   FROM thread_sessions WHERE thread_id = ?`,
 			canonicalThreadID,
 		), &session)
@@ -874,21 +773,19 @@ func (s *Store) BeginMessageWithReference(
 			return PendingMessage{}, false, fmt.Errorf("prepare thread session: %w", err)
 		}
 		session = Session{
-			ThreadID:              externalThreadID,
-			SessionID:             newUUID(),
-			ConversationReference: newConversationReference(),
-			Sequence:              0,
-			Status:                "active",
-			IsNew:                 true,
-			ResponseTier:          tier,
+			ThreadID:     externalThreadID,
+			SessionID:    newConversationReference(),
+			Sequence:     0,
+			Status:       "active",
+			IsNew:        true,
+			ResponseTier: tier,
 		}
 		_, err = tx.Exec(
 			`INSERT INTO thread_sessions
-			     (thread_id, session_id, conversation_ref, sequence, status, response_tier, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			session.ThreadID,
 			session.SessionID,
-			session.ConversationReference,
 			session.Sequence,
 			session.Status,
 			session.ResponseTier,
@@ -934,13 +831,12 @@ func (s *Store) BeginMessageWithReference(
 		MessageID: messageID,
 		ThreadID:  session.ThreadID,
 		Session: Session{
-			ThreadID:              session.ThreadID,
-			SessionID:             session.SessionID,
-			ConversationReference: session.ConversationReference,
-			Sequence:              latestSequence + 1,
-			Status:                session.Status,
-			IsNew:                 session.Sequence == 0,
-			ResponseTier:          session.ResponseTier,
+			ThreadID:     session.ThreadID,
+			SessionID:    session.SessionID,
+			Sequence:     latestSequence + 1,
+			Status:       session.Status,
+			IsNew:        session.Sequence == 0,
+			ResponseTier: session.ResponseTier,
 		},
 		State: messageReceived,
 	}
@@ -1001,6 +897,10 @@ func (s *Store) MarkRunning(messageID, prompt string) error {
 }
 
 func (s *Store) MarkRunningWithCheckpoint(messageID, prompt, checkpointSessionID string) error {
+	checkpointSessionID = strings.TrimSpace(checkpointSessionID)
+	if checkpointSessionID != "" && !isCanonicalConversationReference(checkpointSessionID) {
+		return fmt.Errorf("checkpoint session ID must be a canonical conversation reference")
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := s.db.Exec(
 		`UPDATE pending_messages
@@ -1008,7 +908,7 @@ func (s *Store) MarkRunningWithCheckpoint(messageID, prompt, checkpointSessionID
 		  WHERE message_id = ? AND state = ?`,
 		messageRunning,
 		prompt,
-		strings.TrimSpace(checkpointSessionID),
+		checkpointSessionID,
 		now,
 		messageID,
 		messageReceived,
@@ -1152,7 +1052,6 @@ const pendingMessageQuery = `
 SELECT p.message_id,
        p.thread_id,
        t.session_id,
-	   t.conversation_ref,
        p.sequence,
        t.status,
        t.response_tier,
@@ -1178,7 +1077,6 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.MessageID,
 		&pending.ThreadID,
 		&pending.Session.SessionID,
-		&pending.Session.ConversationReference,
 		&pending.Session.Sequence,
 		&pending.Session.Status,
 		&storedTier,
@@ -1201,10 +1099,17 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 			err,
 		)
 	}
-	if !validConversationReference(pending.Session.ConversationReference) {
+	if !isCanonicalConversationReference(pending.Session.SessionID) {
 		return PendingMessage{}, fmt.Errorf(
-			"stored conversation reference %q is invalid",
-			pending.Session.ConversationReference,
+			"stored canonical session ID %q is invalid",
+			pending.Session.SessionID,
+		)
+	}
+	if pending.CheckpointSessionID != "" &&
+		!isCanonicalConversationReference(pending.CheckpointSessionID) {
+		return PendingMessage{}, fmt.Errorf(
+			"stored checkpoint session ID %q is not a canonical conversation reference",
+			pending.CheckpointSessionID,
 		)
 	}
 	pending.Session.ThreadID = pending.ThreadID
@@ -1216,7 +1121,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 func (s *Store) Session(threadID string) (Session, error) {
 	var session Session
 	err := scanSession(s.db.QueryRow(
-		`SELECT t.thread_id, t.session_id, t.conversation_ref, t.sequence, t.status, t.response_tier
+		`SELECT t.thread_id, t.session_id, t.sequence, t.status, t.response_tier
 		   FROM thread_aliases a
 		   JOIN thread_sessions t ON t.thread_id = a.canonical_thread_id
 		  WHERE a.external_thread_id = ?`,
@@ -1245,7 +1150,6 @@ func scanSession(row rowScanner, session *Session) error {
 	err := row.Scan(
 		&session.ThreadID,
 		&session.SessionID,
-		&session.ConversationReference,
 		&session.Sequence,
 		&session.Status,
 		&storedTier,
@@ -1261,29 +1165,12 @@ func scanSession(row rowScanner, session *Session) error {
 			err,
 		)
 	}
-	if !validConversationReference(session.ConversationReference) {
+	if !isCanonicalConversationReference(session.SessionID) {
 		return fmt.Errorf(
-			"stored conversation reference %q is invalid",
-			session.ConversationReference,
+			"stored canonical session ID %q is invalid",
+			session.SessionID,
 		)
 	}
 	session.ResponseTier = tier
 	return nil
-}
-
-func newUUID() string {
-	var id [16]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		panic(fmt.Sprintf("generate session UUID: %v", err))
-	}
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return fmt.Sprintf(
-		"%08x-%04x-%04x-%04x-%012x",
-		id[0:4],
-		id[4:6],
-		id[6:8],
-		id[8:10],
-		id[10:16],
-	)
 }

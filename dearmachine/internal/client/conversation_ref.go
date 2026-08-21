@@ -64,6 +64,10 @@ func canonicalConversationReference(reference string) string {
 	return reference
 }
 
+func isCanonicalConversationReference(reference string) bool {
+	return reference != "" && canonicalConversationReference(reference) == reference
+}
+
 func canonicalShortConversationReference(reference string) string {
 	reference = strings.ToUpper(strings.TrimSpace(reference))
 	if !strings.HasPrefix(reference, conversationReferencePrefix) {

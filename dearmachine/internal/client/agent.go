@@ -146,9 +146,9 @@ func (r *AgentRunner) Run(
 	if strings.TrimSpace(finalPath) == "" {
 		return RunResult{}, fmt.Errorf("agent final answer path is required")
 	}
-	machtianiID, err := r.machtianiSessionID(ctx, session)
-	if err != nil {
-		return RunResult{}, err
+	machtianiID := session.SessionID
+	if !isCanonicalConversationReference(machtianiID) {
+		return RunResult{}, fmt.Errorf("agent session ID must be a canonical conversation reference")
 	}
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
 		return RunResult{}, fmt.Errorf("create agent output directory: %w", err)
@@ -235,9 +235,9 @@ func (r *AgentRunner) Recover(
 	if err := r.ValidateTurnContext(tc); err != nil {
 		return RunResult{}, fmt.Errorf("validate turn context: %w", err)
 	}
-	machtianiID, err := r.machtianiSessionID(ctx, session)
-	if err != nil {
-		return RunResult{}, err
+	machtianiID := session.SessionID
+	if !isCanonicalConversationReference(machtianiID) {
+		return RunResult{}, fmt.Errorf("agent session ID must be a canonical conversation reference")
 	}
 	state, err := r.showSession(ctx, machtianiID)
 	if err != nil || state.Goal != originalPrompt {
@@ -261,8 +261,8 @@ func (r *AgentRunner) Recover(
 
 func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error {
 	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return fmt.Errorf("agent session ID is required")
+	if !isCanonicalConversationReference(sessionID) {
+		return fmt.Errorf("agent session ID must be a canonical conversation reference")
 	}
 	command := exec.CommandContext(
 		ctx,
@@ -291,8 +291,8 @@ func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error
 // the fork, which makes this suitable for abandoning an interrupted turn.
 func (r *AgentRunner) ForkSession(ctx context.Context, sessionID string) (string, error) {
 	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return "", fmt.Errorf("agent session ID is required")
+	if !isCanonicalConversationReference(sessionID) {
+		return "", fmt.Errorf("agent session ID must be a canonical conversation reference")
 	}
 	command := exec.CommandContext(
 		ctx,
@@ -315,8 +315,10 @@ func (r *AgentRunner) ForkSession(ctx context.Context, sessionID string) (string
 		)
 	}
 	forkedID := strings.TrimSpace(stdout.String())
-	if forkedID == "" || len(strings.Fields(forkedID)) != 1 {
-		return "", fmt.Errorf("machtiani session fork returned an invalid session ID")
+	if !isCanonicalConversationReference(forkedID) {
+		return "", fmt.Errorf(
+			"machtiani session fork returned a non-canonical conversation reference",
+		)
 	}
 	if forkedID == sessionID {
 		return "", fmt.Errorf("machtiani session fork returned the source session ID")
@@ -396,29 +398,6 @@ func (r *AgentRunner) showSession(ctx context.Context, sessionID string) (sessio
 		return sessionState{}, fmt.Errorf("parse machtiani session status: %w", err)
 	}
 	return state, nil
-}
-
-// machtianiSessionID resolves the on-disk session name. Missing sessions are
-// recognized from Stage 2's "unknown session:" diagnostic or mainline's
-// "Error reading conversation file for session" plus "no such file or directory".
-func (r *AgentRunner) machtianiSessionID(ctx context.Context, session Session) (string, error) {
-	if session.ConversationReference == "" {
-		return session.SessionID, nil
-	}
-	if session.IsNew {
-		return session.ConversationReference, nil
-	}
-
-	if _, err := r.showSession(ctx, session.ConversationReference); err != nil {
-		diagnostic := err.Error()
-		if strings.Contains(diagnostic, "unknown session:") ||
-			(strings.Contains(diagnostic, "Error reading conversation file for session") &&
-				strings.Contains(diagnostic, "no such file or directory")) {
-			return session.SessionID, nil
-		}
-		return "", err
-	}
-	return session.ConversationReference, nil
 }
 
 func (r *AgentRunner) runCommand(command *exec.Cmd) error {
