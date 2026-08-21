@@ -146,6 +146,10 @@ func (r *AgentRunner) Run(
 	if strings.TrimSpace(finalPath) == "" {
 		return RunResult{}, fmt.Errorf("agent final answer path is required")
 	}
+	machtianiID, err := r.machtianiSessionID(ctx, session)
+	if err != nil {
+		return RunResult{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
 		return RunResult{}, fmt.Errorf("create agent output directory: %w", err)
 	}
@@ -157,7 +161,7 @@ func (r *AgentRunner) Run(
 		"--prompt", text,
 	}
 	if !session.IsNew {
-		args = append(args, "--session-id", session.SessionID)
+		args = append(args, "--session-id", machtianiID)
 	}
 	if r.model != "" {
 		args = append(args, "--model", r.model)
@@ -192,7 +196,7 @@ func (r *AgentRunner) Run(
 	command.Env = setEnv(command.Env, "DEARMACHINE_ATTACHMENTS_OUTBOX", tc.OutboxPath)
 	command.Env = setEnv(command.Env, "DEARMACHINE_ATTACHMENTS_MANIFEST", tc.ManifestPath)
 	if session.IsNew {
-		command.Env = setEnv(command.Env, "MACHTIANI_SESSION_ID", session.SessionID)
+		command.Env = setEnv(command.Env, "MACHTIANI_SESSION_ID", machtianiID)
 	}
 	var runOutput bytes.Buffer
 	command.Stdout = &runOutput
@@ -204,7 +208,7 @@ func (r *AgentRunner) Run(
 		return RunResult{}, fmt.Errorf("machtiani run failed: %w: %s", err, strings.TrimSpace(runOutput.String()))
 	}
 
-	state, err := r.showSession(ctx, session.SessionID)
+	state, err := r.showSession(ctx, machtianiID)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -231,7 +235,11 @@ func (r *AgentRunner) Recover(
 	if err := r.ValidateTurnContext(tc); err != nil {
 		return RunResult{}, fmt.Errorf("validate turn context: %w", err)
 	}
-	state, err := r.showSession(ctx, session.SessionID)
+	machtianiID, err := r.machtianiSessionID(ctx, session)
+	if err != nil {
+		return RunResult{}, err
+	}
+	state, err := r.showSession(ctx, machtianiID)
 	if err != nil || state.Goal != originalPrompt {
 		return r.Run(ctx, session, originalPrompt, finalPath, tc)
 	}
@@ -388,6 +396,29 @@ func (r *AgentRunner) showSession(ctx context.Context, sessionID string) (sessio
 		return sessionState{}, fmt.Errorf("parse machtiani session status: %w", err)
 	}
 	return state, nil
+}
+
+// machtianiSessionID resolves the on-disk session name. Missing sessions are
+// recognized from Stage 2's "unknown session:" diagnostic or mainline's
+// "Error reading conversation file for session" plus "no such file or directory".
+func (r *AgentRunner) machtianiSessionID(ctx context.Context, session Session) (string, error) {
+	if session.ConversationReference == "" {
+		return session.SessionID, nil
+	}
+	if session.IsNew {
+		return session.ConversationReference, nil
+	}
+
+	if _, err := r.showSession(ctx, session.ConversationReference); err != nil {
+		diagnostic := err.Error()
+		if strings.Contains(diagnostic, "unknown session:") ||
+			(strings.Contains(diagnostic, "Error reading conversation file for session") &&
+				strings.Contains(diagnostic, "no such file or directory")) {
+			return session.SessionID, nil
+		}
+		return "", err
+	}
+	return session.ConversationReference, nil
 }
 
 func (r *AgentRunner) runCommand(command *exec.Cmd) error {
