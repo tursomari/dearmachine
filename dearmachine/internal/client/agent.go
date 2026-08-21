@@ -288,16 +288,29 @@ func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error
 // ForkSession creates a clean continuation from the committed state of an
 // inactive agent session. machtiani excludes disposable shell-agent state from
 // the fork, which makes this suitable for abandoning an interrupted turn.
-func (r *AgentRunner) ForkSession(ctx context.Context, sessionID string) (string, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if !isCanonicalConversationReference(sessionID) {
-		return "", fmt.Errorf("agent session ID must be a canonical conversation reference")
+func (r *AgentRunner) ForkSession(
+	ctx context.Context,
+	sourceID, destinationID string,
+) (string, error) {
+	sourceID = strings.TrimSpace(sourceID)
+	destinationID = strings.TrimSpace(destinationID)
+	if destinationID == "" {
+		if !isCanonicalConversationReference(sourceID) {
+			return "", fmt.Errorf("agent session ID must be a canonical conversation reference")
+		}
+	} else {
+		if !isValidOpaqueSessionID(sourceID) {
+			return "", fmt.Errorf("agent source session ID is invalid")
+		}
+		if !isCanonicalConversationReference(destinationID) {
+			return "", fmt.Errorf("agent destination session ID must be a canonical conversation reference")
+		}
 	}
-	command := exec.CommandContext(
-		ctx,
-		r.binary,
-		"session", "fork", sessionID,
-	)
+	arguments := []string{"session", "fork", sourceID}
+	if destinationID != "" {
+		arguments = append(arguments, destinationID)
+	}
+	command := exec.CommandContext(ctx, r.binary, arguments...)
 	command.Dir = r.projectDir
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -317,8 +330,15 @@ func (r *AgentRunner) ForkSession(ctx context.Context, sessionID string) (string
 	if !isValidOpaqueSessionID(forkedID) {
 		return "", fmt.Errorf("machtiani session fork returned an invalid session ID")
 	}
-	if forkedID == sessionID {
+	if forkedID == sourceID {
 		return "", fmt.Errorf("machtiani session fork returned the source session ID")
+	}
+	if destinationID != "" && forkedID != destinationID {
+		return "", fmt.Errorf(
+			"machtiani session fork returned %q instead of destination %q",
+			forkedID,
+			destinationID,
+		)
 	}
 	return forkedID, nil
 }

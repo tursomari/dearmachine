@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/mattn/go-sqlite3"
 )
 
 type Store struct {
-	db       *sql.DB
-	warnings *log.Logger
+	db                 *sql.DB
+	warnings           *log.Logger
+	referenceGenerator func() string
 }
 
 type Session struct {
@@ -69,9 +70,10 @@ type AbandonPlan struct {
 }
 
 const (
-	messageReceived    = "received"
-	messageRunning     = "running"
-	messageResultReady = "result_ready"
+	messageReceived              = "received"
+	messageRunning               = "running"
+	messageResultReady           = "result_ready"
+	sessionReferenceInsertTrials = 10
 )
 
 var errMessageSkipped = errors.New("message is locally skipped")
@@ -118,7 +120,7 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("configure SQLite busy timeout: %w", err)
 	}
 
-	store := &Store{db: db}
+	store := &Store{db: db, referenceGenerator: newConversationReference}
 	if err := store.migrate(); err != nil {
 		db.Close()
 		return nil, err
@@ -417,10 +419,10 @@ func (s *Store) PrepareAbandon(messageID string) (AbandonPlan, error) {
 	return plan, nil
 }
 
-// CommitAbandon atomically remaps a thread to a clean fork of its committed
-// agent history, records the partial message as locally skipped, and removes its
-// durable pending row. The plan is revalidated so a stale plan cannot rewrite
-// newer state.
+// CommitAbandon atomically records the partial message as locally skipped and
+// removes its durable pending row. The stable canonical session ID remains
+// unchanged while the caller restores the clean checkpoint on disk. The plan is
+// revalidated so stale state cannot be abandoned.
 func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
 	if strings.TrimSpace(plan.MessageID) == "" || strings.TrimSpace(plan.ThreadID) == "" ||
 		strings.TrimSpace(plan.SessionID) == "" {
@@ -495,27 +497,6 @@ func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	update, err := tx.Exec(
-		`UPDATE thread_sessions
-		    SET session_id = ?, updated_at = ?
-		  WHERE thread_id = ? AND session_id = ? AND sequence = ?`,
-		plan.CheckpointSessionID,
-		now,
-		plan.ThreadID,
-		plan.SessionID,
-		plan.CommittedSequence,
-	)
-	if err != nil {
-		return fmt.Errorf("replace abandoned agent session: %w", err)
-	}
-	changed, err := update.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check abandoned agent session replacement: %w", err)
-	}
-	if changed != 1 {
-		return fmt.Errorf("thread session changed before abandonment")
-	}
-
 	if _, err := tx.Exec(
 		`INSERT INTO skipped_messages (message_id, thread_id, reason, skipped_at)
 		 VALUES (?, ?, ?, ?)
@@ -534,7 +515,7 @@ func (s *Store) CommitAbandon(plan AbandonPlan, reason string) error {
 	if err != nil {
 		return fmt.Errorf("remove abandoned pending message: %w", err)
 	}
-	changed, err = deleted.RowsAffected()
+	changed, err := deleted.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("check abandoned pending message removal: %w", err)
 	}
@@ -655,6 +636,42 @@ func (s *Store) warnUnknownConversationReference(reference string) {
 	}
 }
 
+func (s *Store) insertThreadSession(tx *sql.Tx, session Session, now string) (string, error) {
+	generate := s.referenceGenerator
+	if generate == nil {
+		generate = newConversationReference
+	}
+	for range sessionReferenceInsertTrials {
+		sessionID := generate()
+		if !isCanonicalConversationReference(sessionID) {
+			return "", fmt.Errorf("generated session ID %q is not canonical", sessionID)
+		}
+		_, err := tx.Exec(
+			`INSERT INTO thread_sessions
+			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			session.ThreadID,
+			sessionID,
+			session.Sequence,
+			session.Status,
+			session.ResponseTier,
+			now,
+			now,
+		)
+		if err == nil {
+			return sessionID, nil
+		}
+		var sqliteErr sqlite3.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.ExtendedCode != sqlite3.ErrConstraintUnique {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf(
+		"generate unique session ID after %d attempts",
+		sessionReferenceInsertTrials,
+	)
+}
+
 func (s *Store) BeginMessageWithReference(
 	messageID, externalThreadID, conversationReference string,
 	responseTier ResponseTier,
@@ -696,61 +713,20 @@ func (s *Store) BeginMessageWithReference(
 		return PendingMessage{}, false, fmt.Errorf("resolve external thread: %w", err)
 	}
 	if !found {
-		fullReference := canonicalConversationReference(conversationReference)
-		if fullReference != "" {
+		reference := canonicalInboundReference(conversationReference)
+		if reference != "" {
 			err = tx.QueryRow(
 				`SELECT thread_id FROM thread_sessions WHERE session_id = ?`,
-				fullReference,
+				reference,
 			).Scan(&canonicalThreadID)
 			switch {
 			case err == nil:
 				found = true
 			case errors.Is(err, sql.ErrNoRows):
 				err = nil
-				s.warnUnknownConversationReference(fullReference)
+				s.warnUnknownConversationReference(reference)
 			default:
 				return PendingMessage{}, false, fmt.Errorf("resolve conversation reference: %w", err)
-			}
-		} else if shortReference := canonicalShortConversationReference(conversationReference); shortReference != "" {
-			rows, queryErr := tx.Query(
-				`SELECT thread_id
-				   FROM thread_sessions
-				  WHERE session_id LIKE ?`,
-				shortReference+"%",
-			)
-			if queryErr != nil {
-				return PendingMessage{}, false, fmt.Errorf("resolve short conversation reference: %w", queryErr)
-			}
-			candidateCount := 0
-			for rows.Next() {
-				var candidateThreadID string
-				if err := rows.Scan(&candidateThreadID); err != nil {
-					rows.Close()
-					return PendingMessage{}, false, fmt.Errorf("scan short conversation reference: %w", err)
-				}
-				canonicalThreadID = candidateThreadID
-				candidateCount++
-			}
-			if err := rows.Err(); err != nil {
-				rows.Close()
-				return PendingMessage{}, false, fmt.Errorf("query short conversation references: %w", err)
-			}
-			if err := rows.Close(); err != nil {
-				return PendingMessage{}, false, fmt.Errorf("close short conversation references: %w", err)
-			}
-			switch candidateCount {
-			case 1:
-				found = true
-			case 0:
-				s.warnUnknownConversationReference(shortReference)
-			default:
-				if s.warnings != nil {
-					s.warnings.Printf(
-						"conversation reference collision: short reference %q matches %d conversations; starting a new session",
-						shortReference,
-						candidateCount,
-					)
-				}
 			}
 		}
 	}
@@ -776,24 +752,12 @@ func (s *Store) BeginMessageWithReference(
 		}
 		session = Session{
 			ThreadID:     externalThreadID,
-			SessionID:    newConversationReference(),
 			Sequence:     0,
 			Status:       "active",
 			IsNew:        true,
 			ResponseTier: tier,
 		}
-		_, err = tx.Exec(
-			`INSERT INTO thread_sessions
-			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			session.ThreadID,
-			session.SessionID,
-			session.Sequence,
-			session.Status,
-			session.ResponseTier,
-			now,
-			now,
-		)
+		session.SessionID, err = s.insertThreadSession(tx, session, now)
 	}
 	if err != nil {
 		return PendingMessage{}, false, fmt.Errorf("prepare thread session: %w", err)

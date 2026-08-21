@@ -12,7 +12,7 @@ import (
 
 const (
 	conversationReferencePrefix   = "DM1-"
-	conversationReferenceBytes    = 16
+	legacyConversationRefBytes    = 16
 	conversationReferenceAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 	shortConversationPayloadChars = 11
 	conversationFooterMotto       = "Magnifica Humanitas"
@@ -26,12 +26,16 @@ var (
 )
 
 func newConversationReference() string {
-	var entropy [conversationReferenceBytes]byte
+	var entropy [shortConversationPayloadChars]byte
 	if _, err := rand.Read(entropy[:]); err != nil {
 		panic(fmt.Sprintf("generate conversation reference: %v", err))
 	}
-	payload := conversationReferenceEncoding.EncodeToString(entropy[:])
-	return conversationReferencePrefix + payload + string(conversationReferenceChecksum(payload))
+	payload := make([]byte, len(entropy))
+	for index, value := range entropy {
+		payload[index] = conversationReferenceAlphabet[value&31]
+	}
+	lower := strings.ToLower(string(payload))
+	return "dm1-" + lower[:5] + "-" + lower[5:]
 }
 
 func conversationReferenceChecksum(payload string) byte {
@@ -40,66 +44,48 @@ func conversationReferenceChecksum(payload string) byte {
 }
 
 func validConversationReference(reference string) bool {
-	reference = strings.ToUpper(strings.TrimSpace(reference))
-	if !strings.HasPrefix(reference, conversationReferencePrefix) {
-		return false
-	}
-	encoded := strings.TrimPrefix(reference, conversationReferencePrefix)
-	if len(encoded) != 27 {
-		return false
-	}
-	payload, checksum := encoded[:len(encoded)-1], encoded[len(encoded)-1]
-	decoded, err := conversationReferenceEncoding.DecodeString(payload)
-	if err != nil || len(decoded) != conversationReferenceBytes {
-		return false
-	}
-	return subtle.ConstantTimeByteEq(checksum, conversationReferenceChecksum(payload)) == 1
+	return canonicalConversationReference(reference) != ""
 }
 
 func canonicalConversationReference(reference string) string {
-	reference = strings.ToUpper(strings.TrimSpace(reference))
-	if !validConversationReference(reference) {
+	reference = strings.ReplaceAll(strings.ToLower(strings.TrimSpace(reference)), "-", "")
+	if len(reference) != len("dm1")+shortConversationPayloadChars ||
+		!strings.HasPrefix(reference, "dm1") {
 		return ""
 	}
-	return reference
+	payload := strings.TrimPrefix(reference, "dm1")
+	alphabet := strings.ToLower(conversationReferenceAlphabet)
+	for _, character := range payload {
+		if !strings.ContainsRune(alphabet, character) {
+			return ""
+		}
+	}
+	return "dm1-" + payload[:5] + "-" + payload[5:]
 }
 
 func isCanonicalConversationReference(reference string) bool {
 	return reference != "" && canonicalConversationReference(reference) == reference
 }
 
-func canonicalShortConversationReference(reference string) string {
+func canonicalInboundReference(reference string) string {
 	reference = strings.ToUpper(strings.TrimSpace(reference))
-	if !strings.HasPrefix(reference, conversationReferencePrefix) {
-		return ""
-	}
-	payload := strings.ReplaceAll(strings.TrimPrefix(reference, conversationReferencePrefix), "-", "")
-	if len(payload) != shortConversationPayloadChars {
-		return ""
-	}
-	for _, character := range payload {
-		if !strings.ContainsRune(conversationReferenceAlphabet, character) {
-			return ""
+	if strings.HasPrefix(reference, conversationReferencePrefix) {
+		encoded := strings.TrimPrefix(reference, conversationReferencePrefix)
+		if len(encoded) == 27 {
+			payload, checksum := encoded[:len(encoded)-1], encoded[len(encoded)-1]
+			decoded, err := conversationReferenceEncoding.DecodeString(payload)
+			if err == nil && len(decoded) == legacyConversationRefBytes &&
+				subtle.ConstantTimeByteEq(checksum, conversationReferenceChecksum(payload)) == 1 {
+				short := strings.ToLower(payload[:shortConversationPayloadChars])
+				return "dm1-" + short[:5] + "-" + short[5:]
+			}
 		}
 	}
-	return conversationReferencePrefix + payload
-}
-
-func canonicalInboundReference(reference string) string {
-	if full := canonicalConversationReference(reference); full != "" {
-		return full
-	}
-	return canonicalShortConversationReference(reference)
+	return canonicalConversationReference(reference)
 }
 
 func shortConversationReference(reference string) string {
-	reference = canonicalConversationReference(reference)
-	if reference == "" {
-		return ""
-	}
-	payload := strings.TrimPrefix(reference, conversationReferencePrefix)
-	short := conversationReferencePrefix + payload[:5] + "-" + payload[5:shortConversationPayloadChars]
-	return strings.ToLower(short)
+	return canonicalConversationReference(reference)
 }
 
 func conversationFooter(reference string) string {

@@ -357,7 +357,7 @@ func (a *App) processPending(
 	case messageReceived:
 		checkpointSessionID := ""
 		if !pending.Session.IsNew {
-			checkpointSessionID, err = a.runner.ForkSession(ctx, pending.Session.SessionID)
+			checkpointSessionID, err = a.runner.ForkSession(ctx, pending.Session.SessionID, "")
 			if err != nil {
 				return fmt.Errorf("checkpoint committed agent session before follow-up: %w", err)
 			}

@@ -269,6 +269,27 @@ func runInboxAbandon(args []string, deps dependencies) error {
 			err,
 		))
 	}
+	if _, err := runner.ForkSession(
+		ctx,
+		plan.CheckpointSessionID,
+		plan.SessionID,
+	); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf(
+			"message %s remains abandoned, but restore clean checkpoint %s onto canonical session %s: %w",
+			plan.MessageID,
+			plan.CheckpointSessionID,
+			plan.SessionID,
+			err,
+		))
+	}
+	if err := runner.DeleteSession(ctx, plan.CheckpointSessionID); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf(
+			"message %s remains abandoned, but clean checkpoint session %s: %w",
+			plan.MessageID,
+			plan.CheckpointSessionID,
+			err,
+		))
+	}
 	if _, err := fmt.Fprintf(
 		stdout,
 		"Abandoned message %s locally at committed sequence %d. Remote inbox unchanged.\n",
