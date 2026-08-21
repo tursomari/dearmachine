@@ -88,7 +88,7 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 		t.Fatalf("unexpected session: %+v", session)
 	}
 	if !validConversationReference(session.SessionID) {
-		t.Fatalf("SessionID = %q, want full canonical conversation reference", session.SessionID)
+		t.Fatalf("SessionID = %q, want short canonical conversation reference", session.SessionID)
 	}
 	if got := rig.capture("session-env-1"); got != session.SessionID {
 		t.Fatalf("MACHTIANI_SESSION_ID = %q, want %q", got, session.SessionID)
@@ -254,8 +254,10 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	assertReplyText(t, replies[len(replies)-1].Text, "Here is the regional breakdown.")
 }
 
-func TestFooterReferenceContinuesSessionWhenTransportThreadAndAncestryChange(t *testing.T) {
+func TestLegacyFullFooterReferenceContinuesShortCanonicalSession(t *testing.T) {
 	rig := newTestRig(t)
+	legacyReference := legacyReferenceFromPayload(t, testConversationPayload)
+	rig.store.referenceGenerator = func() string { return testCanonicalConversationReference }
 	rig.mail.add(testMessage("msg-footer-1", "provider-thread-a", "Start the report."))
 	rig.setAnswer("Initial report.")
 	mustProcess(t, rig)
@@ -268,15 +270,15 @@ func TestFooterReferenceContinuesSessionWhenTransportThreadAndAncestryChange(t *
 	if !strings.Contains(firstReply, conversationFooter(first.SessionID)) {
 		t.Fatalf("first reply omitted conversation footer:\n%s", firstReply)
 	}
-	if strings.Contains(firstReply, first.SessionID) {
-		t.Fatalf("reply footer exposed machtiani session ID:\n%s", firstReply)
+	if first.SessionID != testCanonicalConversationReference {
+		t.Fatalf("first session ID = %q, want %q", first.SessionID, testCanonicalConversationReference)
 	}
 
 	rig.restartStore(t)
 	reply := testMessage(
 		"msg-footer-2",
 		"provider-thread-b",
-		"Add a regional breakdown.\n\n> Initial report.\n> --\n> Dear Machine - Ref: "+first.SessionID+"\n> Magnifica Humanitas",
+		"Add a regional breakdown.\n\n> Initial report.\n> --\n> Dear Machine - Ref: "+legacyReference+"\n> Magnifica Humanitas",
 	)
 	reply.ExtractedText = "Add a regional breakdown."
 	reply.InReplyTo = ""
@@ -1056,7 +1058,7 @@ func TestFormatPromptIncludesTierAndAttachmentMetadata(t *testing.T) {
 	}
 	session := Session{
 		ThreadID:     "thread-1",
-		SessionID:    "sess-1",
+		SessionID:    testCanonicalConversationReference,
 		Sequence:     2,
 		ResponseTier: TierFormatted,
 	}
@@ -1080,18 +1082,15 @@ func TestFormatPromptIncludesTierAndAttachmentMetadata(t *testing.T) {
 	}
 }
 
-func TestFormatPromptHeaderUsesFullCanonicalSessionID(t *testing.T) {
-	sessionID := referenceFromPayload(t, testConversationPayload)
+func TestFormatPromptHeaderUsesShortCanonicalSessionID(t *testing.T) {
+	sessionID := testCanonicalConversationReference
 	prompt := formatPrompt(
 		Message{MessageID: "message-1", ThreadID: "thread-1", Body: "Please continue."},
 		Session{ThreadID: "thread-1", SessionID: sessionID, Sequence: 2},
 	)
 	want := "[Thread: thread-1 | Session: " + sessionID + " | Sequence: 2]"
 	if !strings.Contains(prompt, want) {
-		t.Fatalf("prompt missing full canonical session header %q:\n%s", want, prompt)
-	}
-	if strings.Contains(prompt, shortConversationReference(sessionID)) {
-		t.Fatalf("prompt used short display reference instead of canonical ID:\n%s", prompt)
+		t.Fatalf("prompt missing short canonical session header %q:\n%s", want, prompt)
 	}
 }
 
@@ -1752,7 +1751,7 @@ func assertReplyText(t *testing.T, reply, want string) {
 	if clean != want {
 		t.Fatalf("reply body = %q, want %q", clean, want)
 	}
-	if len(references) != 1 || canonicalShortConversationReference(references[0]) == "" {
+	if len(references) != 1 || canonicalConversationReference(references[0]) == "" {
 		t.Fatalf("reply references = %v, want one valid short conversation reference", references)
 	}
 }

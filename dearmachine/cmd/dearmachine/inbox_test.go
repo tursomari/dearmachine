@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,7 +15,7 @@ import (
 	"github.com/dearmachine/dearmachine/internal/client"
 )
 
-const testCheckpointSessionID = "DM1-KYF1E4CZE7XBCDEFGHJKMNPQRCH"
+const testCheckpointSessionID = "agent-20260821T141425-8795"
 
 func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	for _, test := range []struct {
@@ -125,7 +126,7 @@ func TestInboxSkipDeletesCanonicalOnDiskSession(t *testing.T) {
 	}
 }
 
-func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
+func TestInboxAbandonRestoresCheckpointOntoStableCanonicalSession(t *testing.T) {
 	home := t.TempDir()
 	dbPath := filepath.Join(home, "state", "dearmachine.db")
 	store, err := client.OpenStore(dbPath)
@@ -174,7 +175,6 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
 	t.Setenv("FAKE_AGENT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
 	t.Setenv("FAKE_AGENT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
-	t.Setenv("FAKE_AGENT_FORK_ID", testCheckpointSessionID)
 	runner, err := client.NewAgentRunner(fixturePath, home, "")
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +205,16 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 	deleted, err := os.ReadFile(filepath.Join(captureDir, "deleted-sessions"))
-	if err != nil || string(deleted) != first.Session.SessionID+"\n" {
+	if err != nil || string(deleted) != first.Session.SessionID+"\n"+testCheckpointSessionID+"\n" {
 		t.Fatalf("deleted sessions = %q, %v", deleted, err)
+	}
+	forked, err := os.ReadFile(filepath.Join(captureDir, "forked-sessions"))
+	if err != nil || string(forked) != testCheckpointSessionID+"\n" {
+		t.Fatalf("forked sessions = %q, %v", forked, err)
+	}
+	destinations, err := os.ReadFile(filepath.Join(captureDir, "forked-destinations"))
+	if err != nil || string(destinations) != first.Session.SessionID+"\n" {
+		t.Fatalf("fork destinations = %q, %v", destinations, err)
 	}
 	store, err = client.OpenStore(dbPath)
 	if err != nil {
@@ -217,7 +225,7 @@ func TestInboxAbandonRestoresCheckpointAndRemapsRunningFollowup(t *testing.T) {
 		t.Fatalf("IsSkipped = %v, %v", skipped, err)
 	}
 	session, err := store.Session(second.ThreadID)
-	if err != nil || session.SessionID != testCheckpointSessionID || session.Sequence != 1 {
+	if err != nil || session.SessionID != first.Session.SessionID || session.Sequence != 1 {
 		t.Fatalf("Session = %+v, %v", session, err)
 	}
 }
@@ -295,7 +303,6 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	t.Setenv("FAKE_AGENT_CAPTURE", captureDir)
 	t.Setenv("FAKE_AGENT_STATUS", filepath.Join(t.TempDir(), "unused-status"))
 	t.Setenv("FAKE_AGENT_ANSWER", filepath.Join(t.TempDir(), "unused-answer"))
-	t.Setenv("FAKE_AGENT_FORK_ID", testCheckpointSessionID)
 	runner, err := client.NewAgentRunner(fixturePath, home, "")
 	if err != nil {
 		t.Fatal(err)
@@ -326,7 +333,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 	deleted, err := os.ReadFile(filepath.Join(captureDir, "deleted-sessions"))
-	if err != nil || string(deleted) != first.Session.SessionID+"\n" {
+	if err != nil || string(deleted) != first.Session.SessionID+"\n"+testCheckpointSessionID+"\n" {
 		t.Fatalf("deleted sessions = %q, %v", deleted, err)
 	}
 	store, err = client.OpenStore(dbPath)
@@ -338,7 +345,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 		t.Fatalf("IsSkipped = %v, %v", skipped, err)
 	}
 	session, err := store.Session(second.ThreadID)
-	if err != nil || session.SessionID != testCheckpointSessionID || session.Sequence != 1 {
+	if err != nil || session.SessionID != first.Session.SessionID || session.Sequence != 1 {
 		t.Fatalf("Session = %+v, %v", session, err)
 	}
 	if _, err := os.Stat(abandonInbox); !os.IsNotExist(err) {
@@ -560,7 +567,7 @@ func (f inboxTestTransport) FetchAttachment(context.Context, string, int64) ([]b
 
 func requireCanonicalSessionID(t *testing.T, sessionID string) {
 	t.Helper()
-	if len(sessionID) != 31 || !strings.HasPrefix(sessionID, "DM1-") || sessionID != strings.ToUpper(sessionID) {
-		t.Fatalf("SessionID = %q, want full canonical DM1 conversation reference", sessionID)
+	if !regexp.MustCompile(`^dm1-[0-9a-hjkmnp-tv-z]{5}-[0-9a-hjkmnp-tv-z]{6}$`).MatchString(sessionID) {
+		t.Fatalf("SessionID = %q, want short canonical dm1 conversation reference", sessionID)
 	}
 }

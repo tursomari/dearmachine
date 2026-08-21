@@ -107,7 +107,7 @@ func TestFreshStoreUsesCanonicalSessionIDSchema(t *testing.T) {
 		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
 	}
 	if !validConversationReference(pending.Session.SessionID) {
-		t.Fatalf("SessionID = %q, want full canonical conversation reference", pending.Session.SessionID)
+		t.Fatalf("SessionID = %q, want short canonical conversation reference", pending.Session.SessionID)
 	}
 	var storedSessionID string
 	if err := store.db.QueryRow(
@@ -307,7 +307,7 @@ func TestStoreEmptyReferenceStartsFreshSessionWithoutWarning(t *testing.T) {
 	}
 }
 
-func TestStoreShortReferenceCandidateContinuesExistingSession(t *testing.T) {
+func TestStoreExactReferenceLookupContinuesExistingSession(t *testing.T) {
 	store := openTestStore(t)
 	first, existed, err := store.BeginMessageWithReference("message-1", "thread-a", "", TierPlain)
 	if err != nil || existed {
@@ -324,16 +324,16 @@ func TestStoreShortReferenceCandidateContinuesExistingSession(t *testing.T) {
 	}
 
 	second, existed, err := store.BeginMessageWithReference(
-		"message-2", "thread-b", shortConversationReference(first.Session.SessionID), TierPlain,
+		"message-2", "thread-b", first.Session.SessionID, TierPlain,
 	)
 	if err != nil || existed {
-		t.Fatalf("short BeginMessageWithReference = %+v, %v, %v", second, existed, err)
+		t.Fatalf("exact BeginMessageWithReference = %+v, %v, %v", second, existed, err)
 	}
 	if second.ThreadID != first.ThreadID || second.Session.SessionID != first.Session.SessionID {
-		t.Fatalf("short reference created another session: first=%+v second=%+v", first, second)
+		t.Fatalf("exact reference created another session: first=%+v second=%+v", first, second)
 	}
 	if second.Session.Sequence != 2 || second.Session.IsNew {
-		t.Fatalf("short-reference continuation = %+v, want sequence 2 existing", second.Session)
+		t.Fatalf("exact-reference continuation = %+v, want sequence 2 existing", second.Session)
 	}
 }
 
@@ -353,57 +353,42 @@ func TestStoreUnknownShortReferenceStartsFreshSession(t *testing.T) {
 	if !validConversationReference(pending.Session.SessionID) {
 		t.Fatalf("fresh canonical session ID = %q", pending.Session.SessionID)
 	}
-	if pending.Session.SessionID == "DM1-KYF1E4CZE7X" {
-		t.Fatal("fresh session stored the inbound short token as its full reference")
+	if pending.Session.SessionID == testCanonicalConversationReference {
+		t.Fatal("fresh session reused the unknown inbound reference")
 	}
 	if output := warnings.String(); !strings.Contains(output, "unknown conversation reference") ||
-		!strings.Contains(output, "DM1-KYF1E4CZE7X") || strings.Contains(output, "collision") {
+		!strings.Contains(output, testCanonicalConversationReference) || strings.Contains(output, "collision") {
 		t.Fatalf("unknown-reference warning = %q", output)
 	}
 }
 
-func TestStoreCollidingShortReferenceStartsFreshSessionAndLogsWarning(t *testing.T) {
+func TestStoreRetriesGeneratedSessionIDCollision(t *testing.T) {
 	store := openTestStore(t)
-	firstReference := referenceFromPayload(t, "0123456789ABCDEFGHJKMNPQRC")
-	secondReference := referenceFromPayload(t, "0123456789ASTVWXYZ0123456W")
-	for _, existing := range []struct {
-		threadID  string
-		sessionID string
-	}{
-		{threadID: "thread-first", sessionID: firstReference},
-		{threadID: "thread-second", sessionID: secondReference},
-	} {
-		if _, err := store.db.Exec(
-			`INSERT INTO thread_sessions
-			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
-			 VALUES (?, ?, 3, 'completed', ?, 'created', 'updated')`,
-			existing.threadID,
-			existing.sessionID,
-			TierPlain,
-		); err != nil {
-			t.Fatalf("insert colliding reference %q: %v", existing.sessionID, err)
-		}
+	generated := []string{
+		"dm1-01234-56789a",
+		"dm1-01234-56789a",
+		"dm1-abcde-fghjkm",
 	}
-	var warnings bytes.Buffer
-	store.warnings = log.New(&warnings, "", 0)
+	calls := 0
+	store.referenceGenerator = func() string {
+		reference := generated[calls]
+		calls++
+		return reference
+	}
 
-	pending, existed, err := store.BeginMessageWithReference(
-		"message-collision", "thread-new", "dm1-01234-56789a", TierPlain,
-	)
+	first, existed, err := store.BeginMessage("message-first", "thread-first", TierPlain)
 	if err != nil || existed {
-		t.Fatalf("BeginMessageWithReference = %+v, %v, %v", pending, existed, err)
+		t.Fatalf("first BeginMessage = %+v, %v, %v", first, existed, err)
 	}
-	if !pending.Session.IsNew || pending.ThreadID != "thread-new" {
-		t.Fatalf("collision did not start fresh session: %+v", pending)
+	second, existed, err := store.BeginMessage("message-second", "thread-second", TierPlain)
+	if err != nil || existed {
+		t.Fatalf("second BeginMessage = %+v, %v, %v", second, existed, err)
 	}
-	for _, existingSessionID := range []string{firstReference, secondReference} {
-		if pending.Session.SessionID == existingSessionID {
-			t.Fatalf("collision selected existing session %q", existingSessionID)
-		}
+	if first.Session.SessionID != generated[0] {
+		t.Fatalf("first session ID = %q, want %q", first.Session.SessionID, generated[0])
 	}
-	if output := warnings.String(); !strings.Contains(output, `short reference "DM1-0123456789A" matches 2 conversations`) ||
-		!strings.Contains(output, "starting a new session") {
-		t.Fatalf("collision warning = %q", output)
+	if second.Session.SessionID != generated[2] || calls != 3 {
+		t.Fatalf("retried session = %+v after %d generator calls", second.Session, calls)
 	}
 }
 
@@ -824,9 +809,9 @@ func TestStoreRejectsRunningFollowupSkipAtomically(t *testing.T) {
 	}
 }
 
-func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
+func TestStoreAbandonRunningFollowupKeepsCanonicalSessionID(t *testing.T) {
 	store := openTestStore(t)
-	checkpointSessionID := newConversationReference()
+	const checkpointSessionID = "agent-20260821T141425-8795"
 	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
@@ -876,8 +861,8 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.SessionID != checkpointSessionID || session.Sequence != 1 {
-		t.Fatalf("replacement session = %+v", session)
+	if session.SessionID != first.Session.SessionID || session.Sequence != 1 {
+		t.Fatalf("stable session after abandon = %+v", session)
 	}
 
 	if err := store.UnskipMessages([]string{second.MessageID}); err != nil {
@@ -887,7 +872,7 @@ func TestStoreAbandonRunningFollowupRemapsCommittedSession(t *testing.T) {
 	if err != nil || existed {
 		t.Fatalf("BeginMessage after unskip = %+v, %v, %v", restarted, existed, err)
 	}
-	if restarted.Session.SessionID != checkpointSessionID || restarted.Session.Sequence != 2 ||
+	if restarted.Session.SessionID != first.Session.SessionID || restarted.Session.Sequence != 2 ||
 		restarted.Session.IsNew {
 		t.Fatalf("clean continuation = %+v", restarted.Session)
 	}
@@ -955,19 +940,11 @@ func TestStorePrepareAbandonAcceptsOpaqueCheckpointID(t *testing.T) {
 
 func TestStoreCommitAbandonAcceptsOpaqueCheckpointID(t *testing.T) {
 	store := openTestStore(t)
-	stable, pending := prepareRunningFollowup(t, store, newConversationReference())
+	const checkpointSessionID = "agent-20260821T141425-8795"
+	stable, pending := prepareRunningFollowup(t, store, checkpointSessionID)
 	plan, err := store.PrepareAbandon(pending.MessageID)
 	if err != nil {
 		t.Fatalf("PrepareAbandon: %v", err)
-	}
-	const checkpointSessionID = "agent-20260821T141425-8795"
-	plan.CheckpointSessionID = checkpointSessionID
-	if _, err := store.db.Exec(
-		`UPDATE pending_messages SET checkpoint_session_id = ? WHERE message_id = ?`,
-		checkpointSessionID,
-		pending.MessageID,
-	); err != nil {
-		t.Fatalf("replace checkpoint fixture: %v", err)
 	}
 
 	if err := store.CommitAbandon(plan, "stuck test client"); err != nil {
@@ -979,15 +956,15 @@ func TestStoreCommitAbandonAcceptsOpaqueCheckpointID(t *testing.T) {
 	if pending, err := store.Pending(); err != nil || len(pending) != 0 {
 		t.Fatalf("Pending = %+v, %v", pending, err)
 	}
-	var remappedSessionID string
+	var storedSessionID string
 	if err := store.db.QueryRow(
 		`SELECT session_id FROM thread_sessions WHERE thread_id = ?`,
 		pending.ThreadID,
-	).Scan(&remappedSessionID); err != nil {
-		t.Fatalf("query remapped thread: %v", err)
+	).Scan(&storedSessionID); err != nil {
+		t.Fatalf("query stable thread: %v", err)
 	}
-	if remappedSessionID != checkpointSessionID {
-		t.Fatalf("remapped session ID = %q", remappedSessionID)
+	if storedSessionID != stable.Session.SessionID {
+		t.Fatalf("stored session ID = %q, want stable %q", storedSessionID, stable.Session.SessionID)
 	}
 }
 
@@ -1030,7 +1007,7 @@ func TestStoreLoadPendingRejectsNonCanonicalStoredSessionButAcceptsOpaqueCheckpo
 
 func TestStoreAbandonRejectsStalePlanAtomically(t *testing.T) {
 	store := openTestStore(t)
-	checkpointSessionID := newConversationReference()
+	checkpointSessionID := "agent-20260821T141425-8795"
 	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
@@ -1276,25 +1253,12 @@ func prepareRunningFollowup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedCheckpointSessionID := checkpointSessionID
-	if !isCanonicalConversationReference(storedCheckpointSessionID) {
-		storedCheckpointSessionID = newConversationReference()
-	}
 	if err := store.MarkRunningWithCheckpoint(
 		pending.MessageID,
 		"partial follow-up",
-		storedCheckpointSessionID,
+		checkpointSessionID,
 	); err != nil {
 		t.Fatal(err)
-	}
-	if storedCheckpointSessionID != checkpointSessionID {
-		if _, err := store.db.Exec(
-			`UPDATE pending_messages SET checkpoint_session_id = ? WHERE message_id = ?`,
-			checkpointSessionID,
-			pending.MessageID,
-		); err != nil {
-			t.Fatalf("replace checkpoint fixture: %v", err)
-		}
 	}
 	return stable, pending
 }

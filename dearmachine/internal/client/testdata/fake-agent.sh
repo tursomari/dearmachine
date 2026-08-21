@@ -52,6 +52,11 @@ if [ "$1" = "session" ] && [ "$2" = "fork" ]; then
 		exit "$FAKE_AGENT_FORK_EXIT"
 	fi
 	printf '%s\n' "$3" >> "$capture_dir/forked-sessions"
+	if [ "$#" -ge 4 ]; then
+		printf '%s\n' "$4" >> "$capture_dir/forked-destinations"
+		printf '%s\n' "$4"
+		exit 0
+	fi
 	printf '%s\n' "${FAKE_AGENT_FORK_ID-forked-session}"
 	exit 0
 fi

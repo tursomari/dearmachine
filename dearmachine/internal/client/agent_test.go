@@ -130,7 +130,7 @@ func TestAgentRunnerNonzeroExitContracts(t *testing.T) {
 			diagnostic: "fork diagnostic",
 			want:       "machtiani session fork failed: exit status 17: fork diagnostic",
 			operation: func(ctx context.Context, fixture *agentTestFixture) error {
-				_, err := fixture.runner.ForkSession(ctx, fixture.session.SessionID)
+				_, err := fixture.runner.ForkSession(ctx, fixture.session.SessionID, "")
 				return err
 			},
 		},
@@ -166,6 +166,7 @@ func TestAgentRunnerForkAndDeleteSession(t *testing.T) {
 	forked, err := fixture.runner.ForkSession(
 		context.Background(),
 		fixture.session.SessionID,
+		"",
 	)
 	if err != nil || forked != forkedSessionID {
 		t.Fatalf("ForkSession = %q, %v", forked, err)
@@ -190,9 +191,35 @@ func TestAgentRunnerForkSessionAcceptsOpaqueForkedID(t *testing.T) {
 	forked, err := fixture.runner.ForkSession(
 		context.Background(),
 		fixture.session.SessionID,
+		"",
 	)
 	if err != nil || forked != forkedSessionID {
 		t.Fatalf("ForkSession = %q, %v", forked, err)
+	}
+}
+
+func TestAgentRunnerForkSessionUsesExplicitCanonicalDestination(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	const (
+		checkpointSessionID  = "agent-20260821T141425-8795"
+		destinationSessionID = "dm1-stvwx-yz0123"
+	)
+
+	forked, err := fixture.runner.ForkSession(
+		context.Background(),
+		checkpointSessionID,
+		destinationSessionID,
+	)
+	if err != nil || forked != destinationSessionID {
+		t.Fatalf("ForkSession = %q, %v", forked, err)
+	}
+	source, err := os.ReadFile(filepath.Join(os.Getenv("FAKE_AGENT_CAPTURE"), "forked-sessions"))
+	if err != nil || string(source) != checkpointSessionID+"\n" {
+		t.Fatalf("forked source = %q, %v", source, err)
+	}
+	destination, err := os.ReadFile(filepath.Join(os.Getenv("FAKE_AGENT_CAPTURE"), "forked-destinations"))
+	if err != nil || string(destination) != destinationSessionID+"\n" {
+		t.Fatalf("forked destination = %q, %v", destination, err)
 	}
 }
 
@@ -216,6 +243,7 @@ func TestAgentRunnerForkSessionRejectsControlWhitespaceOutput(t *testing.T) {
 			if _, err := fixture.runner.ForkSession(
 				context.Background(),
 				fixture.session.SessionID,
+				"",
 			); err == nil {
 				t.Fatalf("ForkSession accepted %q", forkedID)
 			}
@@ -602,7 +630,7 @@ func newAgentTestFixture(t *testing.T) *agentTestFixture {
 		finalPath:  filepath.Join(t.TempDir(), "final.md"),
 		session: Session{
 			ThreadID:  "thread-1",
-			SessionID: referenceFromPayload(t, testConversationPayload),
+			SessionID: testCanonicalConversationReference,
 			Sequence:  1,
 			Status:    "active",
 			IsNew:     true,

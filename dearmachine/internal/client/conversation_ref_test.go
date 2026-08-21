@@ -1,60 +1,83 @@
 package client
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
 
 const testConversationPayload = "KYF1E4CZE7XBCDEFGHJKMNPQRC"
+const testCanonicalConversationReference = "dm1-kyf1e-4cze7x"
 
-func TestConversationReferenceRoundTripAndChecksum(t *testing.T) {
-	reference := newConversationReference()
-	if !validConversationReference(reference) {
-		t.Fatalf("generated reference %q is invalid", reference)
-	}
-	mutated := reference[:len(reference)-1] + "0"
-	if mutated == reference {
-		mutated = reference[:len(reference)-1] + "1"
-	}
-	if validConversationReference(mutated) {
-		t.Fatalf("checksum accepted mutated reference %q", mutated)
+func TestNewConversationReferenceGeneratesUniqueCanonicalShortIDs(t *testing.T) {
+	pattern := regexp.MustCompile(`^dm1-[0-9a-hjkmnp-tv-z]{5}-[0-9a-hjkmnp-tv-z]{6}$`)
+	seen := make(map[string]struct{})
+	for range 1_000 {
+		reference := newConversationReference()
+		if !pattern.MatchString(reference) {
+			t.Fatalf("generated reference %q does not match canonical short format", reference)
+		}
+		if !validConversationReference(reference) || !isCanonicalConversationReference(reference) {
+			t.Fatalf("generated reference %q is not canonical", reference)
+		}
+		if _, duplicate := seen[reference]; duplicate {
+			t.Fatalf("generated duplicate reference %q", reference)
+		}
+		seen[reference] = struct{}{}
 	}
 }
 
-func TestShortConversationReferenceUsesLeadingPayloadWithoutChangingFullReference(t *testing.T) {
-	reference := referenceFromPayload(t, testConversationPayload)
-	original := reference
+func TestCanonicalConversationReferenceAcceptsCaseAndHyphenVariants(t *testing.T) {
+	for _, input := range []string{
+		"dm1-kyf1e-4cze7x",
+		" DM1-KYF1E-4CZE7X ",
+		"dm1kyf1e4cze7x",
+		"d-m-1-k-y-f-1-e-4-c-z-e-7-x",
+	} {
+		if got := canonicalConversationReference(input); got != testCanonicalConversationReference {
+			t.Errorf("canonicalConversationReference(%q) = %q, want %q", input, got, testCanonicalConversationReference)
+		}
+	}
+	if got := shortConversationReference(testCanonicalConversationReference); got != testCanonicalConversationReference {
+		t.Fatalf("shortConversationReference() = %q, want canonical identity", got)
+	}
+}
 
-	if got, want := shortConversationReference(reference), "dm1-kyf1e-4cze7x"; got != want {
-		t.Fatalf("shortConversationReference() = %q, want %q", got, want)
+func TestCanonicalInboundReferenceMapsValidatedLegacyFullReference(t *testing.T) {
+	legacy := legacyReferenceFromPayload(t, testConversationPayload)
+	if got := canonicalInboundReference(strings.ToLower(legacy)); got != testCanonicalConversationReference {
+		t.Fatalf("canonicalInboundReference(%q) = %q, want %q", legacy, got, testCanonicalConversationReference)
 	}
-	if reference != original {
-		t.Fatalf("shortConversationReference changed full reference: got %q, want %q", reference, original)
+
+	corrupted := legacy[:len(legacy)-1] + "0"
+	if corrupted == legacy {
+		corrupted = legacy[:len(legacy)-1] + "1"
 	}
-	if !validConversationReference(reference) {
-		t.Fatalf("full reference became invalid: %q", reference)
+	for _, invalid := range []string{corrupted, legacy[:len(legacy)-1], legacy + "0"} {
+		if got := canonicalInboundReference(invalid); got != "" {
+			t.Errorf("canonicalInboundReference(%q) = %q, want empty", invalid, got)
+		}
 	}
 }
 
 func TestConversationFooterRendersShortSessionReference(t *testing.T) {
-	reference := referenceFromPayload(t, testConversationPayload)
 	want := "--\nDear Machine\nsession: dm1-kyf1e-4cze7x\nMagnifica Humanitas"
 
-	if got := conversationFooter(reference); got != want {
+	if got := conversationFooter(testCanonicalConversationReference); got != want {
 		t.Fatalf("conversationFooter() = %q, want %q", got, want)
 	}
-	if strings.Contains(conversationFooter(reference), "Ref:") {
-		t.Fatalf("conversation footer retained legacy Ref line: %q", conversationFooter(reference))
+	if strings.Contains(conversationFooter(testCanonicalConversationReference), "Ref:") {
+		t.Fatalf("conversation footer retained legacy Ref line: %q", conversationFooter(testCanonicalConversationReference))
 	}
 }
 
 func TestConversationFooterExtractsStableReferenceAndStripsMetadata(t *testing.T) {
-	reference := newConversationReference()
+	reference := legacyReferenceFromPayload(t, testConversationPayload)
 	body := "Please continue.\n\n> Earlier answer.\n> --\n> Dear Machine - Ref: " + reference + "\n> Magnifica Humanitas\n"
 
 	clean, references := stripConversationFooters(body)
-	if len(references) != 1 || references[0] != reference {
-		t.Fatalf("references = %v, want [%s]", references, reference)
+	if len(references) != 1 || references[0] != testCanonicalConversationReference {
+		t.Fatalf("references = %v, want [%s]", references, testCanonicalConversationReference)
 	}
 	if clean != "Please continue." {
 		t.Fatalf("clean body = %q, want only the new contribution", clean)
@@ -67,7 +90,7 @@ func TestConversationFooterExtractsStableReferenceAndStripsMetadata(t *testing.T
 }
 
 func TestConversationFooterPreservesQuotedContentForInvalidReference(t *testing.T) {
-	reference := newConversationReference()
+	reference := legacyReferenceFromPayload(t, testConversationPayload)
 	checksum := "0"
 	if strings.HasSuffix(reference, checksum) {
 		checksum = "1"
@@ -131,16 +154,16 @@ func TestConversationFooterDeduplicatesNestedStableReferences(t *testing.T) {
 }
 
 func TestCanonicalInboundReferenceAcceptsShortSessionTokens(t *testing.T) {
-	validFull := referenceFromPayload(t, testConversationPayload)
+	validFull := legacyReferenceFromPayload(t, testConversationPayload)
 	tests := []struct {
 		name  string
 		token string
 		want  string
 	}{
-		{name: "lowercase displayed", token: "dm1-kyf1e-4cze7x", want: "DM1-KYF1E4CZE7X"},
-		{name: "uppercase displayed", token: "DM1-KYF1E-4CZE7X", want: "DM1-KYF1E4CZE7X"},
-		{name: "canonical short", token: " DM1-KYF1E4CZE7X ", want: "DM1-KYF1E4CZE7X"},
-		{name: "valid full", token: strings.ToLower(validFull), want: validFull},
+		{name: "lowercase displayed", token: "dm1-kyf1e-4cze7x", want: testCanonicalConversationReference},
+		{name: "uppercase displayed", token: "DM1-KYF1E-4CZE7X", want: testCanonicalConversationReference},
+		{name: "ungrouped short", token: " DM1-KYF1E4CZE7X ", want: testCanonicalConversationReference},
+		{name: "valid full", token: strings.ToLower(validFull), want: testCanonicalConversationReference},
 		{name: "missing prefix", token: "kyf1e-4cze7x"},
 		{name: "short payload", token: "dm1-kyf1e-4cze7"},
 		{name: "long payload", token: "dm1-kyf1e-4cze7xz"},
@@ -166,8 +189,8 @@ func TestSessionFooterParsingIsCaseInsensitive(t *testing.T) {
 			if clean != "Continue." {
 				t.Fatalf("clean body = %q, want contribution only", clean)
 			}
-			if len(references) != 1 || references[0] != "DM1-KYF1E4CZE7X" {
-				t.Fatalf("references = %v, want [DM1-KYF1E4CZE7X]", references)
+			if len(references) != 1 || references[0] != testCanonicalConversationReference {
+				t.Fatalf("references = %v, want [%s]", references, testCanonicalConversationReference)
 			}
 		})
 	}
@@ -182,7 +205,7 @@ func TestStripConversationFootersRemovesQuotedSessionBlocksAndDeduplicatesDepths
 	if clean != "New contribution." {
 		t.Fatalf("clean body = %q, want only new contribution", clean)
 	}
-	if len(references) != 1 || references[0] != "DM1-KYF1E4CZE7X" {
+	if len(references) != 1 || references[0] != testCanonicalConversationReference {
 		t.Fatalf("references = %v, want one deduplicated short reference", references)
 	}
 	for _, metadata := range []string{"Dear Machine", "session:", conversationFooterMotto, "> --", ">> --"} {
@@ -216,13 +239,13 @@ func TestPrepareInboundMessageDoesNotChooseBetweenDistinctShortReferences(t *tes
 	if reference != "" {
 		t.Fatalf("ambiguous reference = %q, want empty", reference)
 	}
-	if got, want := message.ConversationReferences, []string{"DM1-KYF1E4CZE7X", "DM1-STVWXYZ0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := message.ConversationReferences, []string{"dm1-kyf1e-4cze7x", "dm1-stvwx-yz0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("references = %v, want %v", got, want)
 	}
 }
 
 func TestPrepareInboundMessageRetainsLegacyFullAndDifferentShortReferences(t *testing.T) {
-	full := referenceFromPayload(t, testConversationPayload)
+	full := legacyReferenceFromPayload(t, testConversationPayload)
 	body := "Compare these.\n\n--\nDear Machine - Ref: " + full + "\n" + conversationFooterMotto +
 		"\n\n--\nDear Machine\nsession: dm1-stvwx-yz0123\n" + conversationFooterMotto
 
@@ -230,22 +253,21 @@ func TestPrepareInboundMessageRetainsLegacyFullAndDifferentShortReferences(t *te
 	if reference != "" {
 		t.Fatalf("ambiguous reference = %q, want empty", reference)
 	}
-	if got, want := message.ConversationReferences, []string{full, "DM1-STVWXYZ0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := message.ConversationReferences, []string{testCanonicalConversationReference, "dm1-stvwx-yz0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("references = %v, want %v", got, want)
 	}
 }
 
-func TestPrepareInboundMessageKeepsFullAndItsShortTokenDistinct(t *testing.T) {
-	full := referenceFromPayload(t, testConversationPayload)
+func TestPrepareInboundMessageDeduplicatesLegacyFullAndItsShortToken(t *testing.T) {
+	full := legacyReferenceFromPayload(t, testConversationPayload)
 	message, reference := prepareInboundMessage(Message{
-		ConversationReferences: []string{full, shortConversationReference(full)},
+		ConversationReferences: []string{full, testCanonicalConversationReference},
 	})
-	if reference != "" {
-		t.Fatalf("full-plus-prefix reference = %q, want empty", reference)
+	if reference != testCanonicalConversationReference {
+		t.Fatalf("full-plus-prefix reference = %q, want %q", reference, testCanonicalConversationReference)
 	}
-	if len(message.ConversationReferences) != 2 || message.ConversationReferences[0] != full ||
-		message.ConversationReferences[1] != "DM1-KYF1E4CZE7X" {
-		t.Fatalf("references = %v, want distinct full and short tokens", message.ConversationReferences)
+	if len(message.ConversationReferences) != 1 || message.ConversationReferences[0] != testCanonicalConversationReference {
+		t.Fatalf("references = %v, want one canonical short token", message.ConversationReferences)
 	}
 }
 
@@ -262,14 +284,14 @@ func TestFormattedReplyFooterRoundTripsThroughHTMLNormalization(t *testing.T) {
 	}
 }
 
-func referenceFromPayload(t *testing.T, payload string) string {
+func legacyReferenceFromPayload(t *testing.T, payload string) string {
 	t.Helper()
 	if len(payload) != 26 {
 		t.Fatalf("test payload length = %d, want 26", len(payload))
 	}
 	reference := conversationReferencePrefix + payload + string(conversationReferenceChecksum(payload))
-	if !validConversationReference(reference) {
-		t.Fatalf("constructed invalid test reference %q", reference)
+	if canonicalInboundReference(reference) == "" {
+		t.Fatalf("constructed invalid legacy test reference %q", reference)
 	}
 	return reference
 }
