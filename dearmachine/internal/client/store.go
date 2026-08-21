@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db       *sql.DB
+	warnings *log.Logger
 }
 
 type Session struct {

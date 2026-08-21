@@ -14,12 +14,15 @@ const (
 	conversationReferencePrefix   = "DM1-"
 	conversationReferenceBytes    = 16
 	conversationReferenceAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	shortConversationPayloadChars = 11
 	conversationFooterMotto       = "Magnifica Humanitas"
 )
 
 var (
 	conversationReferenceEncoding = base32.NewEncoding(conversationReferenceAlphabet).WithPadding(base32.NoPadding)
 	conversationReferenceLine     = regexp.MustCompile(`(?i)^Dear\s*Machine\s*[-\x{2013}\x{2014}]\s*Ref:\s*([A-Z0-9-]+)\s*$`)
+	conversationSessionLine       = regexp.MustCompile(`(?i)^session\s*:\s*([A-Z0-9-]+)\s*$`)
+	conversationFooterNameLine    = regexp.MustCompile(`(?i)^Dear\s*Machine\s*$`)
 )
 
 func newConversationReference() string {
@@ -61,8 +64,42 @@ func canonicalConversationReference(reference string) string {
 	return reference
 }
 
+func canonicalShortConversationReference(reference string) string {
+	reference = strings.ToUpper(strings.TrimSpace(reference))
+	if !strings.HasPrefix(reference, conversationReferencePrefix) {
+		return ""
+	}
+	payload := strings.ReplaceAll(strings.TrimPrefix(reference, conversationReferencePrefix), "-", "")
+	if len(payload) != shortConversationPayloadChars {
+		return ""
+	}
+	for _, character := range payload {
+		if !strings.ContainsRune(conversationReferenceAlphabet, character) {
+			return ""
+		}
+	}
+	return conversationReferencePrefix + payload
+}
+
+func canonicalInboundReference(reference string) string {
+	if full := canonicalConversationReference(reference); full != "" {
+		return full
+	}
+	return canonicalShortConversationReference(reference)
+}
+
+func shortConversationReference(reference string) string {
+	reference = canonicalConversationReference(reference)
+	if reference == "" {
+		return ""
+	}
+	payload := strings.TrimPrefix(reference, conversationReferencePrefix)
+	short := conversationReferencePrefix + payload[:5] + "-" + payload[5:shortConversationPayloadChars]
+	return strings.ToLower(short)
+}
+
 func conversationFooter(reference string) string {
-	return "--\nDear Machine - Ref: " + reference + "\n" + conversationFooterMotto
+	return "--\nDear Machine\nsession: " + shortConversationReference(reference) + "\n" + conversationFooterMotto
 }
 
 func appendConversationFooter(text, reference string) string {
@@ -80,6 +117,11 @@ func stripConversationFooters(body string) (string, []string) {
 	for index, line := range lines {
 		content := strings.TrimSpace(stripEmailQuotePrefix(line))
 		match := conversationReferenceLine.FindStringSubmatch(content)
+		isSessionLine := false
+		if len(match) != 2 {
+			match = conversationSessionLine.FindStringSubmatch(content)
+			isSessionLine = len(match) == 2
+		}
 		if len(match) != 2 {
 			continue
 		}
@@ -88,7 +130,24 @@ func stripConversationFooters(body string) (string, []string) {
 		for previous >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[previous])) == "" {
 			previous--
 		}
-		if previous >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[previous])) == "--" {
+		if isSessionLine {
+			if previous >= 0 && conversationFooterNameLine.MatchString(
+				strings.TrimSpace(stripEmailQuotePrefix(lines[previous])),
+			) {
+				for candidate := previous; candidate < index; candidate++ {
+					remove[candidate] = true
+				}
+				separator := previous - 1
+				for separator >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[separator])) == "" {
+					separator--
+				}
+				if separator >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[separator])) == "--" {
+					for candidate := separator; candidate < previous; candidate++ {
+						remove[candidate] = true
+					}
+				}
+			}
+		} else if previous >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[previous])) == "--" {
 			for candidate := previous; candidate < index; candidate++ {
 				remove[candidate] = true
 			}
@@ -105,7 +164,7 @@ func stripConversationFooters(body string) (string, []string) {
 				remove[candidate] = true
 			}
 		}
-		reference := canonicalConversationReference(match[1])
+		reference := canonicalInboundReference(match[1])
 		if reference == "" {
 			continue
 		}
@@ -189,7 +248,7 @@ func mergeConversationReferences(groups ...[]string) []string {
 	var merged []string
 	for _, group := range groups {
 		for _, candidate := range group {
-			reference := canonicalConversationReference(candidate)
+			reference := canonicalInboundReference(candidate)
 			if reference == "" {
 				continue
 			}
