@@ -182,21 +182,69 @@ func TestAgentRunnerForkAndDeleteSession(t *testing.T) {
 	}
 }
 
-func TestAgentRunnerForkRejectsInvalidSessionID(t *testing.T) {
+func TestAgentRunnerForkSessionAcceptsOpaqueForkedID(t *testing.T) {
 	fixture := newAgentTestFixture(t)
-	for _, forkedID := range []string{
-		"",
-		"two session-ids",
-		"6de419b9-286d-4af7-8803-7ba6f475a8ce",
+	const forkedSessionID = "agent-20260821T141425-8795"
+	t.Setenv("FAKE_AGENT_FORK_ID", forkedSessionID)
+
+	forked, err := fixture.runner.ForkSession(
+		context.Background(),
 		fixture.session.SessionID,
+	)
+	if err != nil || forked != forkedSessionID {
+		t.Fatalf("ForkSession = %q, %v", forked, err)
+	}
+}
+
+func TestAgentRunnerForkSessionRejectsControlWhitespaceOutput(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	for name, forkedID := range map[string]string{
+		"empty":           "",
+		"spaces":          "two session-ids",
+		"carriage return": "agent-first\ragent-second",
+		"line feed":       "agent-first\nagent-second",
+		"nul":             "agent-first\x00agent-second",
+		"source ID":       fixture.session.SessionID,
 	} {
-		t.Run(strings.ReplaceAll(forkedID, " ", "_"), func(t *testing.T) {
-			t.Setenv("FAKE_AGENT_FORK_ID", forkedID)
+		t.Run(name, func(t *testing.T) {
+			fixture.runner.invoke = func(command *exec.Cmd) error {
+				if _, err := command.Stdout.Write([]byte(forkedID)); err != nil {
+					return err
+				}
+				return nil
+			}
 			if _, err := fixture.runner.ForkSession(
 				context.Background(),
 				fixture.session.SessionID,
 			); err == nil {
 				t.Fatalf("ForkSession accepted %q", forkedID)
+			}
+		})
+	}
+}
+
+func TestAgentRunnerDeleteSessionAcceptsOpaqueID(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	const opaqueSessionID = "agent-20260821T141425-8795"
+
+	if err := fixture.runner.DeleteSession(context.Background(), opaqueSessionID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	deleted, err := os.ReadFile(filepath.Join(os.Getenv("FAKE_AGENT_CAPTURE"), "deleted-sessions"))
+	if err != nil || string(deleted) != opaqueSessionID+"\n" {
+		t.Fatalf("deleted sessions = %q, %v", deleted, err)
+	}
+
+	for name, sessionID := range map[string]string{
+		"empty":     "",
+		"blank":     " \t ",
+		"spaces":    "two session-ids",
+		"line feed": "agent-first\nagent-second",
+		"nul":       "agent-first\x00agent-second",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := fixture.runner.DeleteSession(context.Background(), sessionID); err == nil {
+				t.Fatalf("DeleteSession accepted %q", sessionID)
 			}
 		})
 	}

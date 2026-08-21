@@ -912,24 +912,119 @@ func TestStoreAbandonRejectsNonRunningOrProvisionalMessage(t *testing.T) {
 	}
 }
 
-func TestStoreMarkRunningRejectsNonCanonicalCheckpointSessionID(t *testing.T) {
+func TestStoreMarkRunningWithCheckpointAcceptsOpaqueForkID(t *testing.T) {
 	store := openTestStore(t)
 	pending, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
 	if err != nil {
 		t.Fatal(err)
 	}
+	const checkpointSessionID = "agent-20260821T141425-8795"
 
 	err = store.MarkRunningWithCheckpoint(
 		pending.MessageID,
 		"prompt",
-		"6de419b9-286d-4af7-8803-7ba6f475a8ce",
+		checkpointSessionID,
 	)
-	if err == nil || !strings.Contains(err.Error(), "canonical conversation reference") {
-		t.Fatalf("MarkRunningWithCheckpoint error = %v", err)
+	if err != nil {
+		t.Fatalf("MarkRunningWithCheckpoint: %v", err)
 	}
 	got, found, err := store.PendingByID(pending.MessageID)
-	if err != nil || !found || got.State != messageReceived || got.CheckpointSessionID != "" {
-		t.Fatalf("pending after invalid checkpoint = %+v, %v, %v", got, found, err)
+	if err != nil || !found || got.State != messageRunning ||
+		got.CheckpointSessionID != checkpointSessionID {
+		t.Fatalf("pending after checkpoint = %+v, %v, %v", got, found, err)
+	}
+}
+
+func TestStorePrepareAbandonAcceptsOpaqueCheckpointID(t *testing.T) {
+	store := openTestStore(t)
+	const checkpointSessionID = "agent-20260821T141425-8795"
+	stable, pending := prepareRunningFollowup(t, store, checkpointSessionID)
+
+	plan, err := store.PrepareAbandon(pending.MessageID)
+	if err != nil {
+		t.Fatalf("PrepareAbandon: %v", err)
+	}
+	if plan.SessionID != stable.Session.SessionID ||
+		!isCanonicalConversationReference(plan.SessionID) {
+		t.Fatalf("stable session ID = %q", plan.SessionID)
+	}
+	if plan.CheckpointSessionID != checkpointSessionID {
+		t.Fatalf("checkpoint session ID = %q", plan.CheckpointSessionID)
+	}
+}
+
+func TestStoreCommitAbandonAcceptsOpaqueCheckpointID(t *testing.T) {
+	store := openTestStore(t)
+	stable, pending := prepareRunningFollowup(t, store, newConversationReference())
+	plan, err := store.PrepareAbandon(pending.MessageID)
+	if err != nil {
+		t.Fatalf("PrepareAbandon: %v", err)
+	}
+	const checkpointSessionID = "agent-20260821T141425-8795"
+	plan.CheckpointSessionID = checkpointSessionID
+	if _, err := store.db.Exec(
+		`UPDATE pending_messages SET checkpoint_session_id = ? WHERE message_id = ?`,
+		checkpointSessionID,
+		pending.MessageID,
+	); err != nil {
+		t.Fatalf("replace checkpoint fixture: %v", err)
+	}
+
+	if err := store.CommitAbandon(plan, "stuck test client"); err != nil {
+		t.Fatalf("CommitAbandon: %v", err)
+	}
+	if !isCanonicalConversationReference(stable.Session.SessionID) {
+		t.Fatalf("stable source session ID = %q", stable.Session.SessionID)
+	}
+	if pending, err := store.Pending(); err != nil || len(pending) != 0 {
+		t.Fatalf("Pending = %+v, %v", pending, err)
+	}
+	var remappedSessionID string
+	if err := store.db.QueryRow(
+		`SELECT session_id FROM thread_sessions WHERE thread_id = ?`,
+		pending.ThreadID,
+	).Scan(&remappedSessionID); err != nil {
+		t.Fatalf("query remapped thread: %v", err)
+	}
+	if remappedSessionID != checkpointSessionID {
+		t.Fatalf("remapped session ID = %q", remappedSessionID)
+	}
+}
+
+func TestStoreLoadPendingRejectsNonCanonicalStoredSessionButAcceptsOpaqueCheckpoint(t *testing.T) {
+	store := openTestStore(t)
+	pending, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const checkpointSessionID = "agent-20260821T141425-8795"
+	if _, err := store.db.Exec(
+		`UPDATE pending_messages SET checkpoint_session_id = ? WHERE message_id = ?`,
+		checkpointSessionID,
+		pending.MessageID,
+	); err != nil {
+		t.Fatalf("set checkpoint fixture: %v", err)
+	}
+
+	got, found, err := store.PendingByID(pending.MessageID)
+	if err != nil || !found {
+		t.Fatalf("PendingByID with opaque checkpoint = %+v, %v, %v", got, found, err)
+	}
+	if got.Session.SessionID != pending.Session.SessionID ||
+		got.CheckpointSessionID != checkpointSessionID {
+		t.Fatalf("pending with opaque checkpoint = %+v", got)
+	}
+
+	if _, err := store.db.Exec(
+		`UPDATE thread_sessions SET session_id = ? WHERE thread_id = ?`,
+		"agent-not-a-stable-conversation-reference",
+		pending.ThreadID,
+	); err != nil {
+		t.Fatalf("corrupt stable session fixture: %v", err)
+	}
+	if _, _, err := store.PendingByID(pending.MessageID); err == nil ||
+		!strings.Contains(err.Error(), "stored canonical session ID") {
+		t.Fatalf("PendingByID corrupt stable session error = %v", err)
 	}
 }
 
@@ -1153,6 +1248,55 @@ func TestSessionRejectsCorruptStoredResponseTier(t *testing.T) {
 		!strings.Contains(err.Error(), "stored response tier") {
 		t.Fatalf("Session corrupt tier error = %v", err)
 	}
+}
+
+func prepareRunningFollowup(
+	t *testing.T,
+	store *Store,
+	checkpointSessionID string,
+) (PendingMessage, PendingMessage) {
+	t.Helper()
+	stable, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunning(stable.MessageID, "first prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(
+		stable.MessageID,
+		RunResult{Kind: ResultAnswer, Text: "done"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(stable.MessageID, "completed", "reply-1"); err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err := store.BeginMessage("message-2", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedCheckpointSessionID := checkpointSessionID
+	if !isCanonicalConversationReference(storedCheckpointSessionID) {
+		storedCheckpointSessionID = newConversationReference()
+	}
+	if err := store.MarkRunningWithCheckpoint(
+		pending.MessageID,
+		"partial follow-up",
+		storedCheckpointSessionID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if storedCheckpointSessionID != checkpointSessionID {
+		if _, err := store.db.Exec(
+			`UPDATE pending_messages SET checkpoint_session_id = ? WHERE message_id = ?`,
+			checkpointSessionID,
+			pending.MessageID,
+		); err != nil {
+			t.Fatalf("replace checkpoint fixture: %v", err)
+		}
+	}
+	return stable, pending
 }
 
 func openTestStore(t *testing.T) *Store {
