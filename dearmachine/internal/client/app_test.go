@@ -163,6 +163,39 @@ func TestNewMessageCreatesSessionAndSendsAnswer(t *testing.T) {
 	}
 }
 
+func TestReplyFooterRendersFreshMagnificaHumanitasQuote(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage("msg-magnifica", "thread-magnifica", "Answer humanely."))
+	rig.setAnswer("A considered answer.")
+	state, err := json.Marshal(sessionState{
+		Status: "success",
+		MagnificaHumanitas: &MagnificaHumanitas{
+			Paragraph: 8,
+			Line:      2,
+			Quote:     "  Humanity is our finest work.  ",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal session state: %v", err)
+	}
+	rig.setStatus(string(state))
+
+	mustProcess(t, rig)
+
+	replies := rig.mail.sentReplies()
+	if len(replies) != 1 {
+		t.Fatalf("replies = %+v, want one", replies)
+	}
+	wantFooter := conversationFooter(rig.session("thread-magnifica").SessionID) +
+		"\nquote: Humanity is our finest work."
+	if !strings.HasSuffix(replies[0].Text, wantFooter) {
+		t.Fatalf("reply footer = %q, want suffix %q", replies[0].Text, wantFooter)
+	}
+	if strings.Contains(replies[0].Text, conversationFooterMotto) {
+		t.Fatalf("reply rendered legacy motto: %q", replies[0].Text)
+	}
+}
+
 func TestClaimSkipsOwnOutboundReply(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-001", "thread-001", "Request."))
@@ -689,6 +722,73 @@ func TestRestartResumesAttachmentTurnWithoutDuplicateRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(rig.app.runner.projectDir, ".attachments-outbox", turnKey)); !os.IsNotExist(err) {
 		t.Fatalf("outbox staging dir remains after completion; stat error = %v", err)
+	}
+}
+
+func TestResultReadyFooterUsesDurableMagnificaHumanitas(t *testing.T) {
+	tests := []struct {
+		name      string
+		magnifica *MagnificaHumanitas
+		wantQuote string
+	}{
+		{
+			name: "stored quote",
+			magnifica: &MagnificaHumanitas{
+				Paragraph: 12,
+				Line:      1,
+				Quote:     "  The recovery path keeps this line.  ",
+			},
+			wantQuote: "quote: The recovery path keeps this line.",
+		},
+		{
+			name:      "malformed empty durable quote",
+			magnifica: &MagnificaHumanitas{Paragraph: -1, Line: -1, Quote: " \t\n "},
+		},
+		{
+			name: "nil durable quote",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := newFakeTransportFixture()
+			rig := newTestRigTransport(t, TierPlain, fake, "test-model")
+			rig.setAnswer("Recovered answer.")
+			state, err := json.Marshal(sessionState{
+				Status:             "success",
+				MagnificaHumanitas: test.magnifica,
+			})
+			if err != nil {
+				t.Fatalf("marshal session state: %v", err)
+			}
+			rig.setStatus(string(state))
+			fake.errors.Reply = errors.New("simulated outage")
+			if err := rig.app.ProcessOnce(context.Background()); err == nil ||
+				!strings.Contains(err.Error(), "simulated outage") {
+				t.Fatalf("first ProcessOnce error = %v, want simulated outage", err)
+			}
+
+			pending, found, err := rig.store.PendingByID(fake.poll[0].MessageID)
+			if err != nil || !found || pending.State != messageResultReady {
+				t.Fatalf("PendingByID = %+v, %v; want result_ready pending", pending, err)
+			}
+			rig.restartStore(t)
+			fake.errors.Reply = nil
+			mustProcess(t, rig)
+
+			if len(fake.replies) != 1 {
+				t.Fatalf("replies = %+v, want one recovered reply", fake.replies)
+			}
+			reply := fake.replies[0].Text
+			if test.wantQuote != "" && !strings.HasSuffix(reply, "\n"+test.wantQuote) {
+				t.Fatalf("recovered reply = %q, want quote suffix %q", reply, test.wantQuote)
+			}
+			if test.wantQuote == "" && strings.Contains(strings.ToLower(reply), "\nquote:") {
+				t.Fatalf("recovered reply rendered empty quote label: %q", reply)
+			}
+			if strings.Contains(reply, conversationFooterMotto) {
+				t.Fatalf("recovered reply rendered legacy motto: %q", reply)
+			}
+		})
 	}
 }
 

@@ -61,13 +61,131 @@ func TestCanonicalInboundReferenceMapsValidatedLegacyFullReference(t *testing.T)
 }
 
 func TestConversationFooterRendersShortSessionReference(t *testing.T) {
-	want := "--\nDear Machine\nsession: dm1-kyf1e-4cze7x\nMagnifica Humanitas"
+	want := "--\nDear Machine\nsession: dm1-kyf1e-4cze7x"
 
 	if got := conversationFooter(testCanonicalConversationReference); got != want {
 		t.Fatalf("conversationFooter() = %q, want %q", got, want)
 	}
 	if strings.Contains(conversationFooter(testCanonicalConversationReference), "Ref:") {
 		t.Fatalf("conversation footer retained legacy Ref line: %q", conversationFooter(testCanonicalConversationReference))
+	}
+}
+
+func TestAppendConversationFooterRendersOptionalMagnificaQuote(t *testing.T) {
+	tests := []struct {
+		name  string
+		quote *MagnificaHumanitas
+		want  string
+	}{
+		{
+			name: "stored quote",
+			quote: &MagnificaHumanitas{
+				Paragraph: 7,
+				Line:      3,
+				Quote:     "  Humanity is our finest work.  ",
+			},
+			want: "Answer.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x\nquote: Humanity is our finest work.",
+		},
+		{
+			name: "no quote",
+			want: "Answer.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x",
+		},
+		{
+			name:  "empty durable quote",
+			quote: &MagnificaHumanitas{Paragraph: 7, Line: 3, Quote: " \t\n "},
+			want:  "Answer.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := appendConversationFooter("Answer.\n", testCanonicalConversationReference, test.quote)
+			if got != test.want {
+				t.Fatalf("appendConversationFooter() = %q, want %q", got, test.want)
+			}
+			if strings.Contains(got, conversationFooterMotto) {
+				t.Fatalf("footer rendered legacy placeholder: %q", got)
+			}
+		})
+	}
+}
+
+func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantBody       string
+		wantReferences []string
+	}{
+		{
+			name: "validated footer with tolerant label",
+			body: "Continue.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x\n" +
+				"QuOtE \t:  Humanity is our finest work.",
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name:     "bare quote line",
+			body:     "Keep this line.\nquote: this belongs to the message",
+			wantBody: "Keep this line.\nquote: this belongs to the message",
+		},
+		{
+			name: "wrong session id",
+			body: "Keep this line.\n\n--\nDear Machine\nsession: dm1-invalid\n" +
+				"quote: preserve after invalid session",
+			wantBody: "Keep this line.\n\nquote: preserve after invalid session",
+		},
+		{
+			name: "altered header",
+			body: "Keep this line.\n\n--\nDear Machines\nsession: dm1-kyf1e-4cze7x\n" +
+				"quote: preserve after altered header",
+			wantBody:       "Keep this line.\n\n--\nDear Machines\nquote: preserve after altered header",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotBody, gotReferences := stripConversationFooters(test.body)
+			if gotBody != test.wantBody {
+				t.Fatalf("clean body = %q, want %q", gotBody, test.wantBody)
+			}
+			if strings.Join(gotReferences, ",") != strings.Join(test.wantReferences, ",") {
+				t.Fatalf("references = %v, want %v", gotReferences, test.wantReferences)
+			}
+		})
+	}
+}
+
+func TestStripConversationFootersSupportsMixedNewAndLegacyForwardedFooters(t *testing.T) {
+	body := "Compare these forwarded answers.\n\n" +
+		"> First answer.\n> --\n> Dear Machine\n> session: dm1-kyf1e-4cze7x\n" +
+		"> quote: Humanity is our finest work.\n\n" +
+		">> Second answer.\n>> --\n>> Dear Machine\n>> session: dm1-stvwx-yz0123\n" +
+		">> Magnifica Humanitas"
+
+	clean, references := stripConversationFooters(body)
+	if got, want := references, []string{testCanonicalConversationReference, "dm1-stvwx-yz0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("references = %v, want %v", got, want)
+	}
+	for _, answer := range []string{"First answer.", "Second answer."} {
+		if !strings.Contains(clean, answer) {
+			t.Fatalf("ambiguous forward lost %q:\n%s", answer, clean)
+		}
+	}
+	for _, metadata := range []string{"Dear Machine", "session:", "quote:", conversationFooterMotto} {
+		if strings.Contains(clean, metadata) {
+			t.Fatalf("clean body retained %q:\n%s", metadata, clean)
+		}
+	}
+}
+
+func TestStripConversationFootersStillRemovesLegacyMottoAfterSessionFooter(t *testing.T) {
+	body := "Continue.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x\nMagnifica Humanitas"
+	clean, references := stripConversationFooters(body)
+	if clean != "Continue." {
+		t.Fatalf("clean body = %q, want contribution only", clean)
+	}
+	if len(references) != 1 || references[0] != testCanonicalConversationReference {
+		t.Fatalf("references = %v, want [%s]", references, testCanonicalConversationReference)
 	}
 }
 

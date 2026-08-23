@@ -508,3 +508,28 @@ func TestOpenMailNormalizeExtractsAndStripsHTMLFooter(t *testing.T) {
 		t.Fatalf("normalized references = %v, want [%s]", normalized.ConversationReferences, reference)
 	}
 }
+
+func TestOpenMailNormalizeStripsLabeledQuoteFromSessionFooter(t *testing.T) {
+	reference := newConversationReference()
+	transport := &OpenMailTransport{}
+	normalized := transport.normalize(openMailMessage{
+		ID:        "message-quote",
+		ThreadID:  "provider-thread-quote",
+		Direction: "inbound",
+		FromAddr:  "sender@example.com",
+		ToAddr:    "device@openmail.sh",
+		BodyHTML: "<p>Continue with the next section.</p><blockquote><p>Earlier answer.</p>" +
+			"<p>--</p><p>Dear Machine</p><p>session: " + reference + "</p>" +
+			"<p>QuOtE : Humanity is our finest work.</p></blockquote>",
+	}, false)
+	if normalized.Body != "Continue with the next section." {
+		t.Fatalf("normalized body = %q, want only the new contribution", normalized.Body)
+	}
+	if strings.Contains(strings.ToLower(normalized.Body), "quote:") {
+		t.Fatalf("normalized body retained quote footer metadata: %q", normalized.Body)
+	}
+	if len(normalized.ConversationReferences) != 1 ||
+		normalized.ConversationReferences[0] != reference {
+		t.Fatalf("normalized references = %v, want [%s]", normalized.ConversationReferences, reference)
+	}
+}
