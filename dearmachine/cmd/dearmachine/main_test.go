@@ -52,7 +52,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		t.Fatalf("unexpected defaults: %+v", defaults)
 	}
 	if defaults.inboxID != "" || defaults.model != "" || defaults.pidfile != "" ||
-		defaults.once || defaults.verbose {
+		defaults.once || defaults.verbose || defaults.magnificaHumanitas {
 		t.Fatalf("unexpected optional defaults: %+v", defaults)
 	}
 
@@ -69,6 +69,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		"--maintenance-min-turns", "8",
 		"--poll-interval", "250ms",
 		"--pidfile", "/tmp/dearmachine.pid",
+		"--magnifica-humanitas",
 		"--once",
 		"--verbose",
 	}
@@ -82,8 +83,18 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 		cfg.entryPointPrompt != "/tmp/entrypoint/documentation/update.md" ||
 		cfg.concurrency != 5 || cfg.maintenanceMinTurns != 8 ||
 		cfg.pollInterval != 250*time.Millisecond ||
-		cfg.pidfile != "/tmp/dearmachine.pid" || !cfg.once || !cfg.verbose {
+		cfg.pidfile != "/tmp/dearmachine.pid" || !cfg.magnificaHumanitas || !cfg.once || !cfg.verbose {
 		t.Fatalf("unexpected parsed config: %+v", cfg)
+	}
+}
+
+func TestParseConfigRejectsMagnificaHumanitasAliases(t *testing.T) {
+	for _, alias := range []string{"-magnifica-humanitas", "--magnifica_humanitas"} {
+		t.Run(alias, func(t *testing.T) {
+			if _, err := parseConfig([]string{alias}, io.Discard); err == nil {
+				t.Fatalf("parseConfig(%q) succeeded", alias)
+			}
+		})
 	}
 }
 

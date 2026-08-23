@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +68,130 @@ func TestAgentRunnerPassesApprovedBackendSnapshot(t *testing.T) {
 	singular, err := os.ReadFile(filepath.Join(captureDir, "backend-env-1"))
 	if err != nil || len(singular) != 0 {
 		t.Fatalf("DEARMACHINE_BACKEND = %q, %v", singular, err)
+	}
+}
+
+func TestAgentRunnerMagnificaHumanitasArgv(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			fixture := newAgentTestFixture(t)
+			fixture.runner.magnificaHumanitas = enabled
+			var fullArgs []string
+			fixture.runner.invoke = func(command *exec.Cmd) error {
+				if len(command.Args) > 1 && command.Args[1] == "run" {
+					fullArgs = append([]string(nil), command.Args[1:]...)
+				}
+				return command.Run()
+			}
+
+			if _, err := fixture.runner.Run(
+				context.Background(),
+				fixture.session,
+				"prompt",
+				fixture.finalPath,
+				fixture.turn,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			captured, err := os.ReadFile(filepath.Join(os.Getenv("FAKE_AGENT_CAPTURE"), "args-1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			capturedArgs := strings.Split(strings.TrimSpace(string(captured)), "\n")
+			wantCaptured := []string{
+				"--prompt",
+				"--mode", "agent-managed",
+				"--no-banner",
+				"--no-cursor",
+				"--final-file",
+			}
+			if enabled {
+				wantCaptured = append([]string{"--prompt", "--magnifica-humanitas"}, wantCaptured[1:]...)
+			}
+			if !reflect.DeepEqual(capturedArgs, wantCaptured) {
+				t.Fatalf("captured machtiani run args = %q, want %q", capturedArgs, wantCaptured)
+			}
+
+			wantFull := []string{
+				"run",
+				"--prompt", "prompt",
+				"--mode", "agent-managed",
+				"--no-banner",
+				"--no-cursor",
+				"--final-file", fixture.finalPath,
+			}
+			if enabled {
+				wantFull = append([]string{"run", "--prompt", "prompt", "--magnifica-humanitas"}, wantFull[3:]...)
+			}
+			if !reflect.DeepEqual(fullArgs, wantFull) {
+				t.Fatalf("machtiani run argv = %q, want %q", fullArgs, wantFull)
+			}
+
+			count := 0
+			for _, arg := range fullArgs {
+				if arg == "--magnifica-humanitas" {
+					count++
+				}
+				if strings.Contains(arg, "magnifica_humanitas") || arg == "-magnifica-humanitas" {
+					t.Fatalf("machtiani run args contain Magnifica Humanitas alias: %q", fullArgs)
+				}
+			}
+			wantCount := 0
+			if enabled {
+				wantCount = 1
+			}
+			if count != wantCount {
+				t.Fatalf("--magnifica-humanitas count = %d, want %d", count, wantCount)
+			}
+		})
+	}
+}
+
+func TestAgentRunnerParsesMagnificaHumanitas(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   *MagnificaHumanitas
+	}{
+		{
+			name:   "present",
+			status: `{"status":"success","magnifica_humanitas":{"paragraph":245,"line":1,"quote":"Quo vadis, humanitas?"}}`,
+			want: &MagnificaHumanitas{
+				Paragraph: 245,
+				Line:      1,
+				Quote:     "Quo vadis, humanitas?",
+			},
+		},
+		{name: "absent", status: `{"status":"success"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAgentTestFixture(t)
+			writeTestFile(t, fixture.statusFile, test.status)
+
+			result, err := fixture.runner.Run(
+				context.Background(),
+				fixture.session,
+				"prompt",
+				fixture.finalPath,
+				fixture.turn,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Kind != ResultAnswer || result.Text != "test answer" ||
+				!reflect.DeepEqual(result.MagnificaHumanitas, test.want) {
+				t.Fatalf("Run result = %+v, want Magnifica Humanitas %+v", result, test.want)
+			}
+		})
+	}
+}
+
+func TestRunResultZeroValue(t *testing.T) {
+	var result RunResult
+	if result.Kind != "" || result.Text != "" || result.MagnificaHumanitas != nil {
+		t.Fatalf("RunResult zero value = %+v", result)
 	}
 }
 
