@@ -414,7 +414,11 @@ func (a *App) processPending(
 		}
 	}
 
-	replyText := appendConversationFooter(result.Text, pending.Session.SessionID)
+	footerQuote := result.MagnificaHumanitas
+	if footerQuote == nil {
+		footerQuote = pending.MagnificaHumanitas
+	}
+	replyText := appendConversationFooter(result.Text, pending.Session.SessionID, footerQuote)
 	payload := ReplyPayload{Text: replyText}
 	tier := a.tierFor(pending)
 	if tier != TierPlain {

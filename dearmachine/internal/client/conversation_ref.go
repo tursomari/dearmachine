@@ -16,6 +16,7 @@ const (
 	conversationReferenceAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 	shortConversationPayloadChars = 11
 	conversationFooterMotto       = "Magnifica Humanitas"
+	conversationFooterQuoteLabel  = "quote"
 )
 
 var (
@@ -23,6 +24,7 @@ var (
 	conversationReferenceLine     = regexp.MustCompile(`(?i)^Dear\s*Machine\s*[-\x{2013}\x{2014}]\s*Ref:\s*([A-Z0-9-]+)\s*$`)
 	conversationSessionLine       = regexp.MustCompile(`(?i)^session\s*:\s*([A-Z0-9-]+)\s*$`)
 	conversationFooterNameLine    = regexp.MustCompile(`(?i)^Dear\s*Machine\s*$`)
+	conversationFooterQuoteLine   = regexp.MustCompile(`(?i)^` + conversationFooterQuoteLabel + `\s*:\s*.*$`)
 )
 
 func newConversationReference() string {
@@ -89,11 +91,26 @@ func shortConversationReference(reference string) string {
 }
 
 func conversationFooter(reference string) string {
-	return "--\nDear Machine\nsession: " + shortConversationReference(reference) + "\n" + conversationFooterMotto
+	return "--\nDear Machine\nsession: " + shortConversationReference(reference)
 }
 
-func appendConversationFooter(text, reference string) string {
-	return strings.TrimRight(text, "\r\n") + "\n\n" + conversationFooter(reference)
+func appendConversationFooter(text, reference string, quotes ...*MagnificaHumanitas) string {
+	footer := conversationFooter(reference)
+	var quote *MagnificaHumanitas
+	if len(quotes) > 0 {
+		quote = quotes[0]
+	}
+	if quoteText := magnificaHumanitasQuoteText(quote); quoteText != "" {
+		footer += "\n" + conversationFooterQuoteLabel + ": " + quoteText
+	}
+	return strings.TrimRight(text, "\r\n") + "\n\n" + footer
+}
+
+func magnificaHumanitasQuoteText(quote *MagnificaHumanitas) string {
+	if quote == nil {
+		return ""
+	}
+	return strings.TrimSpace(quote.Quote)
 }
 
 func stripConversationFooters(body string) (string, []string) {
@@ -115,15 +132,18 @@ func stripConversationFooters(body string) (string, []string) {
 		if len(match) != 2 {
 			continue
 		}
+		reference := canonicalInboundReference(match[1])
 		remove[index] = true
 		previous := index - 1
 		for previous >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[previous])) == "" {
 			previous--
 		}
+		validatedSessionFooter := false
 		if isSessionLine {
 			if previous >= 0 && conversationFooterNameLine.MatchString(
 				strings.TrimSpace(stripEmailQuotePrefix(lines[previous])),
 			) {
+				validatedSessionFooter = reference != ""
 				for candidate := previous; candidate < index; candidate++ {
 					remove[candidate] = true
 				}
@@ -146,15 +166,16 @@ func stripConversationFooters(body string) (string, []string) {
 		for next < len(lines) && strings.TrimSpace(stripEmailQuotePrefix(lines[next])) == "" {
 			next++
 		}
-		if next < len(lines) && strings.EqualFold(
-			strings.TrimSpace(stripEmailQuotePrefix(lines[next])),
-			conversationFooterMotto,
-		) {
-			for candidate := index + 1; candidate <= next; candidate++ {
-				remove[candidate] = true
+		if next < len(lines) {
+			nextContent := strings.TrimSpace(stripEmailQuotePrefix(lines[next]))
+			legacyMotto := strings.EqualFold(nextContent, conversationFooterMotto)
+			labeledQuote := validatedSessionFooter && conversationFooterQuoteLine.MatchString(nextContent)
+			if legacyMotto || labeledQuote {
+				for candidate := index + 1; candidate <= next; candidate++ {
+					remove[candidate] = true
+				}
 			}
 		}
-		reference := canonicalInboundReference(match[1])
 		if reference == "" {
 			continue
 		}
