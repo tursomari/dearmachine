@@ -1211,6 +1211,193 @@ func TestStoreResultWithManifestPersistsManifest(t *testing.T) {
 	}
 }
 
+func TestStoreResultPersistsMagnificaHumanitas(t *testing.T) {
+	store := openTestStore(t)
+	pending, existed, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil || existed {
+		t.Fatalf("BeginMessage = %+v, %v, %v", pending, existed, err)
+	}
+	if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	want := &MagnificaHumanitas{
+		Paragraph: 7,
+		Line:      3,
+		Quote:     "The durable word outlives the interrupted messenger.",
+	}
+	if err := store.StoreResultWithManifest(
+		pending.MessageID,
+		RunResult{Kind: ResultAnswer, Text: "answer", MagnificaHumanitas: want},
+		`{"turn_key":"turn-1"}`,
+	); err != nil {
+		t.Fatalf("StoreResultWithManifest: %v", err)
+	}
+
+	got, found, err := store.PendingByID(pending.MessageID)
+	if err != nil || !found {
+		t.Fatalf("PendingByID = %+v, %v, %v", got, found, err)
+	}
+	if got.State != messageResultReady || got.ResultText != "answer" ||
+		got.ResultManifest != `{"turn_key":"turn-1"}` {
+		t.Fatalf("stored result = %+v", got)
+	}
+	if got.MagnificaHumanitas == nil || *got.MagnificaHumanitas != *want {
+		t.Fatalf("MagnificaHumanitas = %+v, want %+v", got.MagnificaHumanitas, want)
+	}
+}
+
+func TestStoreResultRecoveryPreservesMagnificaHumanitas(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	pending, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	want := &MagnificaHumanitas{Paragraph: 11, Line: 2, Quote: "Keep the chosen line."}
+	if err := store.StoreResult(
+		pending.MessageID,
+		RunResult{Kind: ResultAnswer, Text: "saved answer", MagnificaHumanitas: want},
+	); err != nil {
+		t.Fatalf("StoreResult: %v", err)
+	}
+	// Simulate a crash after StoreResult and before Complete.
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	got, err := reopened.Pending()
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Pending after recovery = %+v, %v", got, err)
+	}
+	if got[0].State != messageResultReady || got[0].ResultKind != ResultAnswer ||
+		got[0].ResultText != "saved answer" {
+		t.Fatalf("recovered result = %+v", got[0])
+	}
+	if got[0].MagnificaHumanitas == nil || *got[0].MagnificaHumanitas != *want {
+		t.Fatalf("recovered MagnificaHumanitas = %+v, want %+v", got[0].MagnificaHumanitas, want)
+	}
+}
+
+func TestStoreResultWithoutMagnificaHumanitasRoundTripsNil(t *testing.T) {
+	store := openTestStore(t)
+	pending, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatalf("BeginMessage: %v", err)
+	}
+	if err := store.MarkRunning(pending.MessageID, "prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	if err := store.StoreResult(
+		pending.MessageID,
+		RunResult{Kind: ResultAnswer, Text: "answer"},
+	); err != nil {
+		t.Fatalf("StoreResult: %v", err)
+	}
+	got, found, err := store.PendingByID(pending.MessageID)
+	if err != nil || !found {
+		t.Fatalf("PendingByID = %+v, %v, %v", got, found, err)
+	}
+	if got.MagnificaHumanitas != nil {
+		t.Fatalf("MagnificaHumanitas = %+v, want nil", got.MagnificaHumanitas)
+	}
+	if err := store.Complete(pending.MessageID, "completed", "reply-1"); err != nil {
+		t.Fatalf("Complete without quote: %v", err)
+	}
+}
+
+func TestOpenStoreAddsMagnificaHumanitasToPriorSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open raw database: %v", err)
+	}
+	if _, err := db.Exec(priorStoreSchema); err != nil {
+		t.Fatalf("create prior schema: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	sessionID := newConversationReference()
+	if _, err := db.Exec(
+		`INSERT INTO thread_sessions
+		     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"thread-1", sessionID, 0, "active", TierPlain, now, now,
+	); err != nil {
+		t.Fatalf("insert prior session: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO pending_messages
+		     (message_id, thread_id, sequence, state, prompt, result_kind, result_text,
+		      result_manifest, checkpoint_session_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"message-1", "thread-1", 1, messageResultReady, "prompt", ResultAnswer,
+		"legacy answer", `{"turn_key":"legacy"}`, "", now, now,
+	); err != nil {
+		t.Fatalf("insert prior pending result: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close raw database: %v", err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore prior schema: %v", err)
+	}
+	defer store.Close()
+	got, found, err := store.PendingByID("message-1")
+	if err != nil || !found {
+		t.Fatalf("PendingByID legacy result = %+v, %v, %v", got, found, err)
+	}
+	if got.ResultKind != ResultAnswer || got.ResultText != "legacy answer" ||
+		got.ResultManifest != `{"turn_key":"legacy"}` || got.MagnificaHumanitas != nil {
+		t.Fatalf("migrated legacy result = %+v", got)
+	}
+	var addedColumn int
+	rows, err := store.db.Query(`PRAGMA table_info(pending_messages)`)
+	if err != nil {
+		t.Fatalf("inspect migrated schema: %v", err)
+	}
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan migrated schema: %v", err)
+		}
+		if name == "magnifica_humanitas" {
+			addedColumn++
+		}
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close schema rows: %v", err)
+	}
+	if addedColumn != 1 {
+		t.Fatalf("magnifica_humanitas columns = %d, want 1", addedColumn)
+	}
+
+	if _, err := store.db.Exec(
+		`UPDATE pending_messages SET magnifica_humanitas = ? WHERE message_id = ?`,
+		`{"paragraph":`,
+		"message-1",
+	); err != nil {
+		t.Fatalf("store malformed quote: %v", err)
+	}
+	got, found, err = store.PendingByID("message-1")
+	if err != nil || !found || got.MagnificaHumanitas != nil {
+		t.Fatalf("PendingByID malformed quote = %+v, %v, %v; want nil quote", got, found, err)
+	}
+}
+
 func TestSessionRejectsCorruptStoredResponseTier(t *testing.T) {
 	store := openTestStore(t)
 	if _, _, err := store.BeginMessage("m1", "thread-1", TierPlain); err != nil {
@@ -1272,3 +1459,48 @@ func openTestStore(t *testing.T) *Store {
 	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
+
+const priorStoreSchema = `
+CREATE TABLE thread_sessions (
+    thread_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,
+    sequence INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    response_tier TEXT NOT NULL DEFAULT 'plain',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE processed_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    outbound_message_id TEXT NOT NULL DEFAULT '',
+    processed_at TEXT NOT NULL
+);
+
+CREATE TABLE pending_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    prompt TEXT NOT NULL DEFAULT '',
+    result_kind TEXT NOT NULL DEFAULT '',
+    result_text TEXT NOT NULL DEFAULT '',
+    result_manifest TEXT NOT NULL DEFAULT '',
+    checkpoint_session_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(thread_id, sequence)
+);
+
+CREATE TABLE skipped_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    skipped_at TEXT NOT NULL
+);
+
+CREATE TABLE thread_aliases (
+    external_thread_id TEXT PRIMARY KEY,
+    canonical_thread_id TEXT NOT NULL
+);`
