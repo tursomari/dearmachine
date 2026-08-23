@@ -2,6 +2,7 @@ package client
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -38,6 +39,7 @@ type PendingMessage struct {
 	ResultKind          ResultKind
 	ResultText          string
 	ResultManifest      string
+	MagnificaHumanitas  *MagnificaHumanitas
 }
 
 type MessageRef struct {
@@ -160,6 +162,7 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     result_kind TEXT NOT NULL DEFAULT '',
     result_text TEXT NOT NULL DEFAULT '',
     result_manifest TEXT NOT NULL DEFAULT '',
+    magnifica_humanitas TEXT NOT NULL DEFAULT '',
     checkpoint_session_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -180,7 +183,54 @@ CREATE TABLE IF NOT EXISTS thread_aliases (
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
 	}
+	hasMagnificaHumanitas, err := sqliteTableHasColumn(
+		s.db,
+		"pending_messages",
+		"magnifica_humanitas",
+	)
+	if err != nil {
+		return fmt.Errorf("inspect SQLite store schema: %w", err)
+	}
+	if !hasMagnificaHumanitas {
+		if _, err := s.db.Exec(
+			`ALTER TABLE pending_messages
+			 ADD COLUMN magnifica_humanitas TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("add Magnifica Humanitas result storage: %w", err)
+		}
+	}
 	return nil
+}
+
+func sqliteTableHasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(
+			&cid,
+			&name,
+			&columnType,
+			&notNull,
+			&defaultValue,
+			&primaryKey,
+		); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func (s *Store) IsSkipped(messageID string) (bool, error) {
@@ -898,14 +948,17 @@ func (s *Store) StoreResult(messageID string, result RunResult) error {
 
 func (s *Store) StoreResultWithManifest(messageID string, result RunResult, manifestJSON string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	magnificaHumanitasJSON := marshalMagnificaHumanitas(result.MagnificaHumanitas)
 	update, err := s.db.Exec(
 		`UPDATE pending_messages
-		    SET state = ?, result_kind = ?, result_text = ?, result_manifest = ?, updated_at = ?
+		    SET state = ?, result_kind = ?, result_text = ?, result_manifest = ?,
+		        magnifica_humanitas = ?, updated_at = ?
 		  WHERE message_id = ? AND state = ?`,
 		messageResultReady,
 		result.Kind,
 		result.Text,
 		manifestJSON,
+		magnificaHumanitasJSON,
 		now,
 		messageID,
 		messageRunning,
@@ -921,6 +974,17 @@ func (s *Store) StoreResultWithManifest(messageID string, result RunResult, mani
 		return fmt.Errorf("store agent result: message is not running")
 	}
 	return nil
+}
+
+func marshalMagnificaHumanitas(value *MagnificaHumanitas) string {
+	if value == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 func (s *Store) Pending() ([]PendingMessage, error) {
@@ -1027,6 +1091,7 @@ SELECT p.message_id,
        p.result_kind,
        p.result_text,
        p.result_manifest,
+       p.magnifica_humanitas,
        t.sequence
   FROM pending_messages p
   JOIN thread_sessions t ON t.thread_id = p.thread_id`
@@ -1039,6 +1104,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 	var pending PendingMessage
 	var committedSequence int
 	var storedTier string
+	var storedMagnificaHumanitas sql.NullString
 	err := row.Scan(
 		&pending.MessageID,
 		&pending.ThreadID,
@@ -1052,6 +1118,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.ResultKind,
 		&pending.ResultText,
 		&pending.ResultManifest,
+		&storedMagnificaHumanitas,
 		&committedSequence,
 	)
 	if err != nil {
@@ -1081,6 +1148,12 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 	pending.Session.ThreadID = pending.ThreadID
 	pending.Session.IsNew = committedSequence == 0
 	pending.Session.ResponseTier = tier
+	if storedMagnificaHumanitas.Valid && strings.TrimSpace(storedMagnificaHumanitas.String) != "" {
+		var magnificaHumanitas MagnificaHumanitas
+		if err := json.Unmarshal([]byte(storedMagnificaHumanitas.String), &magnificaHumanitas); err == nil {
+			pending.MagnificaHumanitas = &magnificaHumanitas
+		}
+	}
 	return pending, nil
 }
 
