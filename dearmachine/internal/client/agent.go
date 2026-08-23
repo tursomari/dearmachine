@@ -21,8 +21,15 @@ const (
 )
 
 type RunResult struct {
-	Kind ResultKind
-	Text string
+	Kind               ResultKind
+	Text               string
+	MagnificaHumanitas *MagnificaHumanitas
+}
+
+type MagnificaHumanitas struct {
+	Paragraph int    `json:"paragraph"`
+	Line      int    `json:"line"`
+	Quote     string `json:"quote"`
 }
 
 type TurnContext struct {
@@ -33,13 +40,18 @@ type TurnContext struct {
 }
 
 type AgentRunner struct {
-	binary         string
-	projectDir     string
-	model          string
-	backends       []string
-	customBackends []backendcatalog.Backend
-	manager        string
-	invoke         func(*exec.Cmd) error
+	binary             string
+	projectDir         string
+	model              string
+	backends           []string
+	customBackends     []backendcatalog.Backend
+	manager            string
+	magnificaHumanitas bool
+	invoke             func(*exec.Cmd) error
+}
+
+func (r *AgentRunner) SetMagnificaHumanitas(enabled bool) {
+	r.magnificaHumanitas = enabled
 }
 
 func (r *AgentRunner) ConfigureAgentManaged(backends []string, managerPath string, customCatalog []backendcatalog.Backend) error {
@@ -59,6 +71,7 @@ type sessionState struct {
 	Status             string              `json:"status"`
 	Goal               string              `json:"goal"`
 	SuspendedUserInput *suspendedUserInput `json:"suspended_user_input"`
+	MagnificaHumanitas *MagnificaHumanitas `json:"magnifica_humanitas,omitempty"`
 }
 
 type suspendedUserInput struct {
@@ -172,6 +185,9 @@ func (r *AgentRunner) Run(
 	encodedBackends, err := backendcatalog.EncodeWithCustom(r.backends, r.customBackends)
 	if err != nil {
 		return RunResult{}, fmt.Errorf("encode configured agent backends: %w", err)
+	}
+	if r.magnificaHumanitas {
+		args = append(args, "--magnifica-humanitas")
 	}
 	args = append(
 		args,
@@ -377,7 +393,16 @@ func resultFromState(
 				"machtiani reported success with an empty final answer",
 			)
 		}
-		return RunResult{Kind: ResultAnswer, Text: text}, true, nil
+		var magnificaHumanitas *MagnificaHumanitas
+		if state.MagnificaHumanitas != nil {
+			value := *state.MagnificaHumanitas
+			magnificaHumanitas = &value
+		}
+		return RunResult{
+			Kind:               ResultAnswer,
+			Text:               text,
+			MagnificaHumanitas: magnificaHumanitas,
+		}, true, nil
 	case "suspended_user_input":
 		if state.SuspendedUserInput == nil ||
 			strings.TrimSpace(state.SuspendedUserInput.Question) == "" {

@@ -51,6 +51,7 @@ type config struct {
 	pidfile                string
 	once                   bool
 	verbose                bool
+	magnificaHumanitas     bool
 }
 
 type application interface {
@@ -197,8 +198,19 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		"completed turns required before entry-point maintenance (0 disables the gate)",
 	)
 	flags.StringVar(&cfg.pidfile, "pidfile", "", "path to write the DearMachine Client process ID")
+	flags.BoolVar(
+		&cfg.magnificaHumanitas,
+		"magnifica-humanitas",
+		false,
+		"pass --magnifica-humanitas to machtiani run and parse the selected quote",
+	)
 	flags.BoolVar(&cfg.once, "once", false, "poll once, process available messages, and exit")
 	flags.BoolVar(&cfg.verbose, "verbose", false, "log every mail transport poll cycle")
+	for _, arg := range args {
+		if arg == "-magnifica-humanitas" || strings.HasPrefix(arg, "-magnifica-humanitas=") {
+			return config{}, fmt.Errorf("flag provided but not defined: -magnifica-humanitas")
+		}
+	}
 	if err := flags.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -272,6 +284,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
+	runner.SetMagnificaHumanitas(cfg.magnificaHumanitas)
 	if err := runner.ConfigureAgentManaged(backends, managerPath, customBackends); err != nil {
 		return err
 	}
