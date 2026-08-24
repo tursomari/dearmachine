@@ -115,7 +115,7 @@ func appendConversationFooter(text, reference string, quotes ...*MagnificaHumani
 		quote = quotes[0]
 	}
 	if quoteText := magnificaHumanitasQuoteText(quote); quoteText != "" {
-		footer += "\n" + conversationFooterMotto + " " + conversationFooterQuoteLabel + ":\n\"" + quoteText + `"`
+		footer += "\n\n" + conversationFooterMotto + " " + conversationFooterQuoteLabel + ":\n\"" + quoteText + `"`
 	}
 	return strings.TrimRight(text, "\r\n") + "\n\n" + footer
 }
@@ -214,7 +214,13 @@ func stripConversationFooters(body string) (string, []string) {
 		if next < len(lines) {
 			nextContent := strings.TrimSpace(stripEmailQuotePrefix(lines[next]))
 			legacyMotto := strings.EqualFold(nextContent, conversationFooterMotto)
-			labeledQuote := validatedSessionFooter && conversationFooterQuoteLine.MatchString(nextContent)
+			quoteLine := conversationFooterQuoteLine.MatchString(nextContent)
+			labeledQuote := validatedSessionFooter && quoteLine
+			if quoteLine {
+				for candidate := index + 1; candidate < next; candidate++ {
+					remove[candidate] = true
+				}
+			}
 			if legacyMotto || labeledQuote {
 				for candidate := index + 1; candidate <= next; candidate++ {
 					remove[candidate] = true

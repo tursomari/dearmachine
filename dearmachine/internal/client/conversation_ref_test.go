@@ -84,7 +84,7 @@ func TestAppendConversationFooterRendersOptionalMagnificaQuote(t *testing.T) {
 				Line:      3,
 				Quote:     "  Humanity is our finest work.  ",
 			},
-			want: "Answer.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\nMagnifica Humanitas quote:\n\"Humanity is our finest work.\"",
+			want: "Answer.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\n\nMagnifica Humanitas quote:\n\"Humanity is our finest work.\"",
 		},
 		{
 			name: "no quote",
@@ -142,7 +142,14 @@ func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.
 			wantReferences: []string{testCanonicalConversationReference},
 		},
 		{
-			name: "validated new multiline footer",
+			name: "validated new blank-line multiline footer",
+			body: "Continue.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\n\n" +
+				"Magnifica Humanitas quote:\n\"Humanity is our finest work.\"",
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name: "validated previous no-blank-line multiline footer",
 			body: "Continue.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\n" +
 				"Magnifica Humanitas quote:\n\"Humanity is our finest work.\"",
 			wantBody:       "Continue.",
@@ -175,7 +182,13 @@ func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.
 			wantReferences: []string{testCanonicalConversationReference},
 		},
 		{
-			name: "invalid new multiline session",
+			name: "invalid new blank-line multiline session",
+			body: "Keep this line.\n\n----\nDear Machine:\nsession dm1-invalid\n\n" +
+				"Magnifica Humanitas quote:\n\"preserve this\"",
+			wantBody: "Keep this line.\n\nMagnifica Humanitas quote:\n\"preserve this\"",
+		},
+		{
+			name: "invalid previous no-blank-line multiline session",
 			body: "Keep this line.\n\n----\nDear Machine:\nsession dm1-invalid\n" +
 				"Magnifica Humanitas quote:\n\"preserve this\"",
 			wantBody: "Keep this line.\n\nMagnifica Humanitas quote:\n\"preserve this\"",

@@ -187,7 +187,7 @@ func TestReplyFooterRendersFreshMagnificaHumanitasQuote(t *testing.T) {
 		t.Fatalf("replies = %+v, want one", replies)
 	}
 	wantFooter := conversationFooter(rig.session("thread-magnifica").SessionID) +
-		"\n" + conversationFooterMotto + " quote:\n\"Humanity is our finest work.\""
+		"\n\n" + conversationFooterMotto + " quote:\n\"Humanity is our finest work.\""
 	if !strings.HasSuffix(replies[0].Text, wantFooter) {
 		t.Fatalf("reply footer = %q, want suffix %q", replies[0].Text, wantFooter)
 	}
@@ -779,7 +779,7 @@ func TestResultReadyFooterUsesDurableMagnificaHumanitas(t *testing.T) {
 				t.Fatalf("replies = %+v, want one recovered reply", fake.replies)
 			}
 			reply := fake.replies[0].Text
-			if test.wantQuote != "" && !strings.HasSuffix(reply, "\n"+test.wantQuote) {
+			if test.wantQuote != "" && !strings.HasSuffix(reply, "\n\n"+test.wantQuote) {
 				t.Fatalf("recovered reply = %q, want quote suffix %q", reply, test.wantQuote)
 			}
 			if test.wantQuote == "" && strings.Contains(strings.ToLower(reply), "\nquote:") {
