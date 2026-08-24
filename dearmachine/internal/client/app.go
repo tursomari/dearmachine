@@ -110,8 +110,12 @@ func (a *App) Run(ctx context.Context) (runErr error) {
 			return err
 		}
 		if a.syncOrchestrator != nil {
-			if err := a.syncOrchestrator.OrchestrateSync(ctx); err != nil {
-				a.logger.Printf("sync trigger: %v", err)
+			if err := a.orchestrateWhilePolling(ctx); err != nil {
+				if ctx.Err() != nil {
+					a.logShutdown()
+					return nil
+				}
+				return err
 			}
 		}
 
@@ -124,6 +128,43 @@ func (a *App) Run(ctx context.Context) (runErr error) {
 			a.logShutdown()
 			return nil
 		case <-timer.C:
+		}
+	}
+}
+
+func (a *App) orchestrateWhilePolling(ctx context.Context) error {
+	maintenanceContext, cancelMaintenance := context.WithCancel(ctx)
+	defer cancelMaintenance()
+	maintenanceDone := make(chan error, 1)
+	go func() {
+		maintenanceDone <- a.syncOrchestrator.OrchestrateSync(maintenanceContext)
+	}()
+
+	ticker := time.NewTicker(a.pollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-maintenanceDone:
+			if err != nil && ctx.Err() == nil {
+				a.logger.Printf("sync trigger: %v", err)
+			}
+			return nil
+		case <-ticker.C:
+			// Maintenance owns the repository execution lane, but polling and
+			// BeginMessage remain safe. Discarding this in-memory queue leaves each
+			// claim durable for recovery and dispatch after maintenance completes.
+			if err := a.pollAndClaim(ctx, newThreadWorkQueue()); err != nil {
+				cancelMaintenance()
+				maintenanceErr := <-maintenanceDone
+				if maintenanceErr != nil && !errors.Is(maintenanceErr, context.Canceled) {
+					a.logger.Printf("sync trigger: %v", maintenanceErr)
+				}
+				return err
+			}
+		case <-ctx.Done():
+			cancelMaintenance()
+			<-maintenanceDone
+			return ctx.Err()
 		}
 	}
 }

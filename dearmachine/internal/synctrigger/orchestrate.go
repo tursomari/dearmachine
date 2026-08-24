@@ -172,21 +172,64 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		}
 		return nil
 	}
-	if o.Logger != nil {
-		o.Logger.Printf(
-			"sync trigger: reviewing source session %s; holding %d newer session(s)",
-			detected.ForkSessionID,
-			len(detected.NewSessions)-1,
-		)
-	}
+	reviewable := detected.NewSessions[:len(detected.NewSessions)-1]
+	gateOpenedAt := time.Now().UTC()
+	for index, reviewed := range reviewable {
+		if o.Logger != nil {
+			o.Logger.Printf(
+				"sync trigger: reviewing source session %s; holding %d newer session(s)",
+				reviewed.SessionID,
+				len(detected.NewSessions)-index-1,
+			)
+		}
+		forkedSessionID, err := o.reviewSession(ctx, runCommand, reviewed.SessionID)
+		if err != nil {
+			return err
+		}
 
-	forkOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, "session", "fork", detected.ForkSessionID)
+		progress := reviewCheckpoint{
+			SessionID: reviewed.SessionID,
+			UpdatedAt: reviewed.UpdatedAt,
+		}
+		if index == len(reviewable)-1 {
+			progress.CountedThrough = time.Now().UTC()
+		} else if o.MaintenanceMinTurns > 0 {
+			// Keep the gate open until the complete eligible snapshot drains. If a
+			// later source fails, the durable count lets the next attempt resume at
+			// this review cursor without waiting for another threshold crossing.
+			progress.TurnsAccumulated = effectiveTurns
+			progress.CountedThrough = gateOpenedAt
+		} else {
+			progress.TurnsAccumulated = checkpoint.TurnsAccumulated
+			progress.CountedThrough = checkpoint.CountedThrough
+		}
+		if err := saveReviewCheckpoint(checkpointPath, progress); err != nil {
+			return fmt.Errorf("save sync-trigger checkpoint: %w", err)
+		}
+		if o.Logger != nil {
+			o.Logger.Printf(
+				"sync trigger: checkpoint advanced source=%s updated_at=%s fork=%s",
+				reviewed.SessionID,
+				reviewed.UpdatedAt.Format(time.RFC3339Nano),
+				forkedSessionID,
+			)
+		}
+	}
+	return nil
+}
+
+func (o *Orchestrator) reviewSession(
+	ctx context.Context,
+	runCommand CommandRunner,
+	sourceSessionID string,
+) (string, error) {
+	forkOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, "session", "fork", sourceSessionID)
 	if err != nil {
-		return fmt.Errorf("fork session %s: %w: %s", detected.ForkSessionID, err, strings.TrimSpace(string(forkOutput)))
+		return "", fmt.Errorf("fork session %s: %w: %s", sourceSessionID, err, strings.TrimSpace(string(forkOutput)))
 	}
 	forkedSessionID := strings.TrimSpace(string(forkOutput))
 	if forkedSessionID == "" {
-		return fmt.Errorf("fork session output is empty")
+		return "", fmt.Errorf("fork session output is empty")
 	}
 
 	runOutput, err := runCommand(
@@ -217,7 +260,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		)
 		cancelCleanup()
 		if deleteErr != nil {
-			return errors.Join(
+			return "", errors.Join(
 				runErr,
 				fmt.Errorf(
 					"delete failed fork %s: %w: %s",
@@ -227,7 +270,7 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 				),
 			)
 		}
-		return runErr
+		return "", runErr
 	}
 
 	deleteOutput, err := runCommand(
@@ -239,31 +282,14 @@ func (o *Orchestrator) OrchestrateSync(ctx context.Context) error {
 		forkedSessionID,
 	)
 	if err != nil {
-		return fmt.Errorf("delete forked session %s: %w: %s", forkedSessionID, err, strings.TrimSpace(string(deleteOutput)))
+		return "", fmt.Errorf("delete forked session %s: %w: %s", forkedSessionID, err, strings.TrimSpace(string(deleteOutput)))
 	}
 
 	syncOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, "sync", "--include-docs")
 	if err != nil {
-		return fmt.Errorf("sync: %w: %s", err, strings.TrimSpace(string(syncOutput)))
+		return "", fmt.Errorf("sync: %w: %s", err, strings.TrimSpace(string(syncOutput)))
 	}
-	reviewed := detected.NewSessions[0]
-	if err := saveReviewCheckpoint(checkpointPath, reviewCheckpoint{
-		SessionID:        reviewed.SessionID,
-		UpdatedAt:        reviewed.UpdatedAt,
-		TurnsAccumulated: 0,
-		CountedThrough:   time.Now().UTC(),
-	}); err != nil {
-		return fmt.Errorf("save sync-trigger checkpoint: %w", err)
-	}
-	if o.Logger != nil {
-		o.Logger.Printf(
-			"sync trigger: checkpoint advanced source=%s updated_at=%s fork=%s",
-			reviewed.SessionID,
-			reviewed.UpdatedAt.Format(time.RFC3339Nano),
-			forkedSessionID,
-		)
-	}
-	return nil
+	return forkedSessionID, nil
 }
 
 func loadReviewCheckpoint(path string) (reviewCheckpoint, error) {

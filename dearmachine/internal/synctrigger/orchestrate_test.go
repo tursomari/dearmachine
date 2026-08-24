@@ -177,10 +177,8 @@ func TestOrchestrateDrainsBacklogOldestFirstAndHoldsNewest(t *testing.T) {
 		RunCommand:        runner.Run,
 	}
 
-	for range 4 {
-		if err := o.OrchestrateSync(context.Background()); err != nil {
-			t.Fatalf("OrchestrateSync: %v", err)
-		}
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("OrchestrateSync: %v", err)
 	}
 
 	var forked []string
@@ -200,6 +198,96 @@ func TestOrchestrateDrainsBacklogOldestFirstAndHoldsNewest(t *testing.T) {
 	}
 	if checkpoint.SessionID != "session-c" {
 		t.Fatalf("checkpoint = %+v, want session-c with session-d held", checkpoint)
+	}
+}
+
+func TestOrchestrateGateStaysOpenAcrossPartialBacklogFailure(t *testing.T) {
+	t.Parallel()
+	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	statePath := filepath.Join(t.TempDir(), "state", "sync-trigger.json")
+	if err := saveReviewCheckpoint(statePath, reviewCheckpoint{
+		SessionID:      "session-a",
+		UpdatedAt:      baseTime,
+		CountedThrough: baseTime,
+	}); err != nil {
+		t.Fatalf("saveReviewCheckpoint: %v", err)
+	}
+
+	forked := make([]string, 0, 3)
+	syncCalls := 0
+	failSecondSync := true
+	o := &Orchestrator{
+		RepoPath:            "/repo",
+		AgentBinary:         "machtiani",
+		PromptTemplatePath:  "/prompt.md",
+		StatePath:           statePath,
+		MaintenanceMinTurns: 20,
+		Logger:              log.New(&bytes.Buffer{}, "", 0),
+		Lister: func(context.Context, string) ([]SessionInfo, error) {
+			return []SessionInfo{
+				{SessionID: "session-b", UpdatedAt: baseTime.Add(time.Hour)},
+				{SessionID: "session-c", UpdatedAt: baseTime.Add(2 * time.Hour)},
+				{SessionID: "session-d", UpdatedAt: baseTime.Add(3 * time.Hour)},
+			}, nil
+		},
+		TurnCounter: func(since time.Time) (int, error) {
+			if since.Equal(baseTime) {
+				return 20, nil
+			}
+			return 0, nil
+		},
+		RunCommand: func(_ context.Context, _ string, _ string, args ...string) ([]byte, error) {
+			command := strings.Join(args, " ")
+			switch {
+			case strings.HasPrefix(command, "session fork "):
+				source := args[2]
+				forked = append(forked, source)
+				return []byte("forked-" + source + "\n"), nil
+			case strings.HasPrefix(command, "run --session-id forked-"):
+				return nil, nil
+			case strings.HasPrefix(command, "session delete forked-"):
+				return nil, nil
+			case command == "sync --include-docs":
+				syncCalls++
+				if failSecondSync && syncCalls == 2 {
+					return nil, errors.New("second sync failed")
+				}
+				return nil, nil
+			default:
+				t.Fatalf("unexpected command: %s", command)
+				return nil, nil
+			}
+		},
+	}
+
+	err := o.OrchestrateSync(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "second sync failed") {
+		t.Fatalf("OrchestrateSync error = %v, want second sync failure", err)
+	}
+	checkpoint, err := loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("load checkpoint after partial failure: %v", err)
+	}
+	if checkpoint.SessionID != "session-b" {
+		t.Fatalf("checkpoint after partial failure = %+v, want session-b", checkpoint)
+	}
+	if checkpoint.TurnsAccumulated < 20 {
+		t.Fatalf("checkpoint turns after partial failure = %d, want gate held open", checkpoint.TurnsAccumulated)
+	}
+
+	failSecondSync = false
+	if err := o.OrchestrateSync(context.Background()); err != nil {
+		t.Fatalf("retry OrchestrateSync: %v", err)
+	}
+	if got, want := strings.Join(forked, ","), "session-b,session-c,session-c"; got != want {
+		t.Fatalf("forked sessions = %s, want %s", got, want)
+	}
+	checkpoint, err = loadReviewCheckpoint(statePath)
+	if err != nil {
+		t.Fatalf("load checkpoint after retry: %v", err)
+	}
+	if checkpoint.SessionID != "session-c" || checkpoint.TurnsAccumulated != 0 {
+		t.Fatalf("checkpoint after retry = %+v, want session-c with closed gate", checkpoint)
 	}
 }
 

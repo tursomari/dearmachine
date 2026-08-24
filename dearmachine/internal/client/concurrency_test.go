@@ -7,13 +7,17 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
 type gatedRun struct {
@@ -362,6 +366,117 @@ observe:
 	}
 	if !startedB {
 		t.Errorf("thread B's machtiani run did not start before thread A was released")
+	}
+}
+
+func TestRunPollsAndDurablyClaimsWhileMaintenanceActive(t *testing.T) {
+	message := Message{
+		MessageID: "maintenance-message",
+		ThreadID:  "maintenance-thread",
+		From:      "sender@example.com",
+		Body:      "request arriving during maintenance",
+	}
+	transport := newFakeTransport()
+	transport.setPoll(nil)
+	app, store := newInMemoryApp(t, transport, 1, func(command *exec.Cmd) error {
+		if slices.Equal(command.Args[1:], []string{"sync"}) {
+			return nil
+		}
+		return fmt.Errorf("unexpected machtiani invocation: %v", command.Args)
+	})
+	app.pollInterval = 10 * time.Millisecond
+	polls := make(chan []Message, 16)
+	app.transport = &observedPollTransport{Transport: transport, polls: polls}
+
+	maintenanceStarted := make(chan struct{})
+	maintenanceRelease := make(chan struct{})
+	baseTime := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	app.syncOrchestrator = &synctrigger.Orchestrator{
+		RepoPath:           "/repo",
+		AgentBinary:        "machtiani",
+		PromptTemplatePath: "/prompt.md",
+		StatePath:          filepath.Join(t.TempDir(), "sync-trigger.json"),
+		Lister: func(context.Context, string) ([]synctrigger.SessionInfo, error) {
+			return []synctrigger.SessionInfo{
+				{SessionID: "reviewable", UpdatedAt: baseTime},
+				{SessionID: "holdback", UpdatedAt: baseTime.Add(time.Hour)},
+			}, nil
+		},
+		GitLastCommitTime: func(string) (time.Time, error) { return time.Time{}, nil },
+		RunCommand: func(ctx context.Context, _ string, _ string, args ...string) ([]byte, error) {
+			if strings.Join(args, " ") == "session fork reviewable" {
+				select {
+				case <-maintenanceStarted:
+				default:
+					close(maintenanceStarted)
+				}
+				select {
+				case <-maintenanceRelease:
+					return []byte("forked-reviewable\n"), nil
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			return nil, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- app.Run(ctx)
+	}()
+	select {
+	case <-maintenanceStarted:
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("maintenance did not start")
+	}
+
+	transport.setPoll([]Message{message})
+	claimed := false
+	deadline := time.NewTimer(time.Second)
+	ticker := time.NewTicker(time.Millisecond)
+observe:
+	for !claimed {
+		var err error
+		_, claimed, err = store.PendingByID(message.MessageID)
+		if err != nil {
+			cancel()
+			close(maintenanceRelease)
+			<-done
+			t.Fatalf("PendingByID(%s): %v", message.MessageID, err)
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			break observe
+		}
+	}
+	ticker.Stop()
+	if !deadline.Stop() {
+		select {
+		case <-deadline.C:
+		default:
+		}
+	}
+	if !claimed {
+		cancel()
+		close(maintenanceRelease)
+		<-done
+		t.Fatal("message was not durably claimed while maintenance was active")
+	}
+
+	cancel()
+	close(maintenanceRelease)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not stop after cancellation")
 	}
 }
 
