@@ -61,7 +61,7 @@ func TestCanonicalInboundReferenceMapsValidatedLegacyFullReference(t *testing.T)
 }
 
 func TestConversationFooterRendersShortSessionReference(t *testing.T) {
-	want := "--\nDear Machine\nsession: dm1-kyf1e-4cze7x"
+	want := "----\nDear Machine:\nsession dm1-kyf1e-4cze7x"
 
 	if got := conversationFooter(testCanonicalConversationReference); got != want {
 		t.Fatalf("conversationFooter() = %q, want %q", got, want)
@@ -84,16 +84,16 @@ func TestAppendConversationFooterRendersOptionalMagnificaQuote(t *testing.T) {
 				Line:      3,
 				Quote:     "  Humanity is our finest work.  ",
 			},
-			want: "Answer.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x\nquote: Humanity is our finest work.",
+			want: "Answer.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\nMagnifica Humanitas quote:\n\"Humanity is our finest work.\"",
 		},
 		{
 			name: "no quote",
-			want: "Answer.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x",
+			want: "Answer.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x",
 		},
 		{
 			name:  "empty durable quote",
 			quote: &MagnificaHumanitas{Paragraph: 7, Line: 3, Quote: " \t\n "},
-			want:  "Answer.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x",
+			want:  "Answer.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x",
 		},
 	}
 	for _, test := range tests {
@@ -102,8 +102,8 @@ func TestAppendConversationFooterRendersOptionalMagnificaQuote(t *testing.T) {
 			if got != test.want {
 				t.Fatalf("appendConversationFooter() = %q, want %q", got, test.want)
 			}
-			if strings.Contains(got, conversationFooterMotto) {
-				t.Fatalf("footer rendered legacy placeholder: %q", got)
+			if gotMotto, wantMotto := strings.Contains(got, conversationFooterMotto), strings.Contains(test.want, conversationFooterMotto); gotMotto != wantMotto {
+				t.Fatalf("footer motto presence = %t, want %t: %q", gotMotto, wantMotto, got)
 			}
 		})
 	}
@@ -141,6 +141,63 @@ func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.
 			wantBody:       "Keep this line.\n\n--\nDear Machines\nquote: preserve after altered header",
 			wantReferences: []string{testCanonicalConversationReference},
 		},
+		{
+			name: "validated new multiline footer",
+			body: "Continue.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\n" +
+				"Magnifica Humanitas quote:\n\"Humanity is our finest work.\"",
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name: "validated previous combined footer",
+			body: "Continue.\n\n----\nDear Machine: session dm1-kyf1e-4cze7x\n" +
+				`Magnifica Humanitas quote: "Humanity is our finest work."`,
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name: "validated previous combined footer with short rule",
+			body: "Continue.\n\n--\nDear Machine: session dm1-kyf1e-4cze7x\n" +
+				`Magnifica Humanitas quote: "Humanity is our finest work."`,
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name:           "validated legacy single line footer",
+			body:           "Continue.\n\n-- Dear Machine: session dm1-kyf1e-4cze7x Magnifica Humanitas quote: \"Humanity is our finest work.\"",
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name:           "validated older legacy single line footer",
+			body:           "Continue.\n\n-- Dear Machine: session dm1-kyf1e-4cze7x quote: Humanity is our finest work.",
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name: "invalid new multiline session",
+			body: "Keep this line.\n\n----\nDear Machine:\nsession dm1-invalid\n" +
+				"Magnifica Humanitas quote:\n\"preserve this\"",
+			wantBody: "Keep this line.\n\nMagnifica Humanitas quote:\n\"preserve this\"",
+		},
+		{
+			name: "invalid previous combined session",
+			body: "Keep this line.\n\n----\nDear Machine: session dm1-invalid\n" +
+				"Magnifica Humanitas quote: preserve this",
+			wantBody: "Keep this line.\n\nMagnifica Humanitas quote: preserve this",
+		},
+		{
+			name:     "invalid legacy single line session",
+			body:     "Keep this line.\n\n-- Dear Machine: session dm1-invalid quote: \"preserve this\"",
+			wantBody: "Keep this line.\n\n-- Dear Machine: session dm1-invalid quote: \"preserve this\"",
+		},
+		{
+			name: "case insensitive new multiline footer",
+			body: "Continue.\n\n----\nDEAR MACHINE:\nSESSION dm1-kyf1e-4cze7x\n" +
+				"MAGNIFICA HUMANITAS QUOTE:\n\"Humanity is our finest work.\"",
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -152,6 +209,24 @@ func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.
 				t.Fatalf("references = %v, want %v", gotReferences, test.wantReferences)
 			}
 		})
+	}
+}
+
+func TestStripConversationFootersSupportsForwardedMultilineFooter(t *testing.T) {
+	body := "Continue.\n\n> Earlier answer.\n> ----\n" +
+		"> Dear Machine:\n> session dm1-kyf1e-4cze7x\n" +
+		"> Magnifica Humanitas quote:\n" +
+		`> "Humanity is our finest work."`
+
+	clean, references := stripConversationFooters(body)
+	if clean != "Continue." {
+		t.Fatalf("clean body = %q, want contribution only", clean)
+	}
+	if len(references) != 1 || references[0] != testCanonicalConversationReference {
+		t.Fatalf("references = %v, want [%s]", references, testCanonicalConversationReference)
+	}
+	if strings.Contains(strings.ToLower(clean), "quote:") {
+		t.Fatalf("clean body retained quote metadata:\n%s", clean)
 	}
 }
 

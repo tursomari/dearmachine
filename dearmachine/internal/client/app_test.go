@@ -187,12 +187,12 @@ func TestReplyFooterRendersFreshMagnificaHumanitasQuote(t *testing.T) {
 		t.Fatalf("replies = %+v, want one", replies)
 	}
 	wantFooter := conversationFooter(rig.session("thread-magnifica").SessionID) +
-		"\nquote: Humanity is our finest work."
+		"\n" + conversationFooterMotto + " quote:\n\"Humanity is our finest work.\""
 	if !strings.HasSuffix(replies[0].Text, wantFooter) {
 		t.Fatalf("reply footer = %q, want suffix %q", replies[0].Text, wantFooter)
 	}
-	if strings.Contains(replies[0].Text, conversationFooterMotto) {
-		t.Fatalf("reply rendered legacy motto: %q", replies[0].Text)
+	if !strings.Contains(replies[0].Text, conversationFooterMotto) {
+		t.Fatalf("reply omitted motto: %q", replies[0].Text)
 	}
 }
 
@@ -348,7 +348,7 @@ func TestShortSessionFooterContinuesSessionWhenTransportThreadAndAncestryChange(
 
 	first := rig.session("provider-thread-short-a")
 	firstReply := rig.mail.sentReplies()[0].Text
-	if !strings.Contains(firstReply, "\nDear Machine\nsession: dm1-") {
+	if !strings.Contains(firstReply, "\nDear Machine:\nsession dm1-") {
 		t.Fatalf("first reply omitted short session footer:\n%s", firstReply)
 	}
 
@@ -738,7 +738,7 @@ func TestResultReadyFooterUsesDurableMagnificaHumanitas(t *testing.T) {
 				Line:      1,
 				Quote:     "  The recovery path keeps this line.  ",
 			},
-			wantQuote: "quote: The recovery path keeps this line.",
+			wantQuote: "Magnifica Humanitas quote:\n\"The recovery path keeps this line.\"",
 		},
 		{
 			name:      "malformed empty durable quote",
@@ -785,8 +785,8 @@ func TestResultReadyFooterUsesDurableMagnificaHumanitas(t *testing.T) {
 			if test.wantQuote == "" && strings.Contains(strings.ToLower(reply), "\nquote:") {
 				t.Fatalf("recovered reply rendered empty quote label: %q", reply)
 			}
-			if strings.Contains(reply, conversationFooterMotto) {
-				t.Fatalf("recovered reply rendered legacy motto: %q", reply)
+			if gotMotto, wantMotto := strings.Contains(reply, conversationFooterMotto), test.wantQuote != ""; gotMotto != wantMotto {
+				t.Fatalf("recovered reply motto presence = %t, want %t: %q", gotMotto, wantMotto, reply)
 			}
 		})
 	}
