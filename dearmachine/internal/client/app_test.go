@@ -287,59 +287,6 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	assertReplyText(t, replies[len(replies)-1].Text, "Here is the regional breakdown.")
 }
 
-func TestLegacyFullFooterReferenceContinuesShortCanonicalSession(t *testing.T) {
-	rig := newTestRig(t)
-	legacyReference := legacyReferenceFromPayload(t, testConversationPayload)
-	rig.store.referenceGenerator = func() string { return testCanonicalConversationReference }
-	rig.mail.add(testMessage("msg-footer-1", "provider-thread-a", "Start the report."))
-	rig.setAnswer("Initial report.")
-	mustProcess(t, rig)
-
-	first := rig.session("provider-thread-a")
-	if !validConversationReference(first.SessionID) {
-		t.Fatalf("canonical session ID = %q", first.SessionID)
-	}
-	firstReply := rig.mail.sentReplies()[0].Text
-	if !strings.Contains(firstReply, conversationFooter(first.SessionID)) {
-		t.Fatalf("first reply omitted conversation footer:\n%s", firstReply)
-	}
-	if first.SessionID != testCanonicalConversationReference {
-		t.Fatalf("first session ID = %q, want %q", first.SessionID, testCanonicalConversationReference)
-	}
-
-	rig.restartStore(t)
-	reply := testMessage(
-		"msg-footer-2",
-		"provider-thread-b",
-		"Add a regional breakdown.\n\n> Initial report.\n> --\n> Dear Machine - Ref: "+legacyReference+"\n> Magnifica Humanitas",
-	)
-	reply.ExtractedText = "Add a regional breakdown."
-	reply.InReplyTo = ""
-	reply.References = nil
-	rig.mail.add(reply)
-	rig.setAnswer("Regional breakdown added.")
-	mustProcess(t, rig)
-
-	continued := rig.session("provider-thread-b")
-	if continued.SessionID != first.SessionID || continued.Sequence != 2 {
-		t.Fatalf("changed-thread reply did not continue session: first=%+v continued=%+v", first, continued)
-	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", first.SessionID)
-	prompt := rig.capture("text-2")
-	if !strings.Contains(prompt, "Add a regional breakdown.") {
-		t.Fatalf("continuation prompt omitted request:\n%s", prompt)
-	}
-	for _, metadata := range []string{"Dear Machine - Ref:", "Magnifica Humanitas"} {
-		if strings.Contains(prompt, metadata) {
-			t.Fatalf("Machtiani prompt retained footer metadata %q:\n%s", metadata, prompt)
-		}
-	}
-	secondReply := rig.mail.sentReplies()[1].Text
-	if !strings.Contains(secondReply, conversationFooter(first.SessionID)) {
-		t.Fatalf("continued reply omitted stable footer:\n%s", secondReply)
-	}
-}
-
 func TestShortSessionFooterContinuesSessionWhenTransportThreadAndAncestryChange(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-short-footer-1", "provider-thread-short-a", "Start the report."))

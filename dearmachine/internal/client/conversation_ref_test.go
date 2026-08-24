@@ -117,9 +117,15 @@ func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.
 		wantReferences []string
 	}{
 		{
-			name: "validated footer with tolerant label",
-			body: "Continue.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x\n" +
-				"QuOtE \t:  Humanity is our finest work.",
+			name: "validated footer with quote",
+			body: "Continue.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\n\n" +
+				"Magnifica Humanitas quote:\n\"Humanity is our finest work.\"",
+			wantBody:       "Continue.",
+			wantReferences: []string{testCanonicalConversationReference},
+		},
+		{
+			name:           "validated footer without quote",
+			body:           "Continue.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x",
 			wantBody:       "Continue.",
 			wantReferences: []string{testCanonicalConversationReference},
 		},
@@ -130,86 +136,17 @@ func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.
 		},
 		{
 			name: "wrong session id",
-			body: "Keep this line.\n\n--\nDear Machine\nsession: dm1-invalid\n" +
-				"quote: preserve after invalid session",
-			wantBody: "Keep this line.\n\nquote: preserve after invalid session",
+			body: "Keep this line.\n\n----\nDear Machine:\nsession dm1-invalid\n\n" +
+				"Magnifica Humanitas quote:\n\"preserve after invalid session\"",
+			wantBody: "Keep this line.\n\n----\nDear Machine:\nsession dm1-invalid\n\n" +
+				"Magnifica Humanitas quote:\n\"preserve after invalid session\"",
 		},
 		{
 			name: "altered header",
-			body: "Keep this line.\n\n--\nDear Machines\nsession: dm1-kyf1e-4cze7x\n" +
-				"quote: preserve after altered header",
-			wantBody:       "Keep this line.\n\n--\nDear Machines\nquote: preserve after altered header",
-			wantReferences: []string{testCanonicalConversationReference},
-		},
-		{
-			name: "validated new blank-line multiline footer",
-			body: "Continue.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\n\n" +
-				"Magnifica Humanitas quote:\n\"Humanity is our finest work.\"",
-			wantBody:       "Continue.",
-			wantReferences: []string{testCanonicalConversationReference},
-		},
-		{
-			name: "validated previous no-blank-line multiline footer",
-			body: "Continue.\n\n----\nDear Machine:\nsession dm1-kyf1e-4cze7x\n" +
-				"Magnifica Humanitas quote:\n\"Humanity is our finest work.\"",
-			wantBody:       "Continue.",
-			wantReferences: []string{testCanonicalConversationReference},
-		},
-		{
-			name: "validated previous combined footer",
-			body: "Continue.\n\n----\nDear Machine: session dm1-kyf1e-4cze7x\n" +
-				`Magnifica Humanitas quote: "Humanity is our finest work."`,
-			wantBody:       "Continue.",
-			wantReferences: []string{testCanonicalConversationReference},
-		},
-		{
-			name: "validated previous combined footer with short rule",
-			body: "Continue.\n\n--\nDear Machine: session dm1-kyf1e-4cze7x\n" +
-				`Magnifica Humanitas quote: "Humanity is our finest work."`,
-			wantBody:       "Continue.",
-			wantReferences: []string{testCanonicalConversationReference},
-		},
-		{
-			name:           "validated legacy single line footer",
-			body:           "Continue.\n\n-- Dear Machine: session dm1-kyf1e-4cze7x Magnifica Humanitas quote: \"Humanity is our finest work.\"",
-			wantBody:       "Continue.",
-			wantReferences: []string{testCanonicalConversationReference},
-		},
-		{
-			name:           "validated older legacy single line footer",
-			body:           "Continue.\n\n-- Dear Machine: session dm1-kyf1e-4cze7x quote: Humanity is our finest work.",
-			wantBody:       "Continue.",
-			wantReferences: []string{testCanonicalConversationReference},
-		},
-		{
-			name: "invalid new blank-line multiline session",
-			body: "Keep this line.\n\n----\nDear Machine:\nsession dm1-invalid\n\n" +
-				"Magnifica Humanitas quote:\n\"preserve this\"",
-			wantBody: "Keep this line.\n\nMagnifica Humanitas quote:\n\"preserve this\"",
-		},
-		{
-			name: "invalid previous no-blank-line multiline session",
-			body: "Keep this line.\n\n----\nDear Machine:\nsession dm1-invalid\n" +
-				"Magnifica Humanitas quote:\n\"preserve this\"",
-			wantBody: "Keep this line.\n\nMagnifica Humanitas quote:\n\"preserve this\"",
-		},
-		{
-			name: "invalid previous combined session",
-			body: "Keep this line.\n\n----\nDear Machine: session dm1-invalid\n" +
-				"Magnifica Humanitas quote: preserve this",
-			wantBody: "Keep this line.\n\nMagnifica Humanitas quote: preserve this",
-		},
-		{
-			name:     "invalid legacy single line session",
-			body:     "Keep this line.\n\n-- Dear Machine: session dm1-invalid quote: \"preserve this\"",
-			wantBody: "Keep this line.\n\n-- Dear Machine: session dm1-invalid quote: \"preserve this\"",
-		},
-		{
-			name: "case insensitive new multiline footer",
-			body: "Continue.\n\n----\nDEAR MACHINE:\nSESSION dm1-kyf1e-4cze7x\n" +
-				"MAGNIFICA HUMANITAS QUOTE:\n\"Humanity is our finest work.\"",
-			wantBody:       "Continue.",
-			wantReferences: []string{testCanonicalConversationReference},
+			body: "Keep this line.\n\n----\nDear Machines:\nsession dm1-kyf1e-4cze7x\n\n" +
+				"Magnifica Humanitas quote:\n\"preserve after altered header\"",
+			wantBody: "Keep this line.\n\n----\nDear Machines:\nsession dm1-kyf1e-4cze7x\n\n" +
+				"Magnifica Humanitas quote:\n\"preserve after altered header\"",
 		},
 	}
 	for _, test := range tests {
@@ -228,6 +165,7 @@ func TestStripConversationFootersOnlyRemovesQuoteFromValidatedFooter(t *testing.
 func TestStripConversationFootersSupportsForwardedMultilineFooter(t *testing.T) {
 	body := "Continue.\n\n> Earlier answer.\n> ----\n" +
 		"> Dear Machine:\n> session dm1-kyf1e-4cze7x\n" +
+		">\n" +
 		"> Magnifica Humanitas quote:\n" +
 		`> "Humanity is our finest work."`
 
@@ -243,12 +181,11 @@ func TestStripConversationFootersSupportsForwardedMultilineFooter(t *testing.T) 
 	}
 }
 
-func TestStripConversationFootersSupportsMixedNewAndLegacyForwardedFooters(t *testing.T) {
+func TestStripConversationFootersPreservesAmbiguousForwardedContent(t *testing.T) {
 	body := "Compare these forwarded answers.\n\n" +
-		"> First answer.\n> --\n> Dear Machine\n> session: dm1-kyf1e-4cze7x\n" +
-		"> quote: Humanity is our finest work.\n\n" +
-		">> Second answer.\n>> --\n>> Dear Machine\n>> session: dm1-stvwx-yz0123\n" +
-		">> Magnifica Humanitas"
+		"> First answer.\n> ----\n> Dear Machine:\n> session dm1-kyf1e-4cze7x\n>\n" +
+		"> Magnifica Humanitas quote:\n> \"Humanity is our finest work.\"\n\n" +
+		">> Second answer.\n>> ----\n>> Dear Machine:\n>> session dm1-stvwx-yz0123"
 
 	clean, references := stripConversationFooters(body)
 	if got, want := references, []string{testCanonicalConversationReference, "dm1-stvwx-yz0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
@@ -259,27 +196,17 @@ func TestStripConversationFootersSupportsMixedNewAndLegacyForwardedFooters(t *te
 			t.Fatalf("ambiguous forward lost %q:\n%s", answer, clean)
 		}
 	}
-	for _, metadata := range []string{"Dear Machine", "session:", "quote:", conversationFooterMotto} {
+	for _, metadata := range []string{"Dear Machine", "session dm1-", conversationFooterMotto + " quote:"} {
 		if strings.Contains(clean, metadata) {
 			t.Fatalf("clean body retained %q:\n%s", metadata, clean)
 		}
 	}
 }
 
-func TestStripConversationFootersStillRemovesLegacyMottoAfterSessionFooter(t *testing.T) {
-	body := "Continue.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x\nMagnifica Humanitas"
-	clean, references := stripConversationFooters(body)
-	if clean != "Continue." {
-		t.Fatalf("clean body = %q, want contribution only", clean)
-	}
-	if len(references) != 1 || references[0] != testCanonicalConversationReference {
-		t.Fatalf("references = %v, want [%s]", references, testCanonicalConversationReference)
-	}
-}
-
 func TestConversationFooterExtractsStableReferenceAndStripsMetadata(t *testing.T) {
-	reference := legacyReferenceFromPayload(t, testConversationPayload)
-	body := "Please continue.\n\n> Earlier answer.\n> --\n> Dear Machine - Ref: " + reference + "\n> Magnifica Humanitas\n"
+	reference := testCanonicalConversationReference
+	body := "Please continue.\n\n> Earlier answer.\n> ----\n> Dear Machine:\n> session " + reference +
+		"\n>\n> Magnifica Humanitas quote:\n> \"Humanity is our finest work.\"\n"
 
 	clean, references := stripConversationFooters(body)
 	if len(references) != 1 || references[0] != testCanonicalConversationReference {
@@ -288,7 +215,7 @@ func TestConversationFooterExtractsStableReferenceAndStripsMetadata(t *testing.T
 	if clean != "Please continue." {
 		t.Fatalf("clean body = %q, want only the new contribution", clean)
 	}
-	for _, metadata := range []string{"Dear Machine - Ref:", "Magnifica Humanitas", "\n> --"} {
+	for _, metadata := range []string{"Dear Machine:", "Magnifica Humanitas", "\n> ----"} {
 		if strings.Contains(clean, metadata) {
 			t.Fatalf("clean body retained %q:\n%s", metadata, clean)
 		}
@@ -296,14 +223,9 @@ func TestConversationFooterExtractsStableReferenceAndStripsMetadata(t *testing.T
 }
 
 func TestConversationFooterPreservesQuotedContentForInvalidReference(t *testing.T) {
-	reference := legacyReferenceFromPayload(t, testConversationPayload)
-	checksum := "0"
-	if strings.HasSuffix(reference, checksum) {
-		checksum = "1"
-	}
-	invalid := reference[:len(reference)-1] + checksum
-	body := "Please assess this excerpt.\n\n> Keep this quoted answer.\n> --\n" +
-		"> Dear Machine - Ref: " + invalid + "\n> Magnifica Humanitas"
+	body := "Please assess this excerpt.\n\n> Keep this quoted answer.\n> ----\n" +
+		"> Dear Machine:\n> session dm1-invalid\n>\n" +
+		"> Magnifica Humanitas quote:\n> \"preserve this\""
 
 	clean, references := stripConversationFooters(body)
 	if len(references) != 0 {
@@ -314,28 +236,9 @@ func TestConversationFooterPreservesQuotedContentForInvalidReference(t *testing.
 	}
 }
 
-func TestConversationFooterPreservesAmbiguousForwardedContent(t *testing.T) {
-	first := newConversationReference()
-	second := newConversationReference()
-	body := "Compare these forwarded answers.\n\n" +
-		"> First answer.\n> --\n> Dear Machine - Ref: " + first + "\n> Magnifica Humanitas\n\n" +
-		"> Second answer.\n> --\n> Dear Machine - Ref: " + second + "\n> Magnifica Humanitas"
-
-	clean, references := stripConversationFooters(body)
-	if len(references) != 2 {
-		t.Fatalf("references = %v, want both forwarded references", references)
-	}
-	for _, answer := range []string{"First answer.", "Second answer."} {
-		if !strings.Contains(clean, answer) {
-			t.Fatalf("ambiguous forward lost %q:\n%s", answer, clean)
-		}
-	}
-}
-
 func TestConversationFooterPreservesQuoteWithoutNewContribution(t *testing.T) {
 	reference := newConversationReference()
-	body := "> Earlier answer.\n> --\n" +
-		"> Dear Machine - Ref: " + reference + "\n> Magnifica Humanitas"
+	body := "> Earlier answer.\n> " + strings.ReplaceAll(conversationFooter(reference), "\n", "\n> ")
 
 	clean, references := stripConversationFooters(body)
 	if len(references) != 1 || references[0] != reference {
@@ -387,23 +290,9 @@ func TestCanonicalInboundReferenceAcceptsShortSessionTokens(t *testing.T) {
 	}
 }
 
-func TestSessionFooterParsingIsCaseInsensitive(t *testing.T) {
-	for _, label := range []string{"SESSION", "Session", "session"} {
-		t.Run(label, func(t *testing.T) {
-			body := "Continue.\n\n--\nDear Machine\n" + label + ": dm1-kyf1e-4cze7x\n" + conversationFooterMotto
-			clean, references := stripConversationFooters(body)
-			if clean != "Continue." {
-				t.Fatalf("clean body = %q, want contribution only", clean)
-			}
-			if len(references) != 1 || references[0] != testCanonicalConversationReference {
-				t.Fatalf("references = %v, want [%s]", references, testCanonicalConversationReference)
-			}
-		})
-	}
-}
-
 func TestStripConversationFootersRemovesQuotedSessionBlocksAndDeduplicatesDepths(t *testing.T) {
-	footer := "--\n\nDear Machine\n\nsession: dm1-kyf1e-4cze7x\n\n" + conversationFooterMotto
+	footer := conversationFooter(testCanonicalConversationReference) +
+		"\n\n" + conversationFooterMotto + " " + conversationFooterQuoteLabel + ":\n\"Humanity is our finest work.\""
 	body := "New contribution.\n\n> Earlier answer.\n> " + strings.ReplaceAll(footer, "\n", "\n> ") +
 		"\n\n>> Older answer.\n>> " + strings.ReplaceAll(footer, "\n", "\n>> ")
 
@@ -414,7 +303,7 @@ func TestStripConversationFootersRemovesQuotedSessionBlocksAndDeduplicatesDepths
 	if len(references) != 1 || references[0] != testCanonicalConversationReference {
 		t.Fatalf("references = %v, want one deduplicated short reference", references)
 	}
-	for _, metadata := range []string{"Dear Machine", "session:", conversationFooterMotto, "> --", ">> --"} {
+	for _, metadata := range []string{"Dear Machine", "session dm1-", conversationFooterMotto, "> ----", ">> ----"} {
 		if strings.Contains(clean, metadata) {
 			t.Fatalf("clean body retained %q:\n%s", metadata, clean)
 		}
@@ -431,35 +320,20 @@ func TestPrepareInboundMessageDoesNotChooseBetweenDistinctReferences(t *testing.
 	if len(message.ConversationReferences) != 2 {
 		t.Fatalf("references = %v, want both retained as evidence", message.ConversationReferences)
 	}
-	if strings.Contains(message.Body, "Dear Machine - Ref:") ||
-		strings.Contains(message.Body, conversationFooterMotto) {
+	if strings.Contains(message.Body, "Dear Machine:") || strings.Contains(message.Body, "session dm1-") {
 		t.Fatalf("ambiguous footer metadata reached clean body:\n%s", message.Body)
 	}
 }
 
 func TestPrepareInboundMessageDoesNotChooseBetweenDistinctShortReferences(t *testing.T) {
-	body := "Compare these.\n\n--\nDear Machine\nsession: dm1-kyf1e-4cze7x\n" + conversationFooterMotto +
-		"\n\n--\nDear Machine\nsession: dm1-stvwx-yz0123\n" + conversationFooterMotto
+	body := "Compare these.\n\n" + conversationFooter(testCanonicalConversationReference) +
+		"\n\n" + conversationFooter("dm1-stvwx-yz0123")
 
 	message, reference := prepareInboundMessage(Message{Body: body})
 	if reference != "" {
 		t.Fatalf("ambiguous reference = %q, want empty", reference)
 	}
 	if got, want := message.ConversationReferences, []string{"dm1-kyf1e-4cze7x", "dm1-stvwx-yz0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("references = %v, want %v", got, want)
-	}
-}
-
-func TestPrepareInboundMessageRetainsLegacyFullAndDifferentShortReferences(t *testing.T) {
-	full := legacyReferenceFromPayload(t, testConversationPayload)
-	body := "Compare these.\n\n--\nDear Machine - Ref: " + full + "\n" + conversationFooterMotto +
-		"\n\n--\nDear Machine\nsession: dm1-stvwx-yz0123\n" + conversationFooterMotto
-
-	message, reference := prepareInboundMessage(Message{Body: body})
-	if reference != "" {
-		t.Fatalf("ambiguous reference = %q, want empty", reference)
-	}
-	if got, want := message.ConversationReferences, []string{testCanonicalConversationReference, "dm1-stvwx-yz0123"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("references = %v, want %v", got, want)
 	}
 }

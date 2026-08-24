@@ -250,8 +250,8 @@ func TestMailboxNormalizeFindsQuotedFooterOutsideExtractedText(t *testing.T) {
 		ThreadID:      "provider-thread-b",
 		From:          "user@example.com",
 		ExtractedText: "Continue with the next section.",
-		Text: "Continue with the next section.\n\n> Earlier answer.\n> --\n" +
-			"> Dear Machine - Ref: " + reference + "\n> Magnifica Humanitas",
+		Text: "Continue with the next section.\n\n> Earlier answer.\n> " +
+			strings.ReplaceAll(conversationFooter(reference), "\n", "\n> "),
 	})
 	if normalized.Body != "Continue with the next section." {
 		t.Fatalf("normalized body = %q", normalized.Body)
@@ -269,8 +269,8 @@ func TestMailboxNormalizeStripsReferencedQuoteWithoutExtractedText(t *testing.T)
 		MessageID: "message-1",
 		ThreadID:  "provider-thread-b",
 		From:      "user@example.com",
-		Text: "Continue with the next section.\n\n> Earlier answer.\n> --\n" +
-			"> Dear Machine - Ref: " + reference + "\n> Magnifica Humanitas",
+		Text: "Continue with the next section.\n\n> Earlier answer.\n> " +
+			strings.ReplaceAll(conversationFooter(reference), "\n", "\n> "),
 	})
 	if normalized.Body != "Continue with the next section." {
 		t.Fatalf("normalized body = %q, want only the new contribution", normalized.Body)

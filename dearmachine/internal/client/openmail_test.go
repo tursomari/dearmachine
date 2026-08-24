@@ -492,15 +492,14 @@ func TestOpenMailNormalizeExtractsAndStripsHTMLFooter(t *testing.T) {
 		Direction: "inbound",
 		FromAddr:  "sender@example.com",
 		ToAddr:    "device@openmail.sh",
-		BodyHTML: "<p>Continue with the next section.</p><blockquote><p>Earlier answer.</p>" +
-			"<p>--</p><p>Dear Machine - Ref: " + reference + "</p>" +
-			"<p>Magnifica Humanitas</p></blockquote>",
+		BodyHTML: "<p>Continue with the next section.</p><blockquote>" +
+			"<p style=\"white-space: pre-wrap\">Earlier answer.\n" +
+			conversationFooter(reference) + "</p></blockquote>",
 	}, false)
 	if normalized.Body != "Continue with the next section." {
 		t.Fatalf("normalized body = %q, want only the new contribution", normalized.Body)
 	}
-	if strings.Contains(normalized.Body, "Dear Machine - Ref:") ||
-		strings.Contains(normalized.Body, conversationFooterMotto) {
+	if strings.Contains(normalized.Body, "Dear Machine:") || strings.Contains(normalized.Body, "session dm1-") {
 		t.Fatalf("normalized body retained footer metadata: %q", normalized.Body)
 	}
 	if len(normalized.ConversationReferences) != 1 ||
@@ -518,9 +517,10 @@ func TestOpenMailNormalizeStripsLabeledQuoteFromSessionFooter(t *testing.T) {
 		Direction: "inbound",
 		FromAddr:  "sender@example.com",
 		ToAddr:    "device@openmail.sh",
-		BodyHTML: "<p>Continue with the next section.</p><blockquote><p>Earlier answer.</p>" +
-			"<p>--</p><p>Dear Machine</p><p>session: " + reference + "</p>" +
-			"<p>QuOtE : Humanity is our finest work.</p></blockquote>",
+		BodyHTML: "<p>Continue with the next section.</p><blockquote>" +
+			"<p style=\"white-space: pre-wrap\">Earlier answer.\n" +
+			conversationFooter(reference) + "\n\n" + conversationFooterMotto + " " +
+			conversationFooterQuoteLabel + ":\n\"Humanity is our finest work.\"</p></blockquote>",
 	}, false)
 	if normalized.Body != "Continue with the next section." {
 		t.Fatalf("normalized body = %q, want only the new contribution", normalized.Body)

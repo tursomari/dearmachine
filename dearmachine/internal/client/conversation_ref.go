@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/base32"
 	"fmt"
-	"regexp"
 	"strings"
 )
 
@@ -20,26 +19,7 @@ const (
 	conversationFooterQuoteLabel  = "quote"
 )
 
-var (
-	conversationReferenceEncoding   = base32.NewEncoding(conversationReferenceAlphabet).WithPadding(base32.NoPadding)
-	conversationReferenceLine       = regexp.MustCompile(`(?i)^Dear\s*Machine\s*[-\x{2013}\x{2014}]\s*Ref:\s*([A-Z0-9-]+)\s*$`)
-	conversationSessionLine         = regexp.MustCompile(`(?i)^session\s*:?\s*([A-Z0-9-]+)\s*$`)
-	conversationSessionIdentityLine = regexp.MustCompile(
-		`(?i)^Dear\s*Machine\s*:\s*session\s*:?\s*([A-Z0-9-]+)\s*$`,
-	)
-	legacyConversationFooterLine = regexp.MustCompile(
-		`(?i)^--\s*Dear\s*Machine\s*:\s*session\s*:?\s*([A-Z0-9-]+)(?:\s+(?:` + conversationFooterMotto + `\s+)?` + conversationFooterQuoteLabel + `\s*:\s*.*)?$`,
-	)
-	conversationFooterNameLine       = regexp.MustCompile(`(?i)^Dear\s*Machine\s*:?\s*$`)
-	conversationFooterRuleLine       = regexp.MustCompile(`^-{2,7}$`)
-	conversationFooterQuotedTextLine = regexp.MustCompile(`^".*"$`)
-	conversationFooterQuoteLabelLine = regexp.MustCompile(
-		`(?i)^` + conversationFooterMotto + `\s+` + conversationFooterQuoteLabel + `\s*:\s*$`,
-	)
-	conversationFooterQuoteLine = regexp.MustCompile(
-		`(?i)^(?:` + conversationFooterMotto + `\s+)?` + conversationFooterQuoteLabel + `\s*:\s*.*$`,
-	)
-)
+var conversationReferenceEncoding = base32.NewEncoding(conversationReferenceAlphabet).WithPadding(base32.NoPadding)
 
 func newConversationReference() string {
 	var entropy [shortConversationPayloadChars]byte
@@ -135,120 +115,34 @@ func stripConversationFooters(body string) (string, []string) {
 	validReferences := make(map[string]struct{})
 	validReferenceLines := make([]int, 0)
 	var references []string
-	for index, line := range lines {
-		content := strings.TrimSpace(stripEmailQuotePrefix(line))
-		if match := legacyConversationFooterLine.FindStringSubmatch(content); len(match) == 2 {
-			reference := canonicalInboundReference(match[1])
-			if reference == "" {
-				continue
-			}
-			remove[index] = true
-			validReferences[reference] = struct{}{}
-			validReferenceLines = append(validReferenceLines, index)
-			if _, exists := seen[reference]; !exists {
-				seen[reference] = struct{}{}
-				references = append(references, reference)
-			}
+	for index := 0; index+2 < len(lines); index++ {
+		depth := emailQuoteDepth(lines[index])
+		if footerLine(lines[index]) != conversationFooterRule ||
+			emailQuoteDepth(lines[index+1]) != depth || footerLine(lines[index+1]) != "Dear Machine:" ||
+			emailQuoteDepth(lines[index+2]) != depth {
 			continue
 		}
-		match := conversationReferenceLine.FindStringSubmatch(content)
-		isSessionLine := false
-		combinedSessionLine := false
-		if len(match) != 2 {
-			match = conversationSessionLine.FindStringSubmatch(content)
-			isSessionLine = len(match) == 2
-		}
-		if len(match) != 2 {
-			match = conversationSessionIdentityLine.FindStringSubmatch(content)
-			isSessionLine = len(match) == 2
-			combinedSessionLine = isSessionLine
-		}
-		if len(match) != 2 {
+		session, found := strings.CutPrefix(footerLine(lines[index+2]), "session ")
+		if !found || !isCanonicalConversationReference(session) {
 			continue
 		}
-		reference := canonicalInboundReference(match[1])
-		remove[index] = true
-		previous := index - 1
-		for previous >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[previous])) == "" {
-			previous--
+		reference := session
+		end := index + 3
+		if end+2 < len(lines) && footerLine(lines[end]) == "" &&
+			emailQuoteDepth(lines[end+1]) == depth && footerLine(lines[end+1]) == conversationFooterMotto+" "+conversationFooterQuoteLabel+":" &&
+			emailQuoteDepth(lines[end+2]) == depth && conversationFooterQuotedText(footerLine(lines[end+2])) {
+			end += 3
 		}
-		validatedSessionFooter := false
-		if combinedSessionLine {
-			if previous >= 0 && conversationFooterRuleLine.MatchString(
-				strings.TrimSpace(stripEmailQuotePrefix(lines[previous])),
-			) {
-				validatedSessionFooter = reference != ""
-				for candidate := previous; candidate < index; candidate++ {
-					remove[candidate] = true
-				}
-			}
-		} else if isSessionLine {
-			if previous >= 0 && conversationFooterNameLine.MatchString(
-				strings.TrimSpace(stripEmailQuotePrefix(lines[previous])),
-			) {
-				validatedSessionFooter = reference != ""
-				for candidate := previous; candidate < index; candidate++ {
-					remove[candidate] = true
-				}
-				separator := previous - 1
-				for separator >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[separator])) == "" {
-					separator--
-				}
-				if separator >= 0 && conversationFooterRuleLine.MatchString(
-					strings.TrimSpace(stripEmailQuotePrefix(lines[separator])),
-				) {
-					for candidate := separator; candidate < previous; candidate++ {
-						remove[candidate] = true
-					}
-				}
-			}
-		} else if previous >= 0 && strings.TrimSpace(stripEmailQuotePrefix(lines[previous])) == "--" {
-			for candidate := previous; candidate < index; candidate++ {
-				remove[candidate] = true
-			}
-		}
-		next := index + 1
-		for next < len(lines) && strings.TrimSpace(stripEmailQuotePrefix(lines[next])) == "" {
-			next++
-		}
-		if next < len(lines) {
-			nextContent := strings.TrimSpace(stripEmailQuotePrefix(lines[next]))
-			legacyMotto := strings.EqualFold(nextContent, conversationFooterMotto)
-			quoteLine := conversationFooterQuoteLine.MatchString(nextContent)
-			labeledQuote := validatedSessionFooter && quoteLine
-			if quoteLine {
-				for candidate := index + 1; candidate < next; candidate++ {
-					remove[candidate] = true
-				}
-			}
-			if legacyMotto || labeledQuote {
-				for candidate := index + 1; candidate <= next; candidate++ {
-					remove[candidate] = true
-				}
-			}
-			if labeledQuote && conversationFooterQuoteLabelLine.MatchString(nextContent) {
-				quotedText := next + 1
-				for quotedText < len(lines) && strings.TrimSpace(stripEmailQuotePrefix(lines[quotedText])) == "" {
-					quotedText++
-				}
-				if quotedText < len(lines) && conversationFooterQuotedTextLine.MatchString(
-					strings.TrimSpace(stripEmailQuotePrefix(lines[quotedText])),
-				) {
-					for candidate := next + 1; candidate <= quotedText; candidate++ {
-						remove[candidate] = true
-					}
-				}
-			}
-		}
-		if reference == "" {
-			continue
+		for candidate := index; candidate < end; candidate++ {
+			remove[candidate] = true
 		}
 		validReferences[reference] = struct{}{}
-		validReferenceLines = append(validReferenceLines, index)
+		validReferenceLines = append(validReferenceLines, index+2)
 		if _, exists := seen[reference]; !exists {
 			seen[reference] = struct{}{}
 			references = append(references, reference)
 		}
+		index = end - 1
 	}
 	if len(validReferences) == 1 && hasUnquotedContribution(lines, remove) {
 		for _, index := range validReferenceLines {
@@ -268,6 +162,14 @@ func stripConversationFooters(body string) (string, []string) {
 		}
 	}
 	return strings.TrimSpace(strings.Join(kept, "\n")), references
+}
+
+func footerLine(line string) string {
+	return stripEmailQuotePrefix(line)
+}
+
+func conversationFooterQuotedText(line string) bool {
+	return len(line) > 2 && strings.HasPrefix(line, `"`) && strings.HasSuffix(line, `"`)
 }
 
 func hasUnquotedContribution(lines []string, remove []bool) bool {
