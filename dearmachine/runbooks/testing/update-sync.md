@@ -54,7 +54,10 @@ documentation sensitivity separately.
    history, and initialization snapshots.
 4. Launch the temporary client with the disposable entry point supplied as
    both `--project` and `--entry-point-repo`. Pass its seeded
-   `documentation/update-prompt-template.md` through `--entry-point-prompt`.
+   `documentation/update-prompt-template.md` through `--entry-point-prompt`
+   and pass `--maintenance-min-turns 0`; this protocol exercises the legacy
+   per-poll rolling cadence, while `continuous-intake.md` owns turn-gate and
+   multi-source backlog-drain coverage.
 5. Before sending, prove:
    - `state/sync-trigger.json` does not exist;
    - no ordinary email sessions exist in the disposable mct project;

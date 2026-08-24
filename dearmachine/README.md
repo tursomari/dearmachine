@@ -376,8 +376,9 @@ review and one newest session to hold.
 For email sessions themselves to count toward the trigger, launch DearMachine Client with `--project` set to the entry-point repository. Distinct new threads
 create distinct machtiani sessions. DearMachine Client deliberately holds the newest
 session until a later session arrives. Once at least two sessions are newer
-than the review boundary, each successful poll reviews the oldest eligible
-session while leaving the newest held:
+than the review boundary, one maintenance pass reviews every eligible session
+from oldest to newest while leaving only the newest held. For each reviewed
+source, the client:
 
 1. forks the oldest eligible session;
 2. resumes the fork with the entry-point update prompt;
@@ -391,14 +392,18 @@ internal-README sync supplies the bootstrap boundary. Afterward, the checkpoint
 is authoritative; a maintenance commit created after a held source session
 must not make that session disappear. The checkpoint prevents an immediate
 repeat when review correctly decides that no documentation change is
-warranted. It is written only after the complete pipeline succeeds, so failed
-runs remain eligible for retry. A failed forked run is cleaned up before the
+warranted. The checkpoint advances after each complete source pipeline. The
+turn gate resets only after the entire eligible snapshot drains, so a failure
+retains completed progress and retries the remaining backlog without waiting
+for another threshold crossing. A failed forked run is cleaned up before the
 error is reported.
 
-For example, session B releases A for review, then session C releases B. With a
-larger backlog, later successful polls drain the backlog oldest-first while one
-newest session remains held. Equal update timestamps use the session ID as a
-stable tie-breaker.
+For example, session B releases A for review. If a gate opens with A, B, C, and
+D eligible, that maintenance pass reviews A, B, and C in order and holds D.
+Equal update timestamps use the session ID as a stable tie-breaker. While the
+maintenance lane owns the repository, normal polling and durable claiming
+continue; claimed email work is recovered and dispatched after maintenance
+releases the repository lane.
 
 The `state/` checkpoint is host-local and should remain ignored by Git. The
 internal-README marker remains owned by machtiani under the UUID project store

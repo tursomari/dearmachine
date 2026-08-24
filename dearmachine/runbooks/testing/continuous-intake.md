@@ -45,18 +45,22 @@ These invariants remain in force:
 Entry-point maintenance defaults to `--maintenance-min-turns 20`. Before session detection,
 `machtiani session list`, or Git-boundary lookup, `OrchestrateSync` returns when the accumulated
 count is below threshold. One `processed_messages` row is one completed inbound turn. The count is
-derived with `Store.CountProcessedSince(checkpoint.UpdatedAt)`, equivalent to:
+derived with `Store.CountProcessedSince(checkpoint.CountedThrough)`, falling
+back to the legacy `checkpoint.UpdatedAt` when no counting cutoff exists, and
+is equivalent to:
 
 ```sql
 SELECT COUNT(*)
 FROM processed_messages
-WHERE processed_at > <checkpoint-updated-at>;
+WHERE processed_at > <counted-through-or-legacy-updated-at>;
 ```
 
 This needs no schema migration and follows technological subsidiarity by deriving the decision
-entirely from client-owned SQLite state. A successful fork, run, delete, and
-`sync --include-docs` advances the checkpoint and writes `turns_accumulated: 0`. Passing the gate
-does not alter the rolling rule: review the oldest eligible source and hold the newer tail.
+entirely from client-owned SQLite state. Passing the gate opens one maintenance
+pass that repeats fork, run, delete, and `sync --include-docs` for every
+eligible source in chronological order while holding only the newest session.
+The checkpoint advances after each successful source pipeline and writes
+`turns_accumulated: 0` only after the complete eligible snapshot drains.
 
 ### Provision the protocol-specific instance
 
@@ -274,14 +278,14 @@ from an independently captured session-list sample used by the tester.
 
 #### Threshold crossings and rolling boundary
 
-Once the count reaches or crosses the threshold, require exactly one pipeline
-for that crossing: one fork of the oldest eligible source session, one update
-prompt run on the fork, one fork delete, and one
-`machtiani sync --include-docs`. Confirm the fork is absent after cleanup,
-`state/sync-trigger.json` advances to the reviewed source session with its
-exact `updated_at`, and `turns_accumulated` is reset to `0` only after the full
-pipeline succeeds. The newest source session must not be forked, checkpointed,
-or otherwise reviewed.
+Once the count reaches or crosses the threshold, require one pipeline per
+reviewable source in the eligible snapshot: one fork, update-prompt run, fork
+delete, and `machtiani sync --include-docs`, processed oldest-first. Confirm
+each fork is absent after cleanup and `state/sync-trigger.json` advances after
+each successful source. `turns_accumulated` must remain at or above the open
+gate while backlog remains and reset to `0` only after all reviewable sources
+complete. The newest source session must not be forked, checkpointed, or
+otherwise reviewed.
 
 With threshold 3 and ordered A-B-C-D delivery, the expected rolling evidence
 is:
@@ -289,23 +293,22 @@ is:
 ```text
 A completes -> below threshold; A is held
 B completes -> below threshold; A and B are held
-C completes -> threshold crossing reviews A; B and C are held
-D completes -> next crossing may review B; C and newest D remain held
+C completes -> threshold crossing reviews A then B; C is held
+D completes -> below threshold; C and D are held
 ```
 
-Derive the second crossing from the recorded `processed_at > checkpoint` count
-rather than assuming it. If it has not reached three, require another skip and
-leave B unreviewed. In every case, a later crossing must review the oldest
-eligible session while preserving D as the newest held tail. Observe at least
-one additional successful poll without new mail and prove that the same
-crossing does not start a duplicate maintenance pipeline.
+Observe at least one additional successful poll without new mail and prove
+that the completed crossing does not start a duplicate maintenance pipeline.
+If a later crossing is exercised with more cases, it must drain every source
+older than the newest held tail in chronological order.
 
 A maintenance review that makes no documentation commit is a legitimate
 `no-op`, provided fork, run, delete, documentation-aware sync, and checkpoint
 advance all succeed. Gate assertions concern when maintenance runs, not what
-the model chooses to commit. If maintenance fails, the checkpoint must not
-advance; preserve the failed state and cleanup evidence rather than manually
-repairing or committing output.
+the model chooses to commit. If a later source fails, the checkpoint must
+retain every earlier successful source, must not advance past the failed
+source, and must keep the gate open for retry. Preserve the failed state and
+cleanup evidence rather than manually repairing or committing output.
 
 ### Required outcome classification
 
@@ -330,10 +333,10 @@ Give four separate verdicts:
 1. **Intake decoupling:** pass only if B is durably claimed, starts, and replies
    while A1 is still running, with exactly-once processing and reply delivery.
 2. **Maintenance gating:** pass only if below-threshold cycles perform no
-   session detection or maintenance, every observed crossing performs exactly
-   one complete pipeline, successful maintenance resets
-   `turns_accumulated`, checkpoints only the oldest eligible source, and leaves
-   the newest tail untouched. A `no-op` review can pass.
+   session detection or maintenance, every observed crossing drains all
+   reviewable sources oldest-first with one complete pipeline per source,
+   successful maintenance resets `turns_accumulated` only after the drain, and
+   the newest tail remains untouched. A `no-op` review can pass.
 3. **FIFO and concurrency-limit preservation:** pass only if A1 precedes A2
    without a gap or overlap, B is not cross-thread serialized, no thread has
    two active runs, and neither active-count measure exceeds `--concurrency`.
