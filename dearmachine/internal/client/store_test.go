@@ -878,6 +878,49 @@ func TestStoreAbandonRunningFollowupKeepsCanonicalSessionID(t *testing.T) {
 	}
 }
 
+func TestStorePreemptedRunningMessageKeepsSequenceGapZero(t *testing.T) {
+	store := openTestStore(t)
+	first, _, err := store.BeginMessage("message-0", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunning(first.MessageID, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(first.MessageID, RunResult{Kind: ResultAnswer, Text: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(first.MessageID, "completed", "reply-0"); err != nil {
+		t.Fatal(err)
+	}
+	interrupted, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interrupted.Session.Sequence != 2 || interrupted.Session.SessionID != first.Session.SessionID {
+		t.Fatalf("follow-up = %+v", interrupted.Session)
+	}
+	if err := store.MarkRunning(interrupted.MessageID, "partial"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SkipPreemptedMessage(MessageRef{MessageID: interrupted.MessageID, ThreadID: interrupted.ThreadID}, "preempted by newer email"); err != nil {
+		t.Fatalf("SkipPreemptedMessage: %v", err)
+	}
+	if skipped, err := store.IsSkipped(interrupted.MessageID); err != nil || !skipped {
+		t.Fatalf("IsSkipped = %v, %v", skipped, err)
+	}
+	if pending, err := store.Pending(); err != nil || len(pending) != 0 {
+		t.Fatalf("Pending = %+v, %v", pending, err)
+	}
+	third, _, err := store.BeginMessage("message-2", "thread-1", TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Session.Sequence != 3 || third.Session.SessionID != first.Session.SessionID {
+		t.Fatalf("third session = %+v, want sequence 3 and canonical session", third.Session)
+	}
+}
+
 func TestStoreAbandonRejectsNonRunningOrProvisionalMessage(t *testing.T) {
 	store := openTestStore(t)
 	first, _, err := store.BeginMessage("message-1", "thread-1", TierPlain)

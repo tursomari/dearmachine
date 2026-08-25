@@ -23,6 +23,7 @@ import (
 type gatedRun struct {
 	threadID string
 	sequence int
+	args     []string
 }
 
 type observedPollTransport struct {
@@ -675,7 +676,7 @@ func parseGatedRun(args []string) (gatedRun, error) {
 	if err != nil {
 		return gatedRun{}, fmt.Errorf("parse sequence %q: %w", match[2], err)
 	}
-	return gatedRun{threadID: match[1], sequence: sequence}, nil
+	return gatedRun{threadID: match[1], sequence: sequence, args: append([]string(nil), args...)}, nil
 }
 
 func commandArgument(args []string, name string) string {
