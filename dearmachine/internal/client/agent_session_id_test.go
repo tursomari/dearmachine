@@ -32,6 +32,27 @@ func TestAgentRunnerNewSessionCarriesFullConversationReference(t *testing.T) {
 	}
 }
 
+func TestAgentRunnerNewSessionOmitsResume(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+
+	if _, err := fixture.runner.Run(
+		context.Background(),
+		fixture.session,
+		"prompt",
+		fixture.finalPath,
+		fixture.turn,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	args := agentCaptureLines(t, "args-1")
+	for _, flag := range []string{"--session-id", "--resume"} {
+		if slices.Contains(args, flag) {
+			t.Fatalf("new session unexpectedly passed %s: %v", flag, args)
+		}
+	}
+}
+
 func TestAgentRunnerContinuationPassesFullConversationReferenceAndUnsetsEnv(t *testing.T) {
 	fixture := newAgentTestFixture(t)
 	fixture.session.IsNew = false
@@ -49,7 +70,7 @@ func TestAgentRunnerContinuationPassesFullConversationReferenceAndUnsetsEnv(t *t
 	assertArg(
 		t,
 		agentCaptureLines(t, "args-1"),
-		"--session-id",
+		"--resume",
 		fixture.session.SessionID,
 	)
 	if got := agentCapture(t, "session-env-1"); got != "" {
@@ -74,7 +95,7 @@ func TestAgentRunnerContinuationSessionIDStableAcrossTurns(t *testing.T) {
 		assertArg(
 			t,
 			agentCaptureLines(t, "args-"+strconv.Itoa(turn)),
-			"--session-id",
+			"--resume",
 			fixture.session.SessionID,
 		)
 	}
@@ -108,9 +129,16 @@ func TestAgentRunnerRecoveryContinuesUsingResolvedMachtianiSessionID(t *testing.
 	assertArg(
 		t,
 		agentCaptureLines(t, "args-1"),
-		"--session-id",
+		"--resume",
 		fixture.session.SessionID,
 	)
+	args := agentCaptureLines(t, "args-1")
+	if slices.Contains(args, "--prompt") {
+		t.Fatalf("recovery run unexpectedly passed --prompt: %v", args)
+	}
+	if got := agentCapture(t, "text-1"); got != "" {
+		t.Fatalf("recovery prompt = %q, want empty", got)
+	}
 	if got := agentCapture(t, "session-env-1"); got != "" {
 		t.Fatalf("recovery run set MACHTIANI_SESSION_ID = %q", got)
 	}
@@ -122,6 +150,76 @@ func TestAgentRunnerRecoveryContinuesUsingResolvedMachtianiSessionID(t *testing.
 			t.Fatalf("session show IDs = %v, want only %q", shown, fixture.session.SessionID)
 		}
 	}
+}
+
+func TestAgentRunnerRecoveryResumesPromptless(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	fixture.session.IsNew = false
+	writeTestFile(t, fixture.statusFile, `{"status":"in_progress","goal":"original prompt"}`)
+	fixture.runner.invoke = func(command *exec.Cmd) error {
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			writeTestFile(t, fixture.statusFile, `{"status":"success"}`)
+		}
+		return command.Run()
+	}
+
+	if _, err := fixture.runner.Recover(
+		context.Background(),
+		fixture.session,
+		"original prompt",
+		fixture.finalPath,
+		fixture.turn,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := agentCapture(t, "count"); got != "1" {
+		t.Fatalf("machtiani run count = %q, want 1", got)
+	}
+	args := agentCaptureLines(t, "args-1")
+	assertArg(t, args, "--resume", fixture.session.SessionID)
+	for _, flag := range []string{"--prompt", "--file"} {
+		if slices.Contains(args, flag) {
+			t.Fatalf("promptless recovery unexpectedly passed %s: %v", flag, args)
+		}
+	}
+	if strings.Contains(strings.Join(args, " "), "recovery:") {
+		t.Fatalf("promptless recovery args contain synthetic recovery text: %v", args)
+	}
+	if got := agentCapture(t, "text-1"); got != "" {
+		t.Fatalf("recovery prompt = %q, want empty", got)
+	}
+}
+
+func TestAgentRunnerRecoveryGoalMismatchStillUsesPrompt(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	fixture.session.IsNew = false
+	writeTestFile(t, fixture.statusFile, `{"status":"in_progress","goal":"different goal"}`)
+	fixture.runner.invoke = func(command *exec.Cmd) error {
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			writeTestFile(t, fixture.statusFile, `{"status":"success"}`)
+		}
+		return command.Run()
+	}
+
+	if _, err := fixture.runner.Recover(
+		context.Background(),
+		fixture.session,
+		"original prompt",
+		fixture.finalPath,
+		fixture.turn,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	args := agentCaptureLines(t, "args-1")
+	if !slices.Contains(args, "--prompt") {
+		t.Fatalf("recovery args = %v, want --prompt", args)
+	}
+	if got := agentCapture(t, "text-1"); got != "original prompt" {
+		t.Fatalf("recovery prompt = %q, want %q", got, "original prompt")
+	}
+	assertArg(t, args, "--resume", fixture.session.SessionID)
 }
 
 func agentCapture(t *testing.T, name string) string {

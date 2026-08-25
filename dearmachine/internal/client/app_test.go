@@ -259,7 +259,7 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	if resumed.Sequence != 2 {
 		t.Fatalf("sequence = %d, want 2", resumed.Sequence)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", original.SessionID)
+	assertArg(t, rig.captureLines("args-2"), "--resume", original.SessionID)
 	if got := rig.capture("session-env-2"); got != "" {
 		t.Fatalf("resumed run set MACHTIANI_SESSION_ID = %q", got)
 	}
@@ -316,7 +316,7 @@ func TestShortSessionFooterContinuesSessionWhenTransportThreadAndAncestryChange(
 	if continued.SessionID != first.SessionID || continued.Sequence != 2 {
 		t.Fatalf("short-footer reply did not continue session: first=%+v continued=%+v", first, continued)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", first.SessionID)
+	assertArg(t, rig.captureLines("args-2"), "--resume", first.SessionID)
 }
 
 func TestFollowUpCheckpointFailureLeavesMessageReceived(t *testing.T) {
@@ -384,7 +384,7 @@ func TestAskUserThenResumeWithAnswer(t *testing.T) {
 	if completed.Status != "completed" || completed.Sequence != 2 {
 		t.Fatalf("unexpected completed session: %+v", completed)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--session-id", completed.SessionID)
+	assertArg(t, rig.captureLines("args-2"), "--resume", completed.SessionID)
 	replies := rig.mail.sentReplies()
 	if len(replies) != 2 {
 		t.Fatalf("unexpected replies: %+v", replies)
@@ -467,6 +467,13 @@ func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 	if err := rig.store.MarkRunning(message.MessageID, prompt); err != nil {
 		t.Fatalf("MarkRunning: %v", err)
 	}
+	rig.setStatus(`{"status":"in_progress","goal":` + strconv.Quote(prompt) + `}`)
+	rig.app.runner.invoke = func(command *exec.Cmd) error {
+		if len(command.Args) > 1 && command.Args[1] == "run" {
+			rig.setStatus(`{"status":"success"}`)
+		}
+		return command.Run()
+	}
 
 	rig.restartStore(t)
 	mustProcess(t, rig)
@@ -478,12 +485,12 @@ func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 	if got := rig.capture("count"); got != "2" {
 		t.Fatalf("machtiani run count = %q, want 2", got)
 	}
-	replayedPrompt := rig.capture("text-2")
-	if count := strings.Count(replayedPrompt, "Prepare the interrupted report."); count != 1 {
-		t.Fatalf("inbound prompt count = %d, want 1:\n%s", count, replayedPrompt)
+	args := rig.captureLines("args-2")
+	if !slices.Contains(args, "--resume") || slices.Contains(args, "--prompt") {
+		t.Fatalf("recovery args = %v, want --resume without --prompt", args)
 	}
-	if replayedPrompt != prompt {
-		t.Fatalf("replayed prompt changed:\ngot:\n%s\nwant:\n%s", replayedPrompt, prompt)
+	if got := rig.capture("text-2"); got != "" {
+		t.Fatalf("recovery prompt = %q, want empty", got)
 	}
 	if replies := rig.mail.sentReplies(); len(replies) != 2 {
 		t.Fatalf("reply count = %d, want 2: %+v", len(replies), replies)

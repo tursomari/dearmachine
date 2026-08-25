@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -700,9 +701,11 @@ func TestRecoverForwardsSameTurnContext(t *testing.T) {
 	writeTestFile(t, fixture.statusFile, `{"status":"in_progress","goal":"original prompt"}`)
 
 	var captured [][]string
+	var capturedArgs [][]string
 	fixture.runner.invoke = func(command *exec.Cmd) error {
 		if len(command.Args) > 1 && command.Args[1] == "run" {
 			captured = append(captured, append([]string(nil), command.Env...))
+			capturedArgs = append(capturedArgs, append([]string(nil), command.Args...))
 		}
 		return command.Run()
 	}
@@ -717,9 +720,15 @@ func TestRecoverForwardsSameTurnContext(t *testing.T) {
 	if len(captured) != 1 {
 		t.Fatalf("captured recovery run envs = %d, want 1 (err=%v)", len(captured), err)
 	}
-	prompt, readErr := os.ReadFile(filepath.Join(os.Getenv("FAKE_AGENT_CAPTURE"), "text-1"))
-	if readErr != nil || !strings.Contains(string(prompt), "recovery:") {
-		t.Fatalf("recovery prompt = %q, %v", prompt, readErr)
+	if len(capturedArgs) != 1 {
+		t.Fatalf("captured recovery run args = %d, want 1", len(capturedArgs))
+	}
+	args := capturedArgs[0]
+	if !slices.Contains(args, "--resume") || slices.Contains(args, "--prompt") {
+		t.Fatalf("recovery args = %v, want --resume without --prompt", args)
+	}
+	if got := agentCapture(t, "text-1"); got != "" {
+		t.Fatalf("recovery prompt = %q, want empty", got)
 	}
 	env := captured[0]
 	requireUniqueEnv(t, env, "DEARMACHINE_ATTACHMENTS_INBOX", fixture.turn.InboxPath)

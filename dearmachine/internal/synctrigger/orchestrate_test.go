@@ -106,7 +106,7 @@ func TestOrchestrateSuccess(t *testing.T) {
 
 	want := [][]string{
 		{"machtiani", "session", "fork", "older"},
-		{"machtiani", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"machtiani", "run", "--resume", "forked-123", "--file", "/prompt.md"},
 		{"machtiani", "session", "delete", "forked-123"},
 		{"machtiani", "sync", "--include-docs"},
 	}
@@ -243,7 +243,7 @@ func TestOrchestrateGateStaysOpenAcrossPartialBacklogFailure(t *testing.T) {
 				source := args[2]
 				forked = append(forked, source)
 				return []byte("forked-" + source + "\n"), nil
-			case strings.HasPrefix(command, "run --session-id forked-"):
+			case strings.HasPrefix(command, "run --resume forked-"):
 				return nil, nil
 			case strings.HasPrefix(command, "session delete forked-"):
 				return nil, nil
@@ -369,7 +369,7 @@ func TestOrchestrateForkFails(t *testing.T) {
 func TestOrchestrateRunFails(t *testing.T) {
 	t.Parallel()
 	runner := &mockRunner{
-		errAt: map[string]error{"machtiani run --session-id forked-123 --file /prompt.md": errors.New("run failed")},
+		errAt: map[string]error{"machtiani run --resume forked-123 --file /prompt.md": errors.New("run failed")},
 	}
 	o := &Orchestrator{
 		RepoPath:           "/repo",
@@ -423,7 +423,7 @@ func TestOrchestrateRunCancellationStillCleansUpFork(t *testing.T) {
 			switch command {
 			case "session fork older":
 				return []byte("forked-123\n"), nil
-			case "run --session-id forked-123 --file /prompt.md":
+			case "run --resume forked-123 --file /prompt.md":
 				cancel()
 				return nil, context.Canceled
 			case "session delete forked-123":
@@ -587,7 +587,7 @@ func TestOrchestrateGateCountsTurnsFromStartWithoutCheckpoint(t *testing.T) {
 	}
 	want := [][]string{
 		{"machtiani", "session", "fork", "oldest"},
-		{"machtiani", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"machtiani", "run", "--resume", "forked-123", "--file", "/prompt.md"},
 		{"machtiani", "session", "delete", "forked-123"},
 		{"machtiani", "sync", "--include-docs"},
 	}
@@ -831,7 +831,7 @@ func TestOrchestrateRunsAtTurnThreshold(t *testing.T) {
 	}
 	want := [][]string{
 		{"machtiani", "session", "fork", "session-b"},
-		{"machtiani", "run", "--session-id", "forked-123", "--file", "/prompt.md"},
+		{"machtiani", "run", "--resume", "forked-123", "--file", "/prompt.md"},
 		{"machtiani", "session", "delete", "forked-123"},
 		{"machtiani", "sync", "--include-docs"},
 	}
