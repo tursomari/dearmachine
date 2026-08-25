@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
@@ -48,7 +51,17 @@ type AgentRunner struct {
 	manager            string
 	magnificaHumanitas bool
 	invoke             func(*exec.Cmd) error
+	activeMu           sync.Mutex
+	active             map[string]*activeCommand
+	interrupt          func(*exec.Cmd) error
 }
+
+type activeCommand struct {
+	command *exec.Cmd
+	stopped bool
+}
+
+var ErrGracefullyStopped = errors.New("machtiani run stopped gracefully")
 
 func (r *AgentRunner) SetMagnificaHumanitas(enabled bool) {
 	r.magnificaHumanitas = enabled
@@ -90,7 +103,51 @@ func NewAgentRunner(binary, projectDir, model string) (*AgentRunner, error) {
 		binary:     binary,
 		projectDir: projectDir,
 		model:      strings.TrimSpace(model),
+		active:     make(map[string]*activeCommand),
 	}, nil
+}
+
+// Stop asks the current run for threadID to stop at its graceful interrupt
+// boundary. It returns false when no command remains active for that thread.
+func (r *AgentRunner) Stop(threadID string) bool {
+	r.activeMu.Lock()
+	active := r.active[threadID]
+	if active == nil {
+		r.activeMu.Unlock()
+		return false
+	}
+	active.stopped = true
+	command := active.command
+	r.activeMu.Unlock()
+	_ = command.Cancel()
+	return true
+}
+
+func (r *AgentRunner) registerActive(threadID string, command *exec.Cmd) {
+	r.activeMu.Lock()
+	r.active[threadID] = &activeCommand{command: command}
+	r.activeMu.Unlock()
+}
+
+func (r *AgentRunner) releaseActive(threadID string, command *exec.Cmd) bool {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	active := r.active[threadID]
+	if active == nil || active.command != command {
+		return false
+	}
+	delete(r.active, threadID)
+	return active.stopped
+}
+
+func (r *AgentRunner) cancel(command *exec.Cmd) error {
+	if r.interrupt != nil {
+		return r.interrupt(command)
+	}
+	if command.Process == nil {
+		return os.ErrProcessDone
+	}
+	return command.Process.Signal(os.Interrupt)
 }
 
 func (r *AgentRunner) Sync(ctx context.Context) error {
@@ -227,6 +284,8 @@ func (r *AgentRunner) run(
 	)
 
 	command := exec.CommandContext(ctx, r.binary, args...)
+	command.Cancel = func() error { return r.cancel(command) }
+	command.WaitDelay = 5 * time.Second
 	command.Dir = r.projectDir
 	command.Env = unsetEnv(os.Environ(), "DEARMACHINE_ATTACHMENTS_INBOX")
 	command.Env = unsetEnv(command.Env, "DEARMACHINE_ATTACHMENTS_OUTBOX")
@@ -246,7 +305,13 @@ func (r *AgentRunner) run(
 	var runOutput bytes.Buffer
 	command.Stdout = &runOutput
 	command.Stderr = &runOutput
-	if err := r.runCommand(command); err != nil {
+	r.registerActive(session.ThreadID, command)
+	err = r.runCommand(command)
+	stopped := r.releaseActive(session.ThreadID, command)
+	if stopped {
+		return RunResult{}, fmt.Errorf("%w: thread %s", ErrGracefullyStopped, session.ThreadID)
+	}
+	if err != nil {
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}

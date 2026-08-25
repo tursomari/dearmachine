@@ -17,6 +17,8 @@ type threadWorkQueue struct {
 	mu        sync.Mutex
 	items     []messageWork
 	inFlight  map[string]struct{}
+	active    map[string]messageWork
+	paused    map[string]struct{}
 	messageID map[string]struct{}
 	added     chan struct{}
 }
@@ -24,6 +26,8 @@ type threadWorkQueue struct {
 func newThreadWorkQueue() *threadWorkQueue {
 	return &threadWorkQueue{
 		inFlight:  make(map[string]struct{}),
+		active:    make(map[string]messageWork),
+		paused:    make(map[string]struct{}),
 		messageID: make(map[string]struct{}),
 		added:     make(chan struct{}, 1),
 	}
@@ -50,20 +54,48 @@ func (q *threadWorkQueue) take() (messageWork, bool) {
 	// thread stays queued while later independent threads can use other workers.
 	for index, work := range q.items {
 		threadID := work.pending.ThreadID
+		if _, paused := q.paused[threadID]; paused {
+			continue
+		}
 		if _, busy := q.inFlight[threadID]; busy {
 			continue
 		}
 		q.inFlight[threadID] = struct{}{}
+		q.active[threadID] = work
 		q.items = append(q.items[:index], q.items[index+1:]...)
 		return work, true
 	}
 	return messageWork{}, false
 }
 
+func (q *threadWorkQueue) pauseThread(threadID string) {
+	q.mu.Lock()
+	q.paused[threadID] = struct{}{}
+	q.mu.Unlock()
+}
+
+func (q *threadWorkQueue) resumeThread(threadID string) {
+	q.mu.Lock()
+	delete(q.paused, threadID)
+	q.mu.Unlock()
+	select {
+	case q.added <- struct{}{}:
+	default:
+	}
+}
+
 func (q *threadWorkQueue) finish(threadID string) {
 	q.mu.Lock()
 	delete(q.inFlight, threadID)
+	delete(q.active, threadID)
 	q.mu.Unlock()
+}
+
+func (q *threadWorkQueue) inFlightWork(threadID string) (messageWork, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	work, ok := q.active[threadID]
+	return work, ok
 }
 
 type workResult struct {
@@ -113,6 +145,7 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 
 	active := 0
 	var firstErr error
+	claimsStopped := false
 	for {
 		for firstErr == nil && active < a.concurrency {
 			item, ok := work.take()
@@ -123,6 +156,12 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 			active++
 		}
 		if active == 0 {
+			if !claimsStopped {
+				close(stopClaims)
+				claimLoop.Wait()
+				claimsStopped = true
+				continue
+			}
 			break
 		}
 
@@ -146,8 +185,10 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 		}
 	}
 
-	close(stopClaims)
-	claimLoop.Wait()
+	if !claimsStopped {
+		close(stopClaims)
+		claimLoop.Wait()
+	}
 	claimErrMu.Lock()
 	if claimErr != nil && firstErr == nil {
 		firstErr = claimErr

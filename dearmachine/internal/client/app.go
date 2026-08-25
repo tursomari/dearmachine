@@ -264,7 +264,35 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		if err != nil {
 			return fmt.Errorf("claim message %s: %w", message.MessageID, err)
 		}
+		paused := false
+		if active, running := work.inFlightWork(pending.ThreadID); running {
+			work.pauseThread(pending.ThreadID)
+			paused = true
+			stopped := a.runner.Stop(pending.ThreadID)
+			if stopped {
+				if _, err := a.store.SkipPreemptedMessage(
+					MessageRef{MessageID: active.pending.MessageID, ThreadID: active.pending.ThreadID},
+					"preempted by newer email",
+				); err != nil {
+					work.resumeThread(pending.ThreadID)
+					return fmt.Errorf("skip preempted message %s: %w", active.pending.MessageID, err)
+				}
+				var found bool
+				pending, found, err = a.store.PendingByID(message.MessageID)
+				if err != nil {
+					work.resumeThread(pending.ThreadID)
+					return fmt.Errorf("reload preempting message %s: %w", message.MessageID, err)
+				}
+				if !found {
+					work.resumeThread(pending.ThreadID)
+					return fmt.Errorf("preempting message %s disappeared", message.MessageID)
+				}
+			}
+		}
 		work.enqueue(messageWork{message: message, pending: pending, recovering: existed})
+		if paused {
+			work.resumeThread(pending.ThreadID)
+		}
 	}
 	return nil
 }
@@ -324,7 +352,11 @@ func (a *App) processWork(ctx context.Context, work messageWork) error {
 		}
 		return fmt.Errorf("pending message disappeared before dispatch")
 	}
-	return a.processPending(ctx, work.message, pending, work.recovering)
+	err = a.processPending(ctx, work.message, pending, work.recovering)
+	if errors.Is(err, ErrGracefullyStopped) {
+		return nil
+	}
+	return err
 }
 
 func (a *App) processPending(

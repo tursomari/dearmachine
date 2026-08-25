@@ -249,6 +249,17 @@ func (s *Store) IsSkipped(messageID string) (bool, error) {
 }
 
 func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedMessage, error) {
+	return s.skipMessages(messages, reason, false)
+}
+
+// SkipPreemptedMessage atomically suppresses the active message replaced by a
+// newer message on the same thread, preserving its canonical session and
+// monotonic sequence number for the continuation.
+func (s *Store) SkipPreemptedMessage(message MessageRef, reason string) ([]AbandonedMessage, error) {
+	return s.skipMessages([]MessageRef{message}, reason, true)
+}
+
+func (s *Store) skipMessages(messages []MessageRef, reason string, preempted bool) ([]AbandonedMessage, error) {
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("no messages selected")
 	}
@@ -307,14 +318,15 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 			sessionID         string
 			pendingState      string
 			committedSequence int
+			pendingSequence   int
 		)
 		err = tx.QueryRow(
-			`SELECT p.thread_id, t.session_id, p.state, t.sequence
+			`SELECT p.thread_id, t.session_id, p.state, t.sequence, p.sequence
 			   FROM pending_messages p
 			   JOIN thread_sessions t ON t.thread_id = p.thread_id
 			  WHERE p.message_id = ?`,
 			message.MessageID,
-		).Scan(&pendingThread, &sessionID, &pendingState, &committedSequence)
+		).Scan(&pendingThread, &sessionID, &pendingState, &committedSequence, &pendingSequence)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("inspect pending message before skip: %w", err)
 		}
@@ -329,7 +341,10 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 		if err == nil && !isCanonicalConversationReference(sessionID) {
 			return nil, fmt.Errorf("stored canonical session ID %q is invalid", sessionID)
 		}
-		if err == nil && pendingState != messageReceived && committedSequence > 0 {
+		if err == nil && preempted && pendingState != messageRunning {
+			return nil, fmt.Errorf("preempted message %s is not running", message.MessageID)
+		}
+		if err == nil && pendingState != messageReceived && committedSequence > 0 && !preempted {
 			return nil, fmt.Errorf(
 				"cannot safely skip in-progress follow-up %s: session %s already has committed history",
 				message.MessageID,
@@ -352,6 +367,14 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
+		if preempted && pendingState == messageRunning {
+			if _, err := tx.Exec(
+				`UPDATE thread_sessions SET sequence = CASE WHEN sequence < ? THEN ? ELSE sequence END WHERE thread_id = ?`,
+				pendingSequence, pendingSequence, canonicalThreadID,
+			); err != nil {
+				return nil, fmt.Errorf("preserve preempted thread sequence: %w", err)
+			}
+		}
 
 		if _, err := tx.Exec(
 			`DELETE FROM pending_messages WHERE message_id = ?`,
@@ -359,7 +382,7 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 		); err != nil {
 			return nil, fmt.Errorf("remove skipped pending message: %w", err)
 		}
-		if committedSequence == 0 {
+		if committedSequence == 0 && !preempted {
 			if _, err := tx.Exec(
 				`DELETE FROM thread_aliases WHERE canonical_thread_id = ?`,
 				canonicalThreadID,
@@ -376,7 +399,7 @@ func (s *Store) SkipMessages(messages []MessageRef, reason string) ([]AbandonedM
 		abandoned = append(abandoned, AbandonedMessage{
 			MessageID:      message.MessageID,
 			SessionID:      sessionID,
-			CleanupSession: pendingState != messageReceived && committedSequence == 0,
+			CleanupSession: pendingState != messageReceived && committedSequence == 0 && !preempted,
 		})
 	}
 	if err := tx.Commit(); err != nil {
