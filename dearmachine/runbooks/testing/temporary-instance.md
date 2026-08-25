@@ -63,6 +63,13 @@ inbox-level `send`, `receive`, and `reply` policies. Refer to the transport
 runbook for provider-specific provisioning and policy scopes. Record which
 entries the run created so teardown never removes a pre-existing policy entry.
 
+Before creating a temporary pair, confirm that the transport account can create
+two additional inboxes. If a provider limit rejects the second creation after
+the first succeeds, do not repurpose a normal inbox or continue with one
+inbox. Verify the exact metadata of the first, remove only that run-created
+partial inbox, retain the provider error in private evidence, and classify the
+live evaluation `INCONCLUSIVE`.
+
 ### Isolation contract
 
 Before creating anything, record:
