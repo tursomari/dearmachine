@@ -237,7 +237,7 @@ func (o *Orchestrator) reviewSession(
 		o.RepoPath,
 		o.AgentBinary,
 		"run",
-		"--session-id",
+		"--resume",
 		forkedSessionID,
 		"--file",
 		o.PromptTemplatePath,
