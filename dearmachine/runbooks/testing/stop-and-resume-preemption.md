@@ -58,7 +58,8 @@ directories, and its Machtiani stores must remain untouched throughout.
    disposable Git/mct project beneath `DEARMACHINE_TEST_PROJECT`. Before every
    machtiani invocation, including inspection and cleanup, unset
    `MACHTIANI_SESSION_ID` and `MACHTIANI_SESSION_TEMP_ROOT`.
-4. Create a disposable AgentMail sender and receiver, verify their exact IDs,
+4. Create a disposable sender and receiver with the selected transport under
+   test, verify their exact IDs,
    and configure the receiver as the client's `--inbox-id`. Configure the
    transport's allowed reply recipient as the disposable sender address, using
    the existing transport convention; the reply address must not be a normal
@@ -136,18 +137,17 @@ directories, and its Machtiani stores must remain untouched throughout.
    one bounded answer, so its expected reply can be distinguished from an
    answer to the first email.
 2. While the first child is still observed running, send the second body by the
-   existing reply-natural AgentMail mechanism: reply in the sender's existing
-   first-message thread and preserve the normal `In-Reply-To`/`References`
-   ancestry or provider reply derivation. Do not substitute a fresh draft: a
-   fresh draft is a new thread and cannot prove this protocol. Record the
-   sender-side second message ID and thread ID privately.
+   transport's reply-natural continuation mechanism, for example an AgentMail
+   reply or an OpenMail same-thread send with reply ancestry. Do not substitute
+   a fresh draft: a fresh draft is a new thread and cannot prove this protocol.
+   Record the sender-side second message ID and thread ID privately.
 3. List the receiver inbox and obtain the receiver-side second message and
    thread IDs. Its receiver-side thread must map to the same canonical
-   `thread_sessions` row as the first message. If AgentMail retains sender-side
-   threading but does not deliver the reply-type message to the receiver after
-   about 60 seconds, classify the live preemption result `INCONCLUSIVE`; retain
-   both inbox histories and do not retry with a fresh draft while claiming a
-   same-thread result.
+   `thread_sessions` row as the first message. If the transport retains
+   sender-side threading but does not deliver the reply-type message to the
+   receiver after about 60 seconds, classify the live preemption result
+   `INCONCLUSIVE`; retain both inbox histories and do not retry with a fresh
+   draft while claiming a same-thread result.
 
 ### Observe preemption and resumed reply
 
@@ -255,6 +255,6 @@ Follow the shared teardown exactly on pass, failure, or inconclusive result:
    unchanged. They must have remained untouched for the entire run.
 
 Report `PASS` only when every numbered assertion succeeds. Report a bounded
-timeout or the documented AgentMail continuation-delivery limitation as
+timeout or a documented transport continuation-delivery limitation as
 `INCONCLUSIVE` after retaining the last state; report any contrary assertion
 as `FAIL` without changing the tested checkout.
