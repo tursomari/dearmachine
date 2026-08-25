@@ -7,7 +7,7 @@ This module proves the DearMachine Client alpha happy path:
 2. Resolve provider thread aliases and stable Dear Machine footer references
    to durable machtiani session IDs in SQLite.
 3. Invoke machtiani with a preallocated session ID for new threads or
-   `--session-id` for existing threads.
+   `--resume` for existing threads.
 4. Inspect `machtiani session show --json`.
 5. Send either the final answer or an AskUser clarification as a threaded
    transport reply.
@@ -193,7 +193,7 @@ model; when omitted, no model flag is forwarded.
 
 For each inbound email, DearMachine Client passes the sender/thread metadata and the
 newly authored text reported by the selected transport. Follow-ups resume the mapped
-`machtiani` session with `--session-id`; that persisted session owns prior
+`machtiani` session with `--resume`; that persisted session owns prior
 conversation context, so DearMachine Client does not replay the email thread.
 
 Every outbound answer and AskUser response ends with a stable, opaque Dear

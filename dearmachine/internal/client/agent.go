@@ -150,15 +150,44 @@ func (r *AgentRunner) Run(
 	finalPath string,
 	tc TurnContext,
 ) (RunResult, error) {
-	if err := r.ValidateTurnContext(tc); err != nil {
-		return RunResult{}, fmt.Errorf("validate turn context: %w", err)
-	}
-	if err := r.Sync(ctx); err != nil {
+	if err := r.validateRun(ctx, finalPath, tc); err != nil {
 		return RunResult{}, err
 	}
-	if strings.TrimSpace(finalPath) == "" {
-		return RunResult{}, fmt.Errorf("agent final answer path is required")
+	return r.run(ctx, session, &text, finalPath, tc)
+}
+
+func (r *AgentRunner) RunResume(
+	ctx context.Context,
+	session Session,
+	finalPath string,
+	tc TurnContext,
+) (RunResult, error) {
+	if err := r.validateRun(ctx, finalPath, tc); err != nil {
+		return RunResult{}, err
 	}
+	return r.run(ctx, session, nil, finalPath, tc)
+}
+
+func (r *AgentRunner) validateRun(ctx context.Context, finalPath string, tc TurnContext) error {
+	if err := r.ValidateTurnContext(tc); err != nil {
+		return fmt.Errorf("validate turn context: %w", err)
+	}
+	if err := r.Sync(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(finalPath) == "" {
+		return fmt.Errorf("agent final answer path is required")
+	}
+	return nil
+}
+
+func (r *AgentRunner) run(
+	ctx context.Context,
+	session Session,
+	prompt *string,
+	finalPath string,
+	tc TurnContext,
+) (RunResult, error) {
 	machtianiID := session.SessionID
 	if !isCanonicalConversationReference(machtianiID) {
 		return RunResult{}, fmt.Errorf("agent session ID must be a canonical conversation reference")
@@ -169,12 +198,12 @@ func (r *AgentRunner) Run(
 	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
 		return RunResult{}, fmt.Errorf("clear prior agent final answer: %w", err)
 	}
-	args := []string{
-		"run",
-		"--prompt", text,
+	args := []string{"run"}
+	if prompt != nil {
+		args = append(args, "--prompt", *prompt)
 	}
 	if !session.IsNew {
-		args = append(args, "--session-id", machtianiID)
+		args = append(args, "--resume", machtianiID)
 	}
 	if r.model != "" {
 		args = append(args, "--model", r.model)
@@ -269,10 +298,7 @@ func (r *AgentRunner) Recover(
 
 	resumed := session
 	resumed.IsNew = false
-	const recoveryPrompt = "[Dear Machine, recovery: continue the interrupted email request " +
-		"already present in this session. Do not repeat completed work or add the " +
-		"original email prompt again. Return the pending answer.]"
-	return r.Run(ctx, resumed, recoveryPrompt, finalPath, tc)
+	return r.RunResume(ctx, resumed, finalPath, tc)
 }
 
 func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error {
