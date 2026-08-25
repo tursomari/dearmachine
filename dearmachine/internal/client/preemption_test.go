@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"os/exec"
+	"sync"
 	"testing"
 	"time"
 )
@@ -113,6 +115,83 @@ func TestNewEmailArrivingJustAsRunFinishesIsNotKilled(t *testing.T) {
 	}
 	if item, ok := work.take(); !ok || item.pending.MessageID != second.MessageID {
 		t.Fatalf("claimed work = %+v, %v", item, ok)
+	}
+}
+
+func TestRepollOfRunningMessageDoesNotSelfPreempt(t *testing.T) {
+	message := Message{MessageID: "message-1", ThreadID: "thread-1", From: "sender@example.com", Body: "one"}
+	transport := newFakeTransport()
+	transport.setPoll([]Message{message})
+	started := make(chan gatedRun, 1)
+	release := make(chan struct{})
+	app, store := newInMemoryApp(t, transport, 1, gatedRunInvoker(started, release))
+	var stopCalls int
+	var stopCallsMu sync.Mutex
+	app.runner.interrupt = func(*exec.Cmd) error {
+		stopCallsMu.Lock()
+		stopCalls++
+		stopCallsMu.Unlock()
+		return nil
+	}
+	work := newThreadWorkQueue()
+	if err := app.pollAndClaim(context.Background(), work); err != nil {
+		t.Fatalf("initial pollAndClaim: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- app.dispatch(context.Background(), work) }()
+	if got := awaitGatedRun(t, started); got.threadID != message.ThreadID || got.sequence != 1 {
+		t.Fatalf("run = %+v", got)
+	}
+
+	if err := app.pollAndClaim(context.Background(), work); err != nil {
+		t.Fatalf("re-poll running message: %v", err)
+	}
+	stopCallsMu.Lock()
+	gotStopCalls := stopCalls
+	stopCallsMu.Unlock()
+	if gotStopCalls != 0 {
+		t.Fatalf("Stop delivered %d times, want 0", gotStopCalls)
+	}
+	if skipped, err := store.IsSkipped(message.MessageID); err != nil || skipped {
+		t.Fatalf("IsSkipped = %v, %v; want false, nil", skipped, err)
+	}
+	if _, running := work.inFlightWork(message.ThreadID); !running {
+		t.Fatal("re-poll did not preserve in-flight work")
+	}
+
+	release <- struct{}{}
+	if err := <-done; err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+}
+
+func TestRepollOfSeenMessageStillMarksProcessed(t *testing.T) {
+	message := Message{MessageID: "message-1", ThreadID: "thread-1", From: "sender@example.com", Body: "one"}
+	transport := newFakeTransport()
+	transport.setPoll([]Message{message})
+	app, store := newInMemoryApp(t, transport, 1, gatedRunInvoker(make(chan gatedRun), make(chan struct{})))
+	pending, _, err := store.BeginMessage(message.MessageID, message.ThreadID, TierPlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkRunning(pending.MessageID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreResult(pending.MessageID, RunResult{Kind: ResultAnswer, Text: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(pending.MessageID, "completed", "reply-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.pollAndClaim(context.Background(), newThreadWorkQueue()); err != nil {
+		t.Fatalf("re-poll seen message: %v", err)
+	}
+	transport.mu.Lock()
+	processed := append([]string(nil), transport.processed...)
+	transport.mu.Unlock()
+	if len(processed) != 1 || processed[0] != message.MessageID {
+		t.Fatalf("processed = %v, want [%s]", processed, message.MessageID)
 	}
 }
 
