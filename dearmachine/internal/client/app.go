@@ -29,6 +29,8 @@ type App struct {
 	verbose          bool
 	pidfile          string
 	responseTier     ResponseTier
+	preemptionNow    func() time.Time
+	preemptionAfter  func(time.Duration) <-chan time.Time
 	statsMu          sync.Mutex
 	processed        int
 	threads          map[string]struct{}
@@ -82,6 +84,8 @@ func New(
 		verbose:          verbose,
 		pidfile:          pidfile,
 		responseTier:     responseTier,
+		preemptionNow:    time.Now,
+		preemptionAfter:  time.After,
 		threads:          make(map[string]struct{}),
 	}, nil
 }
@@ -264,38 +268,7 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		if err != nil {
 			return fmt.Errorf("claim message %s: %w", message.MessageID, err)
 		}
-		paused := false
-		if !existed {
-			active, running := work.inFlightWork(pending.ThreadID)
-			if running {
-				work.pauseThread(pending.ThreadID)
-				paused = true
-				stopped := a.runner.Stop(pending.ThreadID)
-				if stopped {
-					if _, err := a.store.SkipPreemptedMessage(
-						MessageRef{MessageID: active.pending.MessageID, ThreadID: active.pending.ThreadID},
-						"preempted by newer email",
-					); err != nil {
-						work.resumeThread(pending.ThreadID)
-						return fmt.Errorf("skip preempted message %s: %w", active.pending.MessageID, err)
-					}
-					var found bool
-					pending, found, err = a.store.PendingByID(message.MessageID)
-					if err != nil {
-						work.resumeThread(pending.ThreadID)
-						return fmt.Errorf("reload preempting message %s: %w", message.MessageID, err)
-					}
-					if !found {
-						work.resumeThread(pending.ThreadID)
-						return fmt.Errorf("preempting message %s disappeared", message.MessageID)
-					}
-				}
-			}
-		}
 		work.enqueue(messageWork{message: message, pending: pending, recovering: existed})
-		if paused {
-			work.resumeThread(pending.ThreadID)
-		}
 	}
 	return nil
 }
@@ -333,7 +306,7 @@ func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {
 	return nil
 }
 
-func (a *App) processWork(ctx context.Context, work messageWork) error {
+func (a *App) processWork(ctx context.Context, work messageWork, started func()) error {
 	pending, found, err := a.store.PendingByID(work.pending.MessageID)
 	if err != nil {
 		return err
@@ -355,7 +328,7 @@ func (a *App) processWork(ctx context.Context, work messageWork) error {
 		}
 		return fmt.Errorf("pending message disappeared before dispatch")
 	}
-	err = a.processPending(ctx, work.message, pending, work.recovering)
+	err = a.processPending(ctx, work.message, pending, work.recovering, started)
 	if errors.Is(err, ErrGracefullyStopped) {
 		return nil
 	}
@@ -367,6 +340,7 @@ func (a *App) processPending(
 	message Message,
 	pending PendingMessage,
 	recovering bool,
+	started func(),
 ) error {
 	if recovering {
 		outboundMessageID, found, err := a.transport.ReplyReceipt(ctx, message)
@@ -457,14 +431,15 @@ func (a *App) processPending(
 			return err
 		}
 		pending.CheckpointSessionID = checkpointSessionID
-		result, err = a.runner.Run(ctx, pending.Session, prompt, finalPath, tc)
+		result, err = a.runner.runObserved(ctx, pending.Session, prompt, finalPath, tc, started)
 	case messageRunning:
-		result, err = a.runner.Recover(
+		result, err = a.runner.recoverObserved(
 			ctx,
 			pending.Session,
 			pending.Prompt,
 			finalPath,
 			tc,
+			started,
 		)
 	case messageResultReady:
 		result = RunResult{

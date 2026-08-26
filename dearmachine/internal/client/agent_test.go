@@ -200,24 +200,24 @@ func TestAgentRunnerReturnsGracefulStopOnInterrupt(t *testing.T) {
 	fixture := newAgentTestFixture(t)
 	t.Setenv("FAKE_AGENT_RUN_DELAY", "5")
 	writeTestFile(t, fixture.statusFile, `{"status":"interrupted"}`)
-	fixture.runner.invoke = func(command *exec.Cmd) error { return command.Run() }
 
 	done := make(chan error, 1)
+	started := make(chan struct{})
 	go func() {
-		_, err := fixture.runner.Run(context.Background(), fixture.session, "prompt", fixture.finalPath, fixture.turn)
+		_, err := fixture.runner.runObserved(
+			context.Background(),
+			fixture.session,
+			"prompt",
+			fixture.finalPath,
+			fixture.turn,
+			func() { close(started) },
+		)
 		done <- err
 	}()
-	captureDir := os.Getenv("FAKE_AGENT_CAPTURE")
-	deadline := time.Now().Add(time.Second)
-	for {
-		contents, _ := os.ReadFile(filepath.Join(captureDir, "events"))
-		if strings.Contains(string(contents), "run\n") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("fake agent run did not start")
-		}
-		time.Sleep(time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("fake agent run did not start")
 	}
 	if !fixture.runner.Stop("thread-1") {
 		t.Fatal("Stop did not find the running thread")

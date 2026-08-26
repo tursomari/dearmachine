@@ -207,10 +207,21 @@ func (r *AgentRunner) Run(
 	finalPath string,
 	tc TurnContext,
 ) (RunResult, error) {
+	return r.runObserved(ctx, session, text, finalPath, tc, nil)
+}
+
+func (r *AgentRunner) runObserved(
+	ctx context.Context,
+	session Session,
+	text,
+	finalPath string,
+	tc TurnContext,
+	started func(),
+) (RunResult, error) {
 	if err := r.validateRun(ctx, finalPath, tc); err != nil {
 		return RunResult{}, err
 	}
-	return r.run(ctx, session, &text, finalPath, tc)
+	return r.run(ctx, session, &text, finalPath, tc, started)
 }
 
 func (r *AgentRunner) RunResume(
@@ -219,10 +230,20 @@ func (r *AgentRunner) RunResume(
 	finalPath string,
 	tc TurnContext,
 ) (RunResult, error) {
+	return r.runResumeObserved(ctx, session, finalPath, tc, nil)
+}
+
+func (r *AgentRunner) runResumeObserved(
+	ctx context.Context,
+	session Session,
+	finalPath string,
+	tc TurnContext,
+	started func(),
+) (RunResult, error) {
 	if err := r.validateRun(ctx, finalPath, tc); err != nil {
 		return RunResult{}, err
 	}
-	return r.run(ctx, session, nil, finalPath, tc)
+	return r.run(ctx, session, nil, finalPath, tc, started)
 }
 
 func (r *AgentRunner) validateRun(ctx context.Context, finalPath string, tc TurnContext) error {
@@ -244,6 +265,7 @@ func (r *AgentRunner) run(
 	prompt *string,
 	finalPath string,
 	tc TurnContext,
+	started func(),
 ) (RunResult, error) {
 	machtianiID := session.SessionID
 	if !isCanonicalConversationReference(machtianiID) {
@@ -305,8 +327,7 @@ func (r *AgentRunner) run(
 	var runOutput bytes.Buffer
 	command.Stdout = &runOutput
 	command.Stderr = &runOutput
-	r.registerActive(session.ThreadID, command)
-	err = r.runCommand(command)
+	err = r.runActiveCommand(session.ThreadID, command, started)
 	stopped := r.releaseActive(session.ThreadID, command)
 	if stopped {
 		return RunResult{}, fmt.Errorf("%w: thread %s", ErrGracefullyStopped, session.ThreadID)
@@ -335,12 +356,48 @@ func (r *AgentRunner) run(
 	return result, nil
 }
 
+func (r *AgentRunner) runActiveCommand(
+	threadID string,
+	command *exec.Cmd,
+	started func(),
+) error {
+	if r.invoke != nil {
+		// Injected invokers model the entire command lifecycle in component tests.
+		r.registerActive(threadID, command)
+		if started != nil {
+			started()
+		}
+		return r.invoke(command)
+	}
+	if err := command.Start(); err != nil {
+		return err
+	}
+	// Do not expose Cmd to Stop until Start has finished initializing Process.
+	// This is also the launch boundary used by queue-aware grace preemption.
+	r.registerActive(threadID, command)
+	if started != nil {
+		started()
+	}
+	return command.Wait()
+}
+
 func (r *AgentRunner) Recover(
 	ctx context.Context,
 	session Session,
 	originalPrompt,
 	finalPath string,
 	tc TurnContext,
+) (RunResult, error) {
+	return r.recoverObserved(ctx, session, originalPrompt, finalPath, tc, nil)
+}
+
+func (r *AgentRunner) recoverObserved(
+	ctx context.Context,
+	session Session,
+	originalPrompt,
+	finalPath string,
+	tc TurnContext,
+	started func(),
 ) (RunResult, error) {
 	if err := r.ValidateTurnContext(tc); err != nil {
 		return RunResult{}, fmt.Errorf("validate turn context: %w", err)
@@ -351,7 +408,7 @@ func (r *AgentRunner) Recover(
 	}
 	state, err := r.showSession(ctx, machtianiID)
 	if err != nil || state.Goal != originalPrompt {
-		return r.Run(ctx, session, originalPrompt, finalPath, tc)
+		return r.runObserved(ctx, session, originalPrompt, finalPath, tc, started)
 	}
 	result, ready, err := resultFromState(state, finalPath)
 	if err != nil {
@@ -363,7 +420,7 @@ func (r *AgentRunner) Recover(
 
 	resumed := session
 	resumed.IsNew = false
-	return r.RunResume(ctx, resumed, finalPath, tc)
+	return r.runResumeObserved(ctx, resumed, finalPath, tc, started)
 }
 
 func (r *AgentRunner) DeleteSession(ctx context.Context, sessionID string) error {
