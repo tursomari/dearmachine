@@ -2,15 +2,17 @@
 
 This document is a prompt for a capable local testing agent, not an executable
 test script. It proves the simplified same-thread preemption path: a newer
-email stops an active machtiani run, suppresses the interrupted email without a
-synthetic reply, and resumes the same session using only the newer message.
+email queues behind an active machtiani run, stops it once its one-poll-interval
+grace has elapsed, suppresses the interrupted email without a synthetic reply,
+and resumes the same session using only the newer message.
 
 Use [`temporary-instance.md`](./temporary-instance.md) for provisioning,
-isolation, observation, evidence handling, and teardown. Use the polling,
-same-thread continuation, and grace-window conventions in
+isolation, observation, evidence handling, and teardown. Use the polling and
+same-thread continuation conventions in
 [`continuous-intake.md`](./continuous-intake.md). Those requirements are part
-of this protocol. Do not change product code, prompts, documentation, or tests
-in response to the exercise.
+of this protocol. Use [`queued-grace-preemption.md`](./queued-grace-preemption.md)
+for the separate same-poll backlog boundary. Do not change product code,
+prompts, documentation, or tests in response to the exercise.
 
 ## Prompt to give the testing agent
 
@@ -159,7 +161,12 @@ child is observed, matching the short transition polling and bounded-deadline
 pattern in the adjacent live protocols. Retain the last complete sample on
 timeout. Require these assertions in order.
 
-1. **Graceful stop.** The first `machtiani ... run` child disappears before the
+1. **Grace then graceful stop.** Record the first run's launch time and the
+   second message's durable claim time. The stop must occur no earlier than one
+   configured poll interval after launch. If the second message is claimed
+   before that deadline, it waits only for the remaining grace; if claimed
+   afterward, the stop is requested immediately. The first `machtiani ... run`
+   child disappears before the
    second run is accepted. `machtiani session show <session-id> --json` for the
    disposable session reports an interrupted/resumable state, or the observed
    first child exits with status 130. Either is accepted machtiani evidence;

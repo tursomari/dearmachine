@@ -144,6 +144,11 @@ email lifecycle, give
 agent. It is a human-guided agent prompt, not an executable test script, and it
 includes the required Forge logout and login gates.
 
+For the same-poll and maintenance-backlog preemption boundary, use
+[`runbooks/testing/queued-grace-preemption.md`](./runbooks/testing/queued-grace-preemption.md).
+It requires every queued email to become a user turn while long-running
+superseded turns stop after one configured poll interval.
+
 For a live evaluation of the rolling one-session checkpoint, valid
 documentation no-ops, durable entry-point updates, and internal-README sync,
 give [`runbooks/testing/update-sync.md`](./runbooks/testing/update-sync.md) to a capable

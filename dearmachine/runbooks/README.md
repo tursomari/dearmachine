@@ -38,6 +38,8 @@ Go test suite.
   lifecycle using a separately authorized external correspondent.
 - [`testing/concurrent-sessions.md`](./testing/concurrent-sessions.md) compares
   sequential and three-worker processing across simultaneous email threads.
+- [`testing/queued-grace-preemption.md`](./testing/queued-grace-preemption.md)
+  proves same-poll queue-aware grace preemption and persisted user-turn order.
 - [`testing/live-backends.md`](./testing/live-backends.md) tests Forge, Codex,
   and ordered backend fallback.
 - [`testing/apple-mail-html-fallback.md`](./testing/apple-mail-html-fallback.md)

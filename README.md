@@ -256,7 +256,10 @@ footer. The local client removes that footer before invoking the agent and can
 use the reference to preserve continuity when a mail provider reports the
 reply under a different thread identifier.
 
-`Dear Machine,` only replies to the latest message in the thread.
+When a newer same-thread message is waiting, a long-running earlier turn is
+gracefully stopped after one inbox poll interval and the same session continues
+with the newer message. A turn that finishes inside that short grace may still
+reply. Every message remains part of the conversation context.
 
 ### Ask for coding work
 

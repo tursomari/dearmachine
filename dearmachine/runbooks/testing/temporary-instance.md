@@ -12,6 +12,8 @@ Current protocols include:
   lifecycle and local skip/unskip exercise;
 - [`concurrent-sessions.md`](./concurrent-sessions.md) for sequential and
   concurrent processing of simultaneous email threads;
+- [`queued-grace-preemption.md`](./queued-grace-preemption.md) for same-poll
+  queue-aware preemption after one poll interval;
 - [`live-backends.md`](./live-backends.md) for Forge, Codex, and
   ordered fallback; and
 - [`apple-mail-html-fallback.md`](./apple-mail-html-fallback.md) for the live
