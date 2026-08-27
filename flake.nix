@@ -46,7 +46,7 @@
             version = "0.1.0-${shortRevision}";
             src = source;
             subPackages = [ "cmd/dearmachine" "cmd/agent-manager" ];
-            vendorHash = "sha256-egQ4SN0hj5qnf96G61nI/YCM63ufl7R3GrydiCt7BvY=";
+            vendorHash = "sha256-p7nU+0TrpPo9GK+pPrF3Egzlftf16fByzAnAFspqAqM=";
             env.CGO_ENABLED = 1;
             doCheck = false;
             preBuild = ''
