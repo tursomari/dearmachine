@@ -525,6 +525,47 @@ func TestInboxMutationRefusesLiveDeviceClientPID(t *testing.T) {
 	}
 }
 
+func TestInboxSkippedUsesActivePairState(t *testing.T) {
+	home := t.TempDir()
+	homeDir := func() (string, error) { return home, nil }
+	pair, err := client.CreatePair(homeDir, client.Pair{
+		DisplayName: "Inbox lane", UserEmail: "user@example.test", DearMachineAddress: "machine@example.test",
+		Transport: "agentmail", InboxID: "inbox", Allow: []string{"user@example.test", "machine@example.test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := client.DefaultPairDatabasePath(homeDir, pair.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := client.OpenPairStore(path, pair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SkipMessages([]client.MessageRef{{MessageID: "pair-message", ThreadID: "pair-thread"}}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var output strings.Builder
+	deps := dependencies{
+		openStore:     func(string) (*client.Store, error) { return nil, errors.New("legacy store opened") },
+		openPairStore: client.OpenPairStore,
+		stdout:        &output,
+		flagOutput:    io.Discard,
+		userHomeDir:   homeDir,
+	}
+	if err := runInboxSkipped(nil, deps); err != nil {
+		t.Fatalf("runInboxSkipped: %v", err)
+	}
+	if !strings.Contains(output.String(), "pair-message") {
+		t.Fatalf("skipped output = %q", output.String())
+	}
+}
+
 type inboxTestTransport struct {
 	message client.Message
 }

@@ -113,7 +113,7 @@ func runInboxSkip(args []string, deps dependencies) error {
 			return transports.New(selectedTransport, inboxID, allow)
 		}
 	}
-	resolvedDB, resolvedPID, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
+	resolvedDB, resolvedPID, pair, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func runInboxSkip(args []string, deps dependencies) error {
 		}
 	}
 
-	store, err := deps.openStore(resolvedDB)
+	store, err := openInboxStore(resolvedDB, pair, deps)
 	if err != nil {
 		return err
 	}
@@ -233,7 +233,7 @@ func runInboxAbandon(args []string, deps dependencies) error {
 		return fmt.Errorf("message ID is required")
 	}
 
-	resolvedDB, resolvedPID, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
+	resolvedDB, resolvedPID, pair, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
 	if err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func runInboxAbandon(args []string, deps dependencies) error {
 		return fmt.Errorf("resolve agent project: %w", err)
 	}
 
-	store, err := deps.openStore(resolvedDB)
+	store, err := openInboxStore(resolvedDB, pair, deps)
 	if err != nil {
 		return err
 	}
@@ -336,14 +336,14 @@ func runInboxUnskip(args []string, deps dependencies) error {
 				"Run \"dearmachine inbox unskip --help\" for usage",
 		)
 	}
-	resolvedDB, resolvedPID, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
+	resolvedDB, resolvedPID, pair, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
 	if err != nil {
 		return err
 	}
 	if err := ensureDeviceClientStopped(resolvedPID); err != nil {
 		return err
 	}
-	store, err := deps.openStore(resolvedDB)
+	store, err := openInboxStore(resolvedDB, pair, deps)
 	if err != nil {
 		return err
 	}
@@ -372,11 +372,11 @@ func runInboxSkipped(args []string, deps dependencies) error {
 			flags.Args(),
 		)
 	}
-	resolvedDB, _, err := resolveInboxStatePaths(*dbPath, "", deps)
+	resolvedDB, _, pair, err := resolveInboxStatePaths(*dbPath, "", deps)
 	if err != nil {
 		return err
 	}
-	store, err := deps.openStore(resolvedDB)
+	store, err := openInboxStore(resolvedDB, pair, deps)
 	if err != nil {
 		return err
 	}
@@ -409,32 +409,52 @@ func runInboxSkipped(args []string, deps dependencies) error {
 	return nil
 }
 
-func resolveInboxStatePaths(dbPath, pidfile string, deps dependencies) (string, string, error) {
+// resolveInboxStatePaths keeps an explicit --db override for maintenance and
+// recovery work. Without one, inbox operations follow the active pair lane;
+// an empty registry deliberately retains the historical shared database.
+func resolveInboxStatePaths(dbPath, pidfile string, deps dependencies) (string, string, *client.Pair, error) {
 	var err error
+	var pair *client.Pair
 	if strings.TrimSpace(dbPath) == "" {
-		dbPath, err = client.DefaultDeviceDatabasePath(deps.userHomeDir)
-		if err != nil {
-			return "", "", err
+		state, resolveErr := client.ResolvePairState(deps.userHomeDir, "")
+		if resolveErr != nil {
+			return "", "", nil, resolveErr
+		}
+		dbPath = state.Path
+		if !state.Legacy {
+			selected := state.Pair
+			pair = &selected
 		}
 	} else {
 		dbPath, err = resolvePath(dbPath, deps.userHomeDir)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 	}
 	if strings.TrimSpace(pidfile) == "" {
 		home, err := deps.userHomeDir()
 		if err != nil {
-			return "", "", fmt.Errorf("resolve default PID file: %w", err)
+			return "", "", nil, fmt.Errorf("resolve default PID file: %w", err)
 		}
 		pidfile = filepath.Join(home, ".dearmachine", "run", "dearmachine.pid")
 	} else {
 		pidfile, err = resolvePath(pidfile, deps.userHomeDir)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 	}
-	return filepath.Clean(dbPath), filepath.Clean(pidfile), nil
+	return filepath.Clean(dbPath), filepath.Clean(pidfile), pair, nil
+}
+
+func openInboxStore(path string, pair *client.Pair, deps dependencies) (*client.Store, error) {
+	if pair == nil {
+		return deps.openStore(path)
+	}
+	openPairStore := deps.openPairStore
+	if openPairStore == nil {
+		openPairStore = client.OpenPairStore
+	}
+	return openPairStore(path, *pair)
 }
 
 func ensureDeviceClientStopped(pidfile string) error {

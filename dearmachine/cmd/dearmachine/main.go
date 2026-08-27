@@ -252,6 +252,16 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if len(args) > 0 && args[0] == "inbox" {
 		return runInbox(args[1:], deps)
 	}
+	if len(args) > 0 && args[0] == "up" {
+		return runUp(args[1:], getenv, deps)
+	}
+	return runStart(args, getenv, deps, nil)
+}
+
+// runStart is shared by the historical direct invocation and up. A pair passed
+// by up owns its connection settings; direct invocation deliberately preserves
+// its existing explicit-flag behavior for compatibility with legacy installs.
+func runStart(args []string, getenv func(string) string, deps dependencies, selectedPair *client.Pair) error {
 	flagOutput := deps.flagOutput
 	if flagOutput == nil {
 		flagOutput = io.Discard
@@ -259,6 +269,12 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	cfg, err := parseConfig(args, flagOutput)
 	if err != nil {
 		return err
+	}
+	if selectedPair != nil {
+		cfg.inboxID = selectedPair.InboxID
+		cfg.transport = selectedPair.Transport
+		cfg.allow = strings.Join(selectedPair.Allow, ",")
+		cfg.allowSet = true
 	}
 	if cfg.inboxID == "" {
 		return fmt.Errorf("--inbox-id is required")
