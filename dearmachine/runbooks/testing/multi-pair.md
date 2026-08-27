@@ -22,6 +22,18 @@ do not manually author `pairs.toml` as a test-only workaround.
 
 ## Multi-pair lane isolation
 
+### Authorized two-inbox variant
+
+When authorization permits exactly two temporary inboxes, create pair A first
+and create pair B only after A has state; B takes the fresh-state role normally
+assigned to pair C. Verify B's fresh `pair_meta` binding and empty tables before
+its first delivery, then compare A/B table independence. AgentMail IDs are
+inbox-scoped, so equal provider IDs across the two inboxes must not be
+manufactured through SQLite; classify that equality sub-check as
+not-legitimately-observable. If a self-send API call does not produce an
+inbound message, use the documented cross-lane allow-set pattern instead and
+record the provider behavior.
+
 Create a unique root and keep both `DEARMACHINE_HOME` and `HOME` below it so
 the registry's default home lookup is isolated. The operator-owned credential
 file must already have mode `0600`; export its path only, never its contents.
