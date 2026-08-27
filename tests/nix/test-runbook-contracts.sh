@@ -8,6 +8,7 @@ migrate=$PROJECT_ROOT/dearmachine/runbooks/migrate-live-state.md
 spinup=$PROJECT_ROOT/dearmachine/runbooks/container-spin-up.md
 temporary=$PROJECT_ROOT/dearmachine/runbooks/testing/temporary-instance.md
 disposable=$PROJECT_ROOT/dearmachine/runbooks/testing/disposable-instance.md
+multi_pair=$PROJECT_ROOT/dearmachine/runbooks/testing/multi-pair.md
 openmail=$PROJECT_ROOT/dearmachine/runbooks/testing/openmail-transport.md
 native=$PROJECT_ROOT/dearmachine/runbooks/native-install.md
 
@@ -36,6 +37,14 @@ grep -F 'pending-to-processed transitions' "$temporary" >/dev/null
 grep -F 'two inbound user turns map to one mct session with sequence 2' \
   "$disposable" >/dev/null
 grep -F 'exactly two substantive replies arrive' "$disposable" >/dev/null
+for contract in \
+  '## Multi-pair lane isolation' \
+  '## Pair-A pending revival falls through to pair B without pair isolation' \
+  '## Pair-A reply footer cannot join pair B session' \
+  '## Provider ID overlap stays independent' \
+  '## Per-pair allow set keeps traffic in lane'; do
+  grep -F "$contract" "$multi_pair" >/dev/null
+done
 grep -F 'exactly two allowed inbound messages' "$openmail" >/dev/null
 grep -F 'exactly two later outbound replies' "$openmail" >/dev/null
 grep -F 'Native foreground execution is the default' "$native" >/dev/null
