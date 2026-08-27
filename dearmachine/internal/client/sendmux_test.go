@@ -27,6 +27,17 @@ type fakeSendmuxAPI struct {
 	seen                  []string
 }
 
+type fakeSendmuxOutboundAPI struct {
+	from    string
+	request sendmuxSendRequest
+	key     string
+}
+
+func (fake *fakeSendmuxOutboundAPI) Send(_ context.Context, from string, request sendmuxSendRequest, key string) (string, error) {
+	fake.from, fake.request, fake.key = from, request, key
+	return "outbound-send-api", nil
+}
+
 func newFakeSendmuxAPI(downloadURL string) *fakeSendmuxAPI {
 	base := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	conversationReference := newConversationReference()
@@ -215,6 +226,30 @@ func TestSendmuxAllowListAndMutationGatesFailClosed(t *testing.T) {
 	}
 }
 
+func TestSendmuxTransportUsesConfiguredSendingAPIForReplies(t *testing.T) {
+	fake := newFakeSendmuxAPI("")
+	outbound := &fakeSendmuxOutboundAPI{}
+	transport, err := newSendmuxTransport(sendmuxTransportConfig{
+		API: fake, Outbound: outbound, Inbox: "mbx-test", AllowMutation: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := transport.Reply(context.Background(), "message-new", ReplyPayload{Text: "done"}, "reply-key")
+	if err != nil || receipt != "outbound-send-api" {
+		t.Fatalf("Reply = %q, %v", receipt, err)
+	}
+	if outbound.from != fake.mailbox.Email || outbound.request.To[0] != "sender@example.com" || outbound.key != "reply-key" {
+		t.Fatalf("sending API request = %+v from %q key %q", outbound.request, outbound.from, outbound.key)
+	}
+	if outbound.request.HTML != "<pre>done</pre>" {
+		t.Fatalf("sending API html body = %q, want plain-text fallback", outbound.request.HTML)
+	}
+	if len(fake.sends) != 0 {
+		t.Fatalf("mailbox send should not have been used: %+v", fake.sends)
+	}
+}
+
 func TestNewSendmuxTransportLoadsCredentialFile(t *testing.T) {
 	credentialPath := filepath.Join(t.TempDir(), "sendmux-api-key")
 	if err := os.WriteFile(credentialPath, []byte("smx_mbx_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"), 0o600); err != nil {
@@ -230,6 +265,30 @@ func TestNewSendmuxTransportLoadsCredentialFile(t *testing.T) {
 	}
 	if !transport.allowMutation {
 		t.Fatal("constructor did not enable explicitly opted-in mutations")
+	}
+}
+
+func TestLoadSendmuxSendCredential(t *testing.T) {
+	t.Setenv("SENDMUX_SEND_API_KEY", "")
+	t.Setenv("SENDMUX_SEND_API_KEY_FILE", "")
+	credential, configured, err := loadSendmuxSendCredential()
+	if err != nil || configured || credential != "" {
+		t.Fatalf("unset credential = %q, %v, %v", credential, configured, err)
+	}
+	credentialPath := filepath.Join(t.TempDir(), "sendmux-send-api-key")
+	if err := os.WriteFile(credentialPath, []byte("smx_snd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SENDMUX_SEND_API_KEY_FILE", credentialPath)
+	credential, configured, err = loadSendmuxSendCredential()
+	if err != nil || !configured || credential != "smx_snd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Fatalf("file credential = %q, %v, %v", credential, configured, err)
+	}
+	if err := os.WriteFile(credentialPath, []byte("one\ntwo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadSendmuxSendCredential(); err == nil || !strings.Contains(err.Error(), "exactly one line") {
+		t.Fatalf("multiline send credential = %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 
 	"sendmux.ai/go/core"
 	"sendmux.ai/go/mailbox"
+	"sendmux.ai/go/sending"
 )
 
 const sendmuxPageSize = 100
@@ -24,6 +26,7 @@ var _ Transport = (*SendmuxTransport)(nil)
 
 type SendmuxTransport struct {
 	api              sendmuxTransportAPI
+	outbound         sendmuxOutboundAPI
 	inbox            string
 	httpClient       *http.Client
 	allowMutation    bool
@@ -35,6 +38,7 @@ type SendmuxTransport struct {
 
 type sendmuxTransportConfig struct {
 	API              sendmuxTransportAPI
+	Outbound         sendmuxOutboundAPI
 	Inbox            string
 	HTTPClient       *http.Client
 	AllowMutation    bool
@@ -48,6 +52,12 @@ type sendmuxTransportAPI interface {
 	Thread(context.Context, string, string) ([]sendmuxRawMessage, error)
 	Send(context.Context, string, sendmuxSendRequest, string) (string, error)
 	MarkSeen(context.Context, string, string) error
+}
+
+// sendmuxOutboundAPI is deliberately separate from the mailbox API: Sendmux
+// issues send credentials independently of mailbox credentials.
+type sendmuxOutboundAPI interface {
+	Send(context.Context, string, sendmuxSendRequest, string) (string, error)
 }
 
 type sendmuxMailboxInfo struct {
@@ -110,11 +120,21 @@ func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create Sendmux mailbox client: %w", err)
 	}
-	return newSendmuxTransport(sendmuxTransportConfig{
+	config := sendmuxTransportConfig{
 		API: api, Inbox: inboxID, HTTPClient: http.DefaultClient,
 		AllowMutation: os.Getenv("DEARMACHINE_LIVE_SENDMUX") == "1" &&
 			os.Getenv("DEARMACHINE_LIVE_SENDMUX_APPLY") == "1",
-	})
+	}
+	if sendAPIKey, configured, err := loadSendmuxSendCredential(); err != nil {
+		return nil, err
+	} else if configured {
+		outbound, err := newSendmuxSDKSendingAPI(sendAPIKey)
+		if err != nil {
+			return nil, fmt.Errorf("create Sendmux sending client: %w", err)
+		}
+		config.Outbound = outbound
+	}
+	return newSendmuxTransport(config)
 }
 
 func newSendmuxTransport(config sendmuxTransportConfig) (*SendmuxTransport, error) {
@@ -129,7 +149,7 @@ func newSendmuxTransport(config sendmuxTransportConfig) (*SendmuxTransport, erro
 		httpClient = http.DefaultClient
 	}
 	return &SendmuxTransport{
-		api: config.API, inbox: strings.TrimSpace(config.Inbox), httpClient: httpClient,
+		api: config.API, outbound: config.Outbound, inbox: strings.TrimSpace(config.Inbox), httpClient: httpClient,
 		allowMutation: config.AllowMutation, allowInsecureURL: config.AllowInsecureURL,
 	}, nil
 }
@@ -162,6 +182,31 @@ func loadSendmuxCredential() (string, error) {
 		return "", fmt.Errorf("SENDMUX_MAILBOX_API_KEY_FILE must contain exactly one line")
 	}
 	return credential, nil
+}
+
+// loadSendmuxSendCredential reads an explicitly configured Sending API key.
+// Keeping it optional preserves mailbox-key-only deployments, while avoiding
+// accidentally treating a mailbox credential as a send credential.
+func loadSendmuxSendCredential() (credential string, configured bool, err error) {
+	if credential = strings.TrimSpace(os.Getenv("SENDMUX_SEND_API_KEY")); credential != "" {
+		return credential, true, nil
+	}
+	credentialPath := strings.TrimSpace(os.Getenv("SENDMUX_SEND_API_KEY_FILE"))
+	if credentialPath == "" {
+		return "", false, nil
+	}
+	contents, err := os.ReadFile(credentialPath)
+	if err != nil {
+		return "", true, fmt.Errorf("read SENDMUX_SEND_API_KEY_FILE: %w", err)
+	}
+	credential = strings.TrimRight(string(contents), "\r\n")
+	if strings.TrimSpace(credential) == "" {
+		return "", true, fmt.Errorf("SENDMUX_SEND_API_KEY_FILE is empty")
+	}
+	if strings.ContainsAny(credential, "\r\n") {
+		return "", true, fmt.Errorf("SENDMUX_SEND_API_KEY_FILE must contain exactly one line")
+	}
+	return credential, true, nil
 }
 
 func (transport *SendmuxTransport) Poll(ctx context.Context) ([]Message, error) {
@@ -257,7 +302,7 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 		To:               append([]string(nil), recipients...),
 		Subject:          sendmuxReplySubject(inbound.Subject),
 		Text:             payload.Text,
-		HTML:             payload.HTML,
+		HTML:             sendmuxReplyHTML(payload.Text, payload.HTML),
 	}
 	if strings.TrimSpace(request.Text) == "" && strings.TrimSpace(request.HTML) == "" {
 		return "", fmt.Errorf("reply to Sendmux message %s: body is required", messageID)
@@ -268,7 +313,12 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 			Content: base64.StdEncoding.EncodeToString(file.Contents),
 		})
 	}
-	receipt, err := transport.api.Send(ctx, mailboxInfo.ID, request, idempotencyKey)
+	var receipt string
+	if transport.outbound != nil {
+		receipt, err = transport.outbound.Send(ctx, mailboxInfo.Email, request, idempotencyKey)
+	} else {
+		receipt, err = transport.api.Send(ctx, mailboxInfo.ID, request, idempotencyKey)
+	}
 	if err != nil {
 		return "", fmt.Errorf("reply to Sendmux message %s: %w", messageID, err)
 	}
@@ -276,6 +326,15 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 		return "", fmt.Errorf("reply to Sendmux message %s returned no receipt", messageID)
 	}
 	return receipt, nil
+}
+
+// sendmuxReplyHTML ensures the Sending API's required html_body is present
+// when Dear Machine produces a plain-text answer.
+func sendmuxReplyHTML(text, html string) string {
+	if strings.TrimSpace(html) != "" {
+		return html
+	}
+	return "<pre>" + stdhtml.EscapeString(text) + "</pre>"
 }
 
 func (transport *SendmuxTransport) ReplyReceipt(ctx context.Context, message Message) (string, bool, error) {
@@ -531,12 +590,24 @@ type sendmuxSDKAPI struct {
 	client *mailbox.Client
 }
 
+type sendmuxSDKSendingAPI struct {
+	client *sending.Client
+}
+
 func newSendmuxSDKAPI(apiKey string) (*sendmuxSDKAPI, error) {
 	client, err := mailbox.New(apiKey, mailbox.WithRetryOptions(core.RetryOptions{MaxAttempts: 1}))
 	if err != nil {
 		return nil, err
 	}
 	return &sendmuxSDKAPI{client: client}, nil
+}
+
+func newSendmuxSDKSendingAPI(apiKey string) (*sendmuxSDKSendingAPI, error) {
+	client, err := sending.New(apiKey, sending.WithRetryOptions(core.RetryOptions{MaxAttempts: 1}))
+	if err != nil {
+		return nil, err
+	}
+	return &sendmuxSDKSendingAPI{client: client}, nil
 }
 
 func (api *sendmuxSDKAPI) ResolveMailbox(ctx context.Context, inbox string) (sendmuxMailboxInfo, error) {
@@ -692,6 +763,42 @@ func (api *sendmuxSDKAPI) Send(ctx context.Context, mailboxID string, request se
 	}
 	data := success.GetData()
 	return data.GetMessageID(), nil
+}
+
+func (api *sendmuxSDKSendingAPI) Send(ctx context.Context, from string, request sendmuxSendRequest, idempotencyKey string) (string, error) {
+	if len(request.To) != 1 {
+		return "", fmt.Errorf("Sendmux Sending API requires exactly one reply recipient")
+	}
+	body := sending.EmailSendRequest{
+		From:     sending.Address{Email: from},
+		To:       sending.EmailSendRequestTo{Email: request.To[0]},
+		Subject:  request.Subject,
+		HTMLBody: request.HTML,
+	}
+	if request.Text != "" {
+		body.TextBody = sending.NewOptString(request.Text)
+	}
+	if len(request.CustomHeaders) > 0 {
+		body.CustomHeaders = sending.NewOptEmailSendRequestCustomHeaders(sending.EmailSendRequestCustomHeaders(request.CustomHeaders))
+	}
+	for _, file := range request.Files {
+		attachment := sending.Attachment{Filename: file.Filename, Content: file.Content}
+		attachment.Type = sending.NewOptString(file.ContentType)
+		body.Attachments = append(body.Attachments, attachment)
+	}
+	response, err := api.client.SendingSendEmail(ctx, &body, sending.SendingSendEmailParams{IdempotencyKey: sending.IdempotencyKey(idempotencyKey)})
+	if err != nil {
+		return "", err
+	}
+	success, ok := response.(*sending.SendSuccessResponse)
+	if !ok {
+		return "", sendmuxUnexpectedResponse("send message", response)
+	}
+	data := success.GetData()
+	if receipt := strings.TrimSpace(data.GetMessageID()); receipt != "" {
+		return receipt, nil
+	}
+	return "", nil
 }
 
 func (api *sendmuxSDKAPI) MarkSeen(ctx context.Context, mailboxID, messageID string) error {

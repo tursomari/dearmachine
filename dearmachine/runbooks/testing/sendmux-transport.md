@@ -37,6 +37,7 @@ mode `0600`, with values appropriate to this run:
 
 ```bash
 SENDMUX_MAILBOX_API_KEY_FILE=/absolute/path/to/sendmux-api-key
+SENDMUX_SEND_API_KEY_FILE=/absolute/path/to/sendmux-send-api-key
 SENDMUX_QSE_INBOX=<mailbox-id-or-address>
 SENDMUX_QSE_CORRESPONDENT=<exact-external-address>
 ```
