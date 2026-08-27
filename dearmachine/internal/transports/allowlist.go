@@ -34,15 +34,43 @@ func ParseAllowList(value string) (AllowList, error) {
 	return allow, nil
 }
 
+func canonicalAddr(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	address, err := mail.ParseAddress(raw)
+	if err != nil {
+		addresses, listErr := mail.ParseAddressList(raw)
+		if listErr != nil || len(addresses) != 1 {
+			return "", false
+		}
+		address = addresses[0]
+	}
+	canonical := strings.ToLower(strings.TrimSpace(address.Address))
+	if canonical == "" {
+		return "", false
+	}
+	return canonical, true
+}
+
 func (allow AllowList) authorized(message client.Message) bool {
 	if len(allow.addresses) == 0 || len(message.To) == 0 {
 		return false
 	}
-	if _, ok := allow.addresses[strings.ToLower(strings.TrimSpace(message.From))]; !ok {
+	from, ok := canonicalAddr(message.From)
+	if !ok {
+		return false
+	}
+	if _, ok := allow.addresses[from]; !ok {
 		return false
 	}
 	for _, raw := range message.To {
-		if _, ok := allow.addresses[strings.ToLower(strings.TrimSpace(raw))]; !ok {
+		to, ok := canonicalAddr(raw)
+		if !ok {
+			return false
+		}
+		if _, ok := allow.addresses[to]; !ok {
 			return false
 		}
 	}

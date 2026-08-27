@@ -101,3 +101,85 @@ func TestAllowlistRejectsEmpty(t *testing.T) {
 		t.Fatal("newAllowlistTransport accepted empty list")
 	}
 }
+
+func TestAllowlistCanonicalizesMessageAddresses(t *testing.T) {
+	allow, err := ParseAllowList("pair@example.test, device@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		message client.Message
+	}{
+		{
+			name:    "named from",
+			message: client.Message{From: "Contact Name <pair@example.test>", To: []string{"device@example.test"}},
+		},
+		{
+			name:    "named recipient",
+			message: client.Message{From: "pair@example.test", To: []string{"Other Name <device@example.test>"}},
+		},
+		{
+			name:    "named from with case differences",
+			message: client.Message{From: "Pair <PAIR@Example.Test>", To: []string{"device@example.test"}},
+		},
+		{
+			name:    "bare addr specs",
+			message: client.Message{From: "pair@example.test", To: []string{"device@example.test"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !allow.authorized(tt.message) {
+				t.Fatal("authorized returned false")
+			}
+		})
+	}
+}
+
+func TestAllowlistMalformedOrUnknownMessageAddressesFailClosed(t *testing.T) {
+	allow, err := ParseAllowList("pair@example.test, device@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		message client.Message
+	}{
+		{
+			name:    "from missing addr spec",
+			message: client.Message{From: "No Address Here", To: []string{"device@example.test"}},
+		},
+		{
+			name:    "unknown from addr spec",
+			message: client.Message{From: "stranger@example.test", To: []string{"device@example.test"}},
+		},
+		{
+			name:    "empty from",
+			message: client.Message{To: []string{"device@example.test"}},
+		},
+		{
+			name:    "no recipients",
+			message: client.Message{From: "pair@example.test"},
+		},
+		{
+			name:    "empty recipient",
+			message: client.Message{From: "pair@example.test", To: []string{""}},
+		},
+		{
+			name:    "recipient fails to parse",
+			message: client.Message{From: "pair@example.test", To: []string{"Not An Address"}},
+		},
+		{
+			name:    "recipient contains multiple addresses",
+			message: client.Message{From: "pair@example.test", To: []string{"device@example.test, pair@example.test"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if allow.authorized(tt.message) {
+				t.Fatal("authorized returned true")
+			}
+		})
+	}
+}
