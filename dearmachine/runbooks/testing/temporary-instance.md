@@ -12,6 +12,8 @@ Current protocols include:
   lifecycle and local skip/unskip exercise;
 - [`concurrent-sessions.md`](./concurrent-sessions.md) for sequential and
   concurrent processing of simultaneous email threads;
+- [`multi-pair.md`](./multi-pair.md) for pair-lane isolation, footer safety,
+  provider-ID overlap, and per-pair allow-set experiments;
 - [`queued-grace-preemption.md`](./queued-grace-preemption.md) for same-poll
   queue-aware preemption after one poll interval;
 - [`live-backends.md`](./live-backends.md) for Forge, Codex, and
