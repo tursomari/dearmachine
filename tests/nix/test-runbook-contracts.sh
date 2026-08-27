@@ -34,6 +34,7 @@ grep -F 'without requiring systemd' "$temporary" >/dev/null
 grep -F 'nix run .#dearmachine-stack -- up' "$temporary" >/dev/null
 grep -F '### Native diagnostic exception' "$temporary" >/dev/null
 grep -F 'operator_secrets=<mode-0600-operator-secrets-file>' "$temporary" >/dev/null
+# shellcheck disable=SC2016 # The contract requires the literal variable reference.
 grep -F 'literal reference `${DEEPSEEK_API_KEY}`' "$temporary" >/dev/null
 grep -F 'running client, Agent' "$temporary" >/dev/null
 grep -F 'machtiani, and its selected backend inherit it' "$temporary" >/dev/null
