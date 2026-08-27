@@ -468,7 +468,14 @@
             ${project.dearmachine}/bin/dearmachine --help > $out 2>&1
             grep -F "Usage of dearmachine" $out
             printf 'smoke\n' > "$TMPDIR/agentmail-api-key"
+            no_allow=$(AGENTMAIL_API_KEY_FILE="$TMPDIR/agentmail-api-key" \
+              PATH=/missing ${project.dearmachine}/bin/dearmachine \
+              --inbox-id smoke \
+              --config /missing \
+              --once 2>&1 || true)
+            grep -F 'allow list is required' <<<"$no_allow" > /dev/null
             credential_smoke=$(AGENTMAIL_API_KEY_FILE="$TMPDIR/agentmail-api-key" \
+              DEARMACHINE_ALLOW='smoke@example.com' \
               PATH=/missing ${project.dearmachine}/bin/dearmachine \
               --inbox-id smoke \
               --config /missing \
