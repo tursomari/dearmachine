@@ -154,7 +154,8 @@ dearmachine --transport sendmux --inbox-id '<sendmux-mailbox-id-or-address>'
 `SENDMUX_MAILBOX_API_KEY` and `SENDMUX_SEND_API_KEY` are the direct
 environment alternatives. The optional send credential is used only for
 outbound replies; receiving and marking messages processed continue to use the
-mailbox credential. Both correspondent variables are required comma-separated exact-address lists.
+mailbox credential. The paired-address set is required and is a comma-separated
+RFC 5322 exact-address list.
 Inbound mail must come from an allowed sender and be addressed exclusively to
 the configured mailbox; a thread containing any other correspondent is ignored
 without fetching attachments or mutating provider state.

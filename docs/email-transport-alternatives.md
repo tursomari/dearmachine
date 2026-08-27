@@ -105,13 +105,12 @@ The impedance is real and remains visible in the adapter:
 - Attachments are addressed by message ID and filename. The adapter exposes an
   opaque transport attachment ID, limits bytes before returning content, and
   refuses redirects outside the configured OpenMail API origin.
-- Correspondent authorization is deliberately adapter-local because it is not
-  a capability common to the `Transport` interface. Inbound messages must come
-  from `DEARMACHINE_OPENMAIL_ALLOWED_FROM` and be addressed directly and
-  exclusively to the configured inbox; replies must target
-  `DEARMACHINE_OPENMAIL_ALLOWED_TO`. New threads and follow-ups obey the same
-  exact-address rule. CC delivery and any thread with another correspondent are
-  ignored; their mail is not surfaced, replied to, fetched, or marked processed.
+- Correspondent authorization is enforced at the transport seam. `--allow` or
+  `DEARMACHINE_ALLOW` is required and accepts one comma-separated RFC 5322
+  paired-address set. A message is available only if its sender and every
+  non-empty recipient are members of that set. CC delivery and any thread with
+  another correspondent are ignored; their mail is not surfaced, replied to,
+  fetched, or marked processed.
 
 #### Dead Simple Email — High
 
@@ -328,8 +327,9 @@ without mixing provider credentials or options into agent-backend
 configuration.
 
 For OpenMail, set `OPENMAIL_API_KEY` or `OPENMAIL_API_KEY_FILE` (whose optional
-default is `$HOME/.config/dearmachine/openmail-api-key`) and both exact-address
-correspondent lists. The adapter is inspect-only unless both
+default is `$HOME/.config/dearmachine/openmail-api-key`) and the required
+comma-separated RFC 5322 paired-address set with `--allow` or
+`DEARMACHINE_ALLOW`. The adapter is inspect-only unless both
 `DEARMACHINE_LIVE_OPENMAIL=1` and `DEARMACHINE_LIVE_OPENMAIL_APPLY=1` are set;
 the second gate enables replies and thread-read mutations. The API host is not
 configurable in the production constructor.
