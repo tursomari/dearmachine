@@ -98,8 +98,7 @@ select `openmail` and provide its inbox ID or full address:
 ```bash
 export OPENMAIL_API_KEY_FILE="$HOME/.config/dearmachine/openmail-api-key"
 # Or point OPENMAIL_API_KEY_FILE at another operator-managed one-line key file.
-export DEARMACHINE_OPENMAIL_ALLOWED_FROM=user@example.com
-export DEARMACHINE_OPENMAIL_ALLOWED_TO=user@example.com
+export DEARMACHINE_ALLOW='user@example.test, device@example.test'
 
 dearmachine --transport openmail --inbox-id '<openmail-inbox-id-or-address>'
 ```
@@ -121,14 +120,10 @@ export DEARMACHINE_LIVE_OPENMAIL=1
 export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
 ```
 
-Both correspondent variables are required comma-separated exact-address
-allow-lists. Inbound messages must be addressed directly and exclusively to the
-configured OpenMail inbox and come from
-`DEARMACHINE_OPENMAIL_ALLOWED_FROM`; replies must target
-`DEARMACHINE_OPENMAIL_ALLOWED_TO`. The same rule accepts new threads and later
-follow-ups. CC delivery or a thread containing any other correspondent is
-ignored entirely: DearMachine does not fetch its attachments, reply, or mark it
-processed.
+`--allow` or `DEARMACHINE_ALLOW` is required and accepts a comma-separated RFC
+5322 paired-address set. A message is available only if its sender and every
+non-empty recipient are members of that one set; mutations are reauthorized and
+unknown attachment IDs are rejected. There is no permissive default.
 
 OpenMail exposes unread state per thread rather than per message. Polling
 therefore returns the newest inbound message in each unread, fully allowed
@@ -149,14 +144,17 @@ set, the adapter optionally checks
 
 ```bash
 export SENDMUX_MAILBOX_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-api-key"
-export DEARMACHINE_SENDMUX_ALLOWED_FROM='<exact-correspondent-address>'
-export DEARMACHINE_SENDMUX_ALLOWED_TO='<exact-correspondent-address>'
+# Optional: use Sendmux's separate email.send credential for outbound replies.
+export SENDMUX_SEND_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-send-api-key"
+export DEARMACHINE_ALLOW='<paired-address-1>,<paired-address-2>'
 
 dearmachine --transport sendmux --inbox-id '<sendmux-mailbox-id-or-address>'
 ```
 
-`SENDMUX_MAILBOX_API_KEY` is the direct environment alternative. Both
-correspondent variables are required comma-separated exact-address lists.
+`SENDMUX_MAILBOX_API_KEY` and `SENDMUX_SEND_API_KEY` are the direct
+environment alternatives. The optional send credential is used only for
+outbound replies; receiving and marking messages processed continue to use the
+mailbox credential. Both correspondent variables are required comma-separated exact-address lists.
 Inbound mail must come from an allowed sender and be addressed exclusively to
 the configured mailbox; a thread containing any other correspondent is ignored
 without fetching attachments or mutating provider state.

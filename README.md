@@ -54,8 +54,7 @@ configure the paired correspondent in both directions:
 
 ```bash
 export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
-export DEARMACHINE_OPENMAIL_ALLOWED_FROM=user@example.com
-export DEARMACHINE_OPENMAIL_ALLOWED_TO=user@example.com
+export DEARMACHINE_ALLOW='user@example.test, device@example.test'
 
 dearmachine \
   --transport openmail \
@@ -75,17 +74,16 @@ export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
 ```
 
 OpenMail's provider-side correspondent policy must also permit the pair; the
-local allow-lists cannot loosen that policy. See the
+the common allow list cannot loosen that policy. See the
 [OpenMail transport runbook](dearmachine/runbooks/testing/openmail-transport.md)
 for a disposable, fully isolated verification procedure.
 
 Sendmux is also selectable through the same seam. It uses a mailbox-scoped key,
-exact local correspondent allow-lists, and two explicit mutation gates:
+the common paired-address allow list, and two explicit mutation gates:
 
 ```bash
 export SENDMUX_MAILBOX_API_KEY_FILE=/path/to/one-line-key
-export DEARMACHINE_SENDMUX_ALLOWED_FROM='<exact-correspondent-address>'
-export DEARMACHINE_SENDMUX_ALLOWED_TO='<exact-correspondent-address>'
+export DEARMACHINE_ALLOW='<paired-address-1>,<paired-address-2>'
 
 dearmachine --transport sendmux --inbox-id '<sendmux-mailbox-id-or-address>'
 ```

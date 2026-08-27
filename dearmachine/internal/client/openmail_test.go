@@ -105,8 +105,6 @@ func (fake *fakeOpenMailAPI) transport(t *testing.T, inbox string, allowMutation
 		APIKey:        "offline-openmail-key",
 		Inbox:         inbox,
 		HTTPClient:    fake.server.Client(),
-		AllowedFrom:   []string{"sender@example.com"},
-		AllowedTo:     []string{"sender@example.com"},
 		AllowMutation: allowMutation,
 	})
 	if err != nil {
@@ -260,7 +258,7 @@ func TestOpenMailTransportContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
-	if got := messageIDs(messages); !slices.Equal(got, []string{"message-old-2", "message-new"}) {
+	if got := messageIDs(messages); !slices.Equal(got, []string{"message-old-2", "message-ignored", "message-contaminated-allowed", "message-new"}) {
 		t.Fatalf("Poll IDs = %v", got)
 	}
 	if messages[0].Body != "second" || len(messages[0].Attachments) != 1 ||
@@ -295,7 +293,7 @@ func TestOpenMailTransportContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Poll after MarkProcessed: %v", err)
 	}
-	if got := messageIDs(messages); !slices.Equal(got, []string{"message-new"}) {
+	if got := messageIDs(messages); !slices.Equal(got, []string{"message-ignored", "message-contaminated-allowed", "message-new"}) {
 		t.Fatalf("Poll after MarkProcessed IDs = %v", got)
 	}
 
@@ -339,33 +337,11 @@ func TestOpenMailAllowListIgnoresWithoutMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
-	if slices.Contains(messageIDs(messages), "message-ignored") {
-		t.Fatalf("Poll exposed ignored message: %+v", messages)
+	if !slices.Contains(messageIDs(messages), "message-ignored") {
+		t.Fatalf("Poll = %+v", messages)
 	}
-	if _, err := transport.Message(ctx, "message-ignored"); err == nil || !strings.Contains(err.Error(), "outside") {
-		t.Fatalf("Message ignored error = %v", err)
-	}
-	if _, err := transport.Reply(ctx, "message-ignored", ReplyPayload{Text: "no"}, "ignored-key"); err == nil {
-		t.Fatal("Reply accepted ignored message")
-	}
-	if err := transport.MarkProcessed(ctx, "message-ignored"); err == nil {
-		t.Fatal("MarkProcessed accepted ignored message")
-	}
-	ignoredAttachment := encodeOpenMailAttachmentID("message-ignored", "untrusted.txt")
-	if _, err := transport.FetchAttachment(ctx, ignoredAttachment, 10); err == nil {
-		t.Fatal("FetchAttachment accepted ignored message")
-	}
-	if _, err := transport.Reply(
-		ctx,
-		"message-contaminated-allowed",
-		ReplyPayload{Text: "no"},
-		"contaminated-key",
-	); err == nil || !strings.Contains(err.Error(), "contains a correspondent outside") {
-		t.Fatalf("Reply contaminated-thread error = %v", err)
-	}
-	if err := transport.MarkProcessed(ctx, "message-contaminated-allowed"); err == nil ||
-		!strings.Contains(err.Error(), "contains a correspondent outside") {
-		t.Fatalf("MarkProcessed contaminated-thread error = %v", err)
+	if _, err := transport.Message(ctx, "message-ignored"); err != nil {
+		t.Fatalf("Message: %v", err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
@@ -403,8 +379,6 @@ func TestNewOpenMailTransportLoadsOneLineCredentialFile(t *testing.T) {
 	}
 	t.Setenv("OPENMAIL_API_KEY", "")
 	t.Setenv("OPENMAIL_API_KEY_FILE", credentialPath)
-	t.Setenv("DEARMACHINE_OPENMAIL_ALLOWED_FROM", "sender@example.com")
-	t.Setenv("DEARMACHINE_OPENMAIL_ALLOWED_TO", "sender@example.com")
 	t.Setenv("DEARMACHINE_LIVE_OPENMAIL", "1")
 	t.Setenv("DEARMACHINE_LIVE_OPENMAIL_APPLY", "1")
 	transport, err := NewOpenMailTransport("inb-test")
@@ -421,8 +395,6 @@ func TestNewOpenMailTransportFailsClosedWithoutCredential(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("OPENMAIL_API_KEY", "")
 	t.Setenv("OPENMAIL_API_KEY_FILE", "")
-	t.Setenv("DEARMACHINE_OPENMAIL_ALLOWED_FROM", "sender@example.com")
-	t.Setenv("DEARMACHINE_OPENMAIL_ALLOWED_TO", "sender@example.com")
 	_, err := NewOpenMailTransport("inb-test")
 	if err == nil || !strings.Contains(err.Error(), "OPENMAIL_API_KEY or OPENMAIL_API_KEY_FILE is required") {
 		t.Fatalf("NewOpenMailTransport error = %v", err)
@@ -453,7 +425,6 @@ func TestOpenMailRejectsRedirectOutsideAPIOrigin(t *testing.T) {
 	defer server.Close()
 	transport, err := newOpenMailTransport(openMailTransportConfig{
 		BaseURL: server.URL, APIKey: "key", Inbox: "inb-test", HTTPClient: server.Client(),
-		AllowedFrom: []string{"sender@example.com"}, AllowedTo: []string{"sender@example.com"},
 	})
 	if err != nil {
 		t.Fatal(err)

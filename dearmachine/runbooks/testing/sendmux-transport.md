@@ -22,9 +22,7 @@ path from that shared runbook.
 - The external correspondent may be any specifically authorized mailbox. This
   one-off operational choice must not introduce provider-, organization-, or
   account-specific behavior into Dear Machine or this procedure.
-- Configure the exact external address in both
-  `DEARMACHINE_SENDMUX_ALLOWED_FROM` and
-  `DEARMACHINE_SENDMUX_ALLOWED_TO`. A message addressed to, copied to, or
+- Configure the common `DEARMACHINE_ALLOW` paired-address list. A message addressed to, copied to, or
   sharing a thread with anyone else must remain invisible to the adapter.
 - Sendmux is inspect-only unless both `DEARMACHINE_LIVE_SENDMUX=1` and
   `DEARMACHINE_LIVE_SENDMUX_APPLY=1` are set. Leave both unset during the
@@ -43,14 +41,13 @@ SENDMUX_QSE_INBOX=<mailbox-id-or-address>
 SENDMUX_QSE_CORRESPONDENT=<exact-external-address>
 ```
 
-Load it without echoing its contents, then derive the adapter allow-lists:
+Load it without echoing its contents, then set the seam allow list:
 
 ```bash
 set -a
 . /absolute/path/to/sendmux-qse.env
 set +a
-export DEARMACHINE_SENDMUX_ALLOWED_FROM="$SENDMUX_QSE_CORRESPONDENT"
-export DEARMACHINE_SENDMUX_ALLOWED_TO="$SENDMUX_QSE_CORRESPONDENT"
+export DEARMACHINE_ALLOW="$SENDMUX_QSE_CORRESPONDENT,$SENDMUX_QSE_INBOX"
 ```
 
 Before continuing, require that the credential file and operator environment

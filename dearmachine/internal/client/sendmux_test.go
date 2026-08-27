@@ -132,7 +132,6 @@ func TestSendmuxTransportContract(t *testing.T) {
 	fake := newFakeSendmuxAPI(download.URL + "/attachment")
 	transport, err := newSendmuxTransport(sendmuxTransportConfig{
 		API: fake, Inbox: "device@myagent.mx", HTTPClient: download.Client(),
-		AllowedFrom: []string{"sender@example.com"}, AllowedTo: []string{"sender@example.com"},
 		AllowMutation: true, AllowInsecureURL: true,
 	})
 	if err != nil {
@@ -141,7 +140,7 @@ func TestSendmuxTransportContract(t *testing.T) {
 	ctx := context.Background()
 
 	messages, err := transport.Poll(ctx)
-	if err != nil || !slices.Equal(messageIDs(messages), []string{"message-old-2", "message-new"}) {
+	if err != nil || !slices.Equal(messageIDs(messages), []string{"message-old-2", "message-ignored", "message-contaminated-1", "message-contaminated-2", "message-new"}) {
 		t.Fatalf("Poll = %+v, %v", messages, err)
 	}
 	wantReference := canonicalInboundReference(shortConversationReference(fake.conversationReference))
@@ -183,7 +182,7 @@ func TestSendmuxTransportContract(t *testing.T) {
 		t.Fatalf("MarkProcessed: %v", err)
 	}
 	messages, err = transport.Poll(ctx)
-	if err != nil || !slices.Equal(messageIDs(messages), []string{"message-new"}) {
+	if err != nil || !slices.Equal(messageIDs(messages), []string{"message-ignored", "message-contaminated-1", "message-contaminated-2", "message-new"}) {
 		t.Fatalf("Poll after mark = %+v, %v", messages, err)
 	}
 }
@@ -191,18 +190,17 @@ func TestSendmuxTransportContract(t *testing.T) {
 func TestSendmuxAllowListAndMutationGatesFailClosed(t *testing.T) {
 	fake := newFakeSendmuxAPI("")
 	transport, err := newSendmuxTransport(sendmuxTransportConfig{
-		API: fake, Inbox: "mbx-test", AllowedFrom: []string{"sender@example.com"},
-		AllowedTo: []string{"sender@example.com"}, AllowMutation: false,
+		API: fake, Inbox: "mbx-test", AllowMutation: false,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	messages, err := transport.Poll(context.Background())
-	if err != nil || slices.Contains(messageIDs(messages), "message-ignored") || slices.Contains(messageIDs(messages), "message-contaminated-2") {
-		t.Fatalf("Poll exposed unauthorized messages: %+v, %v", messages, err)
+	if err != nil || !slices.Contains(messageIDs(messages), "message-ignored") {
+		t.Fatalf("Poll = %+v, %v", messages, err)
 	}
-	if _, err := transport.Message(context.Background(), "message-ignored"); err == nil || !strings.Contains(err.Error(), "outside") {
-		t.Fatalf("Message unauthorized = %v", err)
+	if _, err := transport.Message(context.Background(), "message-ignored"); err != nil {
+		t.Fatalf("Message: %v", err)
 	}
 	if _, err := transport.Reply(context.Background(), "message-new", ReplyPayload{Text: "blocked"}, "key"); err == nil || !strings.Contains(err.Error(), "DEARMACHINE_LIVE_SENDMUX_APPLY") {
 		t.Fatalf("Reply gate = %v", err)
@@ -224,8 +222,6 @@ func TestNewSendmuxTransportLoadsCredentialFile(t *testing.T) {
 	}
 	t.Setenv("SENDMUX_MAILBOX_API_KEY", "")
 	t.Setenv("SENDMUX_MAILBOX_API_KEY_FILE", credentialPath)
-	t.Setenv("DEARMACHINE_SENDMUX_ALLOWED_FROM", "sender@example.com")
-	t.Setenv("DEARMACHINE_SENDMUX_ALLOWED_TO", "sender@example.com")
 	t.Setenv("DEARMACHINE_LIVE_SENDMUX", "1")
 	t.Setenv("DEARMACHINE_LIVE_SENDMUX_APPLY", "1")
 	transport, err := NewSendmuxTransport("mbx-test")
@@ -241,8 +237,6 @@ func TestNewSendmuxTransportRejectsMissingOrMultilineCredential(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("SENDMUX_MAILBOX_API_KEY", "")
 	t.Setenv("SENDMUX_MAILBOX_API_KEY_FILE", "")
-	t.Setenv("DEARMACHINE_SENDMUX_ALLOWED_FROM", "sender@example.com")
-	t.Setenv("DEARMACHINE_SENDMUX_ALLOWED_TO", "sender@example.com")
 	if _, err := NewSendmuxTransport("mbx-test"); err == nil || !strings.Contains(err.Error(), "SENDMUX_MAILBOX_API_KEY or SENDMUX_MAILBOX_API_KEY_FILE is required") {
 		t.Fatalf("missing credential = %v", err)
 	}

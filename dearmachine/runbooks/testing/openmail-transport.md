@@ -32,10 +32,8 @@ deployment path.
   only at each run-created inbox scope. The sender needs inbound/outbound access
   to the receiver, and the receiver needs inbound/outbound access to the
   sender. Deleting each temporary inbox also removes its scoped policy.
-- The adapter's own exact-address allow-lists are separate and fail closed.
-  Configure the temporary sender in both
-  `DEARMACHINE_OPENMAIL_ALLOWED_FROM` and
-  `DEARMACHINE_OPENMAIL_ALLOWED_TO` for the receiver client.
+- Configure the common fail-closed paired-address list with `--allow` or
+  `DEARMACHINE_ALLOW`; provider-prefixed allow variables are not used.
 - OpenMail is inspect-only unless both `DEARMACHINE_LIVE_OPENMAIL=1` and
   `DEARMACHINE_LIVE_OPENMAIL_APPLY=1` are present. Leave both unset for the
   first poll.
@@ -75,8 +73,7 @@ used during teardown only for exact IDs created by the current run.
 
    ```bash
    export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
-   export DEARMACHINE_OPENMAIL_ALLOWED_FROM=temp-sender@example.test
-   export DEARMACHINE_OPENMAIL_ALLOWED_TO=temp-sender@example.test
+   export DEARMACHINE_ALLOW='temp-sender@example.test, temporary-inbox@example.test'
 
    "$TMP/dearmachine" \
      --transport openmail \

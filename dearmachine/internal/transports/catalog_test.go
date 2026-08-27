@@ -25,7 +25,7 @@ func TestCatalogReturnsClonedConfigKeys(t *testing.T) {
 	all := All()
 	all[0].ConfigKeys[0] = "changed"
 	agentmail, ok := Lookup("agentmail")
-	if !ok || !slices.Equal(agentmail.ConfigKeys, []string{"AGENTMAIL_API_KEY", "AGENTMAIL_API_KEY_FILE"}) {
+	if !ok || !slices.Equal(agentmail.ConfigKeys, []string{"AGENTMAIL_API_KEY", "AGENTMAIL_API_KEY_FILE", "DEARMACHINE_ALLOW"}) {
 		t.Fatalf("Lookup(agentmail) = %+v, %v", agentmail, ok)
 	}
 	agentmail.ConfigKeys[0] = "changed-again"

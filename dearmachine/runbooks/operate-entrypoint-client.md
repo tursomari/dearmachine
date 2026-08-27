@@ -197,4 +197,4 @@ nix run .#container-secrets -- rotate --file <mode-0600-secret-file>
 ```
 
 Install, upgrade, restart, and migration do not authorize inbox mutation or
-removal of any protected AgentMail allow-list entry.
+removal of any protected paired address from `DEARMACHINE_ALLOW`.

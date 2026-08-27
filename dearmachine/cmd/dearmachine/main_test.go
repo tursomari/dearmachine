@@ -171,6 +171,26 @@ func TestParseConfigHelp(t *testing.T) {
 	}
 }
 
+func TestAllowFlagTakesPrecedenceOverEnvironment(t *testing.T) {
+	cfg, err := parseConfig([]string{"--allow", "flag@example.test"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveAllow(cfg.allow, cfg.allowSet, func(string) string { return "env@example.test" }); err != nil {
+		t.Fatalf("flag allow: %v", err)
+	}
+	cfg, err = parseConfig(nil, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveAllow(cfg.allow, cfg.allowSet, func(string) string { return "env@example.test" }); err != nil {
+		t.Fatalf("env allow: %v", err)
+	}
+	if _, err := parseConfig([]string{"--allow", ""}, io.Discard); err == nil {
+		t.Fatal("empty explicit allow accepted")
+	}
+}
+
 func TestRunUsesSelectedTransportConstructor(t *testing.T) {
 	app := &fakeApplication{}
 	deps := testDependencies(t, app)
@@ -214,7 +234,7 @@ func TestRunValidatesRequiredConfigurationBeforeConstruction(t *testing.T) {
 		},
 		{
 			name:   "missing API key",
-			args:   []string{"--inbox-id", "inbox-123"},
+			args:   []string{"--inbox-id", "inbox-123", "--allow", "paired@example.test"},
 			getenv: func(string) string { return "" },
 			want:   "AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required",
 		},

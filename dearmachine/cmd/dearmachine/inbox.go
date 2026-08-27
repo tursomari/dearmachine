@@ -69,6 +69,7 @@ func runInboxSkip(args []string, deps dependencies) error {
 	current := flags.Bool("current", false, "skip the exact snapshot of currently unread messages")
 	inboxID := flags.String("inbox-id", "", "mail transport inbox ID or address")
 	transportID := flags.String("transport", "agentmail", "mail transport ID ("+strings.Join(transports.IDs(), ", ")+")")
+	allowValue := flags.String("allow", "", "comma-separated paired RFC 5322 email addresses (required; or DEARMACHINE_ALLOW)")
 	dbPath := flags.String("db", "", "SQLite state database path")
 	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
 	projectDir := flags.String("project", ".", "machtiani project for abandoned-session cleanup")
@@ -90,10 +91,26 @@ func runInboxSkip(args []string, deps dependencies) error {
 			"--inbox-id is required\nRun \"dearmachine inbox skip --help\" for usage",
 		)
 	}
+	allowSet := false
+	flags.Visit(func(setFlag *flag.Flag) {
+		if setFlag.Name == "allow" {
+			allowSet = true
+		}
+	})
+	if allowSet && strings.TrimSpace(*allowValue) == "" {
+		return fmt.Errorf("--allow must not be empty")
+	}
 	if deps.newTransport == nil {
+		if !allowSet {
+			*allowValue = os.Getenv("DEARMACHINE_ALLOW")
+		}
+		allow, err := transports.ParseAllowList(*allowValue)
+		if err != nil {
+			return fmt.Errorf("--allow or DEARMACHINE_ALLOW: %w", err)
+		}
 		selectedTransport := *transportID
 		deps.newTransport = func(inboxID string) (client.Transport, error) {
-			return transports.New(selectedTransport, inboxID)
+			return transports.New(selectedTransport, inboxID, allow)
 		}
 	}
 	resolvedDB, resolvedPID, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)

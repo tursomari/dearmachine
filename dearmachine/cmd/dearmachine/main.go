@@ -47,6 +47,8 @@ type config struct {
 	concurrency            int
 	maintenanceMinTurns    int
 	maintenanceMinTurnsSet bool
+	allow                  string
+	allowSet               bool
 	pollInterval           time.Duration
 	pidfile                string
 	once                   bool
@@ -191,6 +193,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		3,
 		"maximum number of email threads processed concurrently",
 	)
+	flags.StringVar(&cfg.allow, "allow", "", "comma-separated paired RFC 5322 email addresses (required; or DEARMACHINE_ALLOW)")
 	flags.IntVar(
 		&cfg.maintenanceMinTurns,
 		"maintenance-min-turns",
@@ -215,8 +218,11 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		return config{}, err
 	}
 	flags.Visit(func(setFlag *flag.Flag) {
-		if setFlag.Name == "maintenance-min-turns" {
+		switch setFlag.Name {
+		case "maintenance-min-turns":
 			cfg.maintenanceMinTurnsSet = true
+		case "allow":
+			cfg.allowSet = true
 		}
 	})
 	if flags.NArg() != 0 {
@@ -227,6 +233,9 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	}
 	if cfg.maintenanceMinTurns < 0 {
 		return config{}, fmt.Errorf("--maintenance-min-turns must not be negative")
+	}
+	if cfg.allowSet && strings.TrimSpace(cfg.allow) == "" {
+		return config{}, fmt.Errorf("--allow must not be empty")
 	}
 	return cfg, nil
 }
@@ -253,9 +262,13 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return fmt.Errorf("--inbox-id is required")
 	}
 	if deps.newTransport == nil {
+		allow, err := resolveAllow(cfg.allow, cfg.allowSet, getenv)
+		if err != nil {
+			return err
+		}
 		selectedTransport := cfg.transport
 		deps.newTransport = func(inboxID string) (client.Transport, error) {
-			return transports.New(selectedTransport, inboxID)
+			return transports.New(selectedTransport, inboxID, allow)
 		}
 	}
 	transport, err := deps.newTransport(cfg.inboxID)
@@ -336,6 +349,17 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return app.RunOnce(ctx)
 	}
 	return app.Run(ctx)
+}
+
+func resolveAllow(value string, explicitlySet bool, getenv func(string) string) (transports.AllowList, error) {
+	if !explicitlySet {
+		value = strings.TrimSpace(getenv("DEARMACHINE_ALLOW"))
+	}
+	allow, err := transports.ParseAllowList(value)
+	if err != nil {
+		return transports.AllowList{}, fmt.Errorf("--allow or DEARMACHINE_ALLOW: %w", err)
+	}
+	return allow, nil
 }
 
 func runInit(args []string, deps dependencies) error {

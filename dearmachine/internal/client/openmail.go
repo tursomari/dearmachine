@@ -37,8 +37,6 @@ type OpenMailTransport struct {
 	apiKey        string
 	inbox         string
 	httpClient    *http.Client
-	allowedFrom   map[string]struct{}
-	allowedTo     map[string]struct{}
 	allowMutation bool
 
 	resolveMu       sync.Mutex
@@ -51,8 +49,6 @@ type openMailTransportConfig struct {
 	APIKey        string
 	Inbox         string
 	HTTPClient    *http.Client
-	AllowedFrom   []string
-	AllowedTo     []string
 	AllowMutation bool
 }
 
@@ -63,27 +59,11 @@ func NewOpenMailTransport(inboxID string) (*OpenMailTransport, error) {
 	if err != nil {
 		return nil, err
 	}
-	allowedFrom, err := parseOpenMailAllowList(
-		"DEARMACHINE_OPENMAIL_ALLOWED_FROM",
-		os.Getenv("DEARMACHINE_OPENMAIL_ALLOWED_FROM"),
-	)
-	if err != nil {
-		return nil, err
-	}
-	allowedTo, err := parseOpenMailAllowList(
-		"DEARMACHINE_OPENMAIL_ALLOWED_TO",
-		os.Getenv("DEARMACHINE_OPENMAIL_ALLOWED_TO"),
-	)
-	if err != nil {
-		return nil, err
-	}
 	return newOpenMailTransport(openMailTransportConfig{
-		BaseURL:     openMailAPIBaseURL,
-		APIKey:      apiKey,
-		Inbox:       inboxID,
-		HTTPClient:  http.DefaultClient,
-		AllowedFrom: allowedFrom,
-		AllowedTo:   allowedTo,
+		BaseURL:    openMailAPIBaseURL,
+		APIKey:     apiKey,
+		Inbox:      inboxID,
+		HTTPClient: http.DefaultClient,
 		AllowMutation: os.Getenv("DEARMACHINE_LIVE_OPENMAIL") == "1" &&
 			os.Getenv("DEARMACHINE_LIVE_OPENMAIL_APPLY") == "1",
 	})
@@ -100,20 +80,6 @@ func newOpenMailTransport(config openMailTransportConfig) (*OpenMailTransport, e
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" || baseURL.User != nil {
 		return nil, fmt.Errorf("invalid OpenMail API base URL")
 	}
-	if len(config.AllowedFrom) == 0 {
-		return nil, fmt.Errorf("DEARMACHINE_OPENMAIL_ALLOWED_FROM is required")
-	}
-	if len(config.AllowedTo) == 0 {
-		return nil, fmt.Errorf("DEARMACHINE_OPENMAIL_ALLOWED_TO is required")
-	}
-	fromSet, err := openMailAddressSet(config.AllowedFrom)
-	if err != nil {
-		return nil, fmt.Errorf("DEARMACHINE_OPENMAIL_ALLOWED_FROM: %w", err)
-	}
-	toSet, err := openMailAddressSet(config.AllowedTo)
-	if err != nil {
-		return nil, fmt.Errorf("DEARMACHINE_OPENMAIL_ALLOWED_TO: %w", err)
-	}
 	httpClient := config.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -123,8 +89,6 @@ func newOpenMailTransport(config openMailTransportConfig) (*OpenMailTransport, e
 		apiKey:        strings.TrimSpace(config.APIKey),
 		inbox:         strings.TrimSpace(config.Inbox),
 		httpClient:    httpClient,
-		allowedFrom:   fromSet,
-		allowedTo:     toSet,
 		allowMutation: config.AllowMutation,
 	}, nil
 }
@@ -157,34 +121,6 @@ func loadOpenMailCredential() (string, error) {
 		return "", fmt.Errorf("OPENMAIL_API_KEY_FILE must contain exactly one line")
 	}
 	return credential, nil
-}
-
-func parseOpenMailAllowList(name, value string) ([]string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil, fmt.Errorf("%s is required", name)
-	}
-	addresses, err := mail.ParseAddressList(value)
-	if err != nil {
-		return nil, fmt.Errorf("%s must be a comma-separated email address list: %w", name, err)
-	}
-	result := make([]string, 0, len(addresses))
-	for _, address := range addresses {
-		result = append(result, address.Address)
-	}
-	return result, nil
-}
-
-func openMailAddressSet(addresses []string) (map[string]struct{}, error) {
-	set := make(map[string]struct{}, len(addresses))
-	for _, raw := range addresses {
-		address, err := mail.ParseAddress(strings.TrimSpace(raw))
-		if err != nil || strings.TrimSpace(address.Address) == "" {
-			return nil, fmt.Errorf("invalid email address %q", raw)
-		}
-		set[strings.ToLower(address.Address)] = struct{}{}
-	}
-	return set, nil
 }
 
 type openMailInbox struct {
@@ -260,9 +196,6 @@ func (transport *OpenMailTransport) Poll(ctx context.Context) ([]Message, error)
 			if err != nil {
 				return nil, err
 			}
-			if !transport.authorizedThread(thread.Data) {
-				continue
-			}
 			sort.SliceStable(thread.Data, func(left, right int) bool {
 				return thread.Data[left].CreatedAt.Before(thread.Data[right].CreatedAt)
 			})
@@ -270,7 +203,7 @@ func (transport *OpenMailTransport) Poll(ctx context.Context) ([]Message, error)
 				continue
 			}
 			latest := thread.Data[len(thread.Data)-1]
-			if latest.Direction != "inbound" || !transport.authorizedInbound(latest) {
+			if latest.Direction != "inbound" {
 				continue
 			}
 			candidates = append(candidates, transport.normalize(latest, thread.IsRead))
@@ -291,9 +224,6 @@ func (transport *OpenMailTransport) Thread(ctx context.Context, threadID string)
 	}
 	messages := make([]Message, 0, len(thread.Data))
 	for _, message := range thread.Data {
-		if !transport.authorizedMessage(message) {
-			continue
-		}
 		messages = append(messages, transport.normalize(message, thread.IsRead))
 	}
 	sortMessages(messages)
@@ -323,9 +253,6 @@ func (transport *OpenMailTransport) Message(ctx context.Context, messageID strin
 	raw, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return Message{}, err
-	}
-	if !transport.authorizedMessage(raw) {
-		return Message{}, fmt.Errorf("OpenMail message %s is outside the configured correspondent allow-lists", messageID)
 	}
 	thread, err := transport.rawThread(ctx, raw.ThreadID)
 	if err != nil {
@@ -385,19 +312,12 @@ func (transport *OpenMailTransport) Reply(
 	if err != nil {
 		return "", err
 	}
-	if inbound.Direction != "inbound" || !transport.authorizedInbound(inbound) {
+	if inbound.Direction != "inbound" {
 		return "", fmt.Errorf("OpenMail message %s is not an allowed inbound user turn", messageID)
 	}
-	thread, err := transport.rawThread(ctx, inbound.ThreadID)
-	if err != nil {
-		return "", err
-	}
-	if !transport.authorizedThread(thread.Data) {
-		return "", fmt.Errorf("OpenMail thread %s contains a correspondent outside the configured allow-lists", inbound.ThreadID)
-	}
 	recipient, ok := canonicalOpenMailAddress(inbound.FromAddr)
-	if !ok || !transport.allowed(transport.allowedTo, recipient) {
-		return "", fmt.Errorf("reply recipient for OpenMail message %s is outside DEARMACHINE_OPENMAIL_ALLOWED_TO", messageID)
+	if !ok {
+		return "", fmt.Errorf("OpenMail message %s has no reply recipient", messageID)
 	}
 	body := payload.Text
 	if body == "" {
@@ -549,15 +469,8 @@ func (transport *OpenMailTransport) MarkProcessed(ctx context.Context, messageID
 	if err != nil {
 		return err
 	}
-	if message.Direction != "inbound" || !transport.authorizedInbound(message) {
+	if message.Direction != "inbound" {
 		return fmt.Errorf("OpenMail message %s is not an allowed inbound user turn", messageID)
-	}
-	thread, err := transport.rawThread(ctx, message.ThreadID)
-	if err != nil {
-		return err
-	}
-	if !transport.authorizedThread(thread.Data) {
-		return fmt.Errorf("OpenMail thread %s contains a correspondent outside the configured allow-lists", message.ThreadID)
 	}
 	encoded, err := json.Marshal(struct {
 		IsRead bool `json:"is_read"`
@@ -602,9 +515,6 @@ func (transport *OpenMailTransport) FetchAttachment(
 	message, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return nil, err
-	}
-	if message.Direction != "inbound" || !transport.authorizedInbound(message) {
-		return nil, fmt.Errorf("OpenMail attachment belongs to a message outside DEARMACHINE_OPENMAIL_ALLOWED_FROM")
 	}
 	found := false
 	for _, attachment := range message.Attachments {
@@ -719,90 +629,6 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 		Labels:                 labels,
 		Attachments:            attachments,
 	}
-}
-
-func (transport *OpenMailTransport) authorizedMessage(message openMailMessage) bool {
-	switch message.Direction {
-	case "inbound":
-		return transport.authorizedInbound(message)
-	case "outbound":
-		address, ok := canonicalOpenMailAddress(message.ToAddr)
-		if !ok || !transport.allowed(transport.allowedTo, address) {
-			return false
-		}
-		if !transport.addressesAllowed(message.CC, transport.allowedTo) {
-			return false
-		}
-		from, ok := canonicalOpenMailAddress(message.FromAddr)
-		return ok && strings.EqualFold(from, transport.resolvedAddress)
-	default:
-		return false
-	}
-}
-
-func (transport *OpenMailTransport) authorizedThread(messages []openMailMessage) bool {
-	if len(messages) == 0 {
-		return false
-	}
-	for _, message := range messages {
-		if !transport.authorizedMessage(message) {
-			return false
-		}
-	}
-	return true
-}
-
-func (transport *OpenMailTransport) authorizedInbound(message openMailMessage) bool {
-	address, ok := canonicalOpenMailAddress(message.FromAddr)
-	if !ok || !transport.allowed(transport.allowedFrom, address) {
-		return false
-	}
-	recipient, ok := canonicalOpenMailAddress(message.ToAddr)
-	if !ok || !strings.EqualFold(recipient, transport.resolvedAddress) {
-		return false
-	}
-	if message.DeliveryRole != "" && message.DeliveryRole != "to" {
-		return false
-	}
-	if strings.TrimSpace(message.HeaderTo) != "" {
-		headerRecipients := openMailAddresses(message.HeaderTo)
-		if len(headerRecipients) == 0 {
-			return false
-		}
-		for _, headerRecipient := range headerRecipients {
-			if !strings.EqualFold(headerRecipient, transport.resolvedAddress) {
-				return false
-			}
-		}
-	}
-	for _, cc := range message.CC {
-		for _, address := range openMailAddresses(cc) {
-			if !strings.EqualFold(address, transport.resolvedAddress) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func (transport *OpenMailTransport) addressesAllowed(raw []string, allowed map[string]struct{}) bool {
-	for _, value := range raw {
-		addresses := openMailAddresses(value)
-		if len(addresses) == 0 {
-			return false
-		}
-		for _, address := range addresses {
-			if !transport.allowed(allowed, address) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func (transport *OpenMailTransport) allowed(set map[string]struct{}, address string) bool {
-	_, ok := set[strings.ToLower(address)]
-	return ok
 }
 
 func (transport *OpenMailTransport) requireMutationOptIn(operation string) error {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -27,8 +26,6 @@ type SendmuxTransport struct {
 	api              sendmuxTransportAPI
 	inbox            string
 	httpClient       *http.Client
-	allowedFrom      map[string]struct{}
-	allowedTo        map[string]struct{}
 	allowMutation    bool
 	allowInsecureURL bool
 
@@ -40,8 +37,6 @@ type sendmuxTransportConfig struct {
 	API              sendmuxTransportAPI
 	Inbox            string
 	HTTPClient       *http.Client
-	AllowedFrom      []string
-	AllowedTo        []string
 	AllowMutation    bool
 	AllowInsecureURL bool
 }
@@ -111,21 +106,12 @@ func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
 	if err != nil {
 		return nil, err
 	}
-	allowedFrom, err := parseSendmuxAllowList("DEARMACHINE_SENDMUX_ALLOWED_FROM", os.Getenv("DEARMACHINE_SENDMUX_ALLOWED_FROM"))
-	if err != nil {
-		return nil, err
-	}
-	allowedTo, err := parseSendmuxAllowList("DEARMACHINE_SENDMUX_ALLOWED_TO", os.Getenv("DEARMACHINE_SENDMUX_ALLOWED_TO"))
-	if err != nil {
-		return nil, err
-	}
 	api, err := newSendmuxSDKAPI(apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("create Sendmux mailbox client: %w", err)
 	}
 	return newSendmuxTransport(sendmuxTransportConfig{
 		API: api, Inbox: inboxID, HTTPClient: http.DefaultClient,
-		AllowedFrom: allowedFrom, AllowedTo: allowedTo,
 		AllowMutation: os.Getenv("DEARMACHINE_LIVE_SENDMUX") == "1" &&
 			os.Getenv("DEARMACHINE_LIVE_SENDMUX_APPLY") == "1",
 	})
@@ -138,27 +124,12 @@ func newSendmuxTransport(config sendmuxTransportConfig) (*SendmuxTransport, erro
 	if config.API == nil {
 		return nil, fmt.Errorf("Sendmux mailbox API is required")
 	}
-	if len(config.AllowedFrom) == 0 {
-		return nil, fmt.Errorf("DEARMACHINE_SENDMUX_ALLOWED_FROM is required")
-	}
-	if len(config.AllowedTo) == 0 {
-		return nil, fmt.Errorf("DEARMACHINE_SENDMUX_ALLOWED_TO is required")
-	}
-	allowedFrom, err := sendmuxAddressSet(config.AllowedFrom)
-	if err != nil {
-		return nil, fmt.Errorf("DEARMACHINE_SENDMUX_ALLOWED_FROM: %w", err)
-	}
-	allowedTo, err := sendmuxAddressSet(config.AllowedTo)
-	if err != nil {
-		return nil, fmt.Errorf("DEARMACHINE_SENDMUX_ALLOWED_TO: %w", err)
-	}
 	httpClient := config.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 	return &SendmuxTransport{
 		api: config.API, inbox: strings.TrimSpace(config.Inbox), httpClient: httpClient,
-		allowedFrom: allowedFrom, allowedTo: allowedTo,
 		allowMutation: config.AllowMutation, allowInsecureURL: config.AllowInsecureURL,
 	}, nil
 }
@@ -193,34 +164,6 @@ func loadSendmuxCredential() (string, error) {
 	return credential, nil
 }
 
-func parseSendmuxAllowList(name, value string) ([]string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil, fmt.Errorf("%s is required", name)
-	}
-	addresses, err := mail.ParseAddressList(value)
-	if err != nil {
-		return nil, fmt.Errorf("%s must be a comma-separated email address list: %w", name, err)
-	}
-	result := make([]string, 0, len(addresses))
-	for _, address := range addresses {
-		result = append(result, address.Address)
-	}
-	return result, nil
-}
-
-func sendmuxAddressSet(addresses []string) (map[string]struct{}, error) {
-	set := make(map[string]struct{}, len(addresses))
-	for _, raw := range addresses {
-		address, err := mail.ParseAddress(strings.TrimSpace(raw))
-		if err != nil || strings.TrimSpace(address.Address) == "" {
-			return nil, fmt.Errorf("invalid email address %q", raw)
-		}
-		set[strings.ToLower(address.Address)] = struct{}{}
-	}
-	return set, nil
-}
-
 func (transport *SendmuxTransport) Poll(ctx context.Context) ([]Message, error) {
 	mailboxInfo, err := transport.mailbox(ctx)
 	if err != nil {
@@ -235,16 +178,6 @@ func (transport *SendmuxTransport) Poll(ctx context.Context) ([]Message, error) 
 		raw, err := transport.api.Message(ctx, mailboxInfo.ID, id)
 		if err != nil {
 			return nil, fmt.Errorf("get Sendmux message %s: %w", id, err)
-		}
-		if !transport.authorizedInbound(raw) {
-			continue
-		}
-		thread, err := transport.api.Thread(ctx, mailboxInfo.ID, raw.ThreadID)
-		if err != nil {
-			return nil, fmt.Errorf("get Sendmux thread %s: %w", raw.ThreadID, err)
-		}
-		if !transport.authorizedThread(thread) {
-			continue
 		}
 		messages = append(messages, transport.normalize(raw))
 	}
@@ -267,9 +200,7 @@ func (transport *SendmuxTransport) Thread(ctx context.Context, threadID string) 
 	}
 	messages := make([]Message, 0, len(raw))
 	for _, message := range raw {
-		if transport.authorizedMessage(message) {
-			messages = append(messages, transport.normalize(message))
-		}
+		messages = append(messages, transport.normalize(message))
 	}
 	sortMessages(messages)
 	return messages, nil
@@ -279,9 +210,6 @@ func (transport *SendmuxTransport) Message(ctx context.Context, messageID string
 	raw, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return Message{}, err
-	}
-	if !transport.authorizedMessage(raw) {
-		return Message{}, fmt.Errorf("Sendmux message %s is outside the configured correspondent allow-lists", messageID)
 	}
 	return transport.normalize(raw), nil
 }
@@ -316,26 +244,13 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 	if err != nil {
 		return "", err
 	}
-	if !transport.authorizedInbound(inbound) {
-		return "", fmt.Errorf("Sendmux message %s is not an allowed inbound user turn", messageID)
-	}
 	mailboxInfo, err := transport.mailbox(ctx)
 	if err != nil {
 		return "", err
 	}
-	thread, err := transport.api.Thread(ctx, mailboxInfo.ID, inbound.ThreadID)
-	if err != nil {
-		return "", fmt.Errorf("get Sendmux thread %s: %w", inbound.ThreadID, err)
-	}
-	if !transport.authorizedThread(thread) {
-		return "", fmt.Errorf("Sendmux thread %s contains a correspondent outside the configured allow-lists", inbound.ThreadID)
-	}
 	recipients := inbound.ReplyTo
 	if len(recipients) == 0 {
 		recipients = []string{inbound.From}
-	}
-	if !transport.addressesAllowed(recipients, transport.allowedTo) {
-		return "", fmt.Errorf("reply recipient for Sendmux message %s is outside DEARMACHINE_SENDMUX_ALLOWED_TO", messageID)
 	}
 	request := sendmuxSendRequest{
 		ReplyToMessageID: messageID,
@@ -385,23 +300,13 @@ func (transport *SendmuxTransport) MarkProcessed(ctx context.Context, messageID 
 	if err := transport.requireMutationOptIn("mark processed"); err != nil {
 		return err
 	}
-	inbound, err := transport.rawMessage(ctx, messageID)
+	_, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return err
-	}
-	if !transport.authorizedInbound(inbound) {
-		return fmt.Errorf("Sendmux message %s is not an allowed inbound user turn", messageID)
 	}
 	mailboxInfo, err := transport.mailbox(ctx)
 	if err != nil {
 		return err
-	}
-	thread, err := transport.api.Thread(ctx, mailboxInfo.ID, inbound.ThreadID)
-	if err != nil {
-		return fmt.Errorf("get Sendmux thread %s: %w", inbound.ThreadID, err)
-	}
-	if !transport.authorizedThread(thread) {
-		return fmt.Errorf("Sendmux thread %s contains a correspondent outside the configured allow-lists", inbound.ThreadID)
 	}
 	if err := transport.api.MarkSeen(ctx, mailboxInfo.ID, messageID); err != nil {
 		return fmt.Errorf("mark Sendmux message %s processed: %w", messageID, err)
@@ -420,20 +325,6 @@ func (transport *SendmuxTransport) FetchAttachment(ctx context.Context, attachme
 	message, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return nil, err
-	}
-	if !transport.authorizedInbound(message) {
-		return nil, fmt.Errorf("Sendmux attachment belongs to a message outside DEARMACHINE_SENDMUX_ALLOWED_FROM")
-	}
-	mailboxInfo, err := transport.mailbox(ctx)
-	if err != nil {
-		return nil, err
-	}
-	thread, err := transport.api.Thread(ctx, mailboxInfo.ID, message.ThreadID)
-	if err != nil {
-		return nil, err
-	}
-	if !transport.authorizedThread(thread) {
-		return nil, fmt.Errorf("Sendmux attachment belongs to a thread outside the configured correspondent allow-lists")
 	}
 	var attachment *sendmuxRawAttachment
 	for index := range message.Attachments {
@@ -524,59 +415,6 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 		References:             append([]string(nil), raw.References...),
 		ConversationReferences: conversationReferences, Labels: labels, Attachments: attachments,
 	}
-}
-
-func (transport *SendmuxTransport) authorizedMessage(message sendmuxRawMessage) bool {
-	if strings.EqualFold(message.From, transport.resolved.Email) {
-		return transport.addressesAllowed(message.To, transport.allowedTo) &&
-			transport.addressesAllowed(message.CC, transport.allowedTo) &&
-			transport.addressesAllowed(message.BCC, transport.allowedTo)
-	}
-	return transport.authorizedInbound(message)
-}
-
-func (transport *SendmuxTransport) authorizedInbound(message sendmuxRawMessage) bool {
-	if !transport.addressAllowed(message.From, transport.allowedFrom) {
-		return false
-	}
-	mailboxAddress := strings.ToLower(transport.resolved.Email)
-	recipients := append(append([]string(nil), message.To...), message.CC...)
-	recipients = append(recipients, message.BCC...)
-	if len(recipients) == 0 {
-		return false
-	}
-	for _, recipient := range recipients {
-		if !strings.EqualFold(recipient, mailboxAddress) {
-			return false
-		}
-	}
-	return true
-}
-
-func (transport *SendmuxTransport) authorizedThread(messages []sendmuxRawMessage) bool {
-	if len(messages) == 0 {
-		return false
-	}
-	for _, message := range messages {
-		if !transport.authorizedMessage(message) {
-			return false
-		}
-	}
-	return true
-}
-
-func (transport *SendmuxTransport) addressesAllowed(addresses []string, allowed map[string]struct{}) bool {
-	for _, address := range addresses {
-		if !transport.addressAllowed(address, allowed) {
-			return false
-		}
-	}
-	return true
-}
-
-func (transport *SendmuxTransport) addressAllowed(address string, allowed map[string]struct{}) bool {
-	_, ok := allowed[strings.ToLower(strings.TrimSpace(address))]
-	return ok
 }
 
 func (transport *SendmuxTransport) requireMutationOptIn(operation string) error {
