@@ -62,10 +62,11 @@ type application interface {
 }
 
 type dependencies struct {
-	openStore    func(string) (*client.Store, error)
-	newTransport func(string) (client.Transport, error)
-	newRunner    func(string, string, string) (*client.AgentRunner, error)
-	newApp       func(
+	openStore     func(string) (*client.Store, error)
+	openPairStore func(string, client.Pair) (*client.Store, error)
+	newTransport  func(string) (client.Transport, error)
+	newRunner     func(string, string, string) (*client.AgentRunner, error)
+	newApp        func(
 		client.Transport,
 		*client.Store,
 		*client.AgentRunner,
@@ -88,8 +89,9 @@ type dependencies struct {
 
 func defaultDependencies() dependencies {
 	return dependencies{
-		openStore: client.OpenStore,
-		newRunner: client.NewAgentRunner,
+		openStore:     client.OpenStore,
+		openPairStore: client.OpenPairStore,
+		newRunner:     client.NewAgentRunner,
 		newApp: func(
 			transport client.Transport,
 			store *client.Store,
@@ -279,15 +281,24 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
+	state, err := client.ResolvePairState(deps.userHomeDir, "")
+	if err != nil {
+		return err
+	}
 	dbPath := cfg.dbPath
 	if strings.TrimSpace(dbPath) == "" {
-		dbPath, err = client.DefaultDeviceDatabasePath(deps.userHomeDir)
-		if err != nil {
-			return err
-		}
+		dbPath = state.Path
 	}
-
-	store, err := deps.openStore(dbPath)
+	var store *client.Store
+	if state.Legacy {
+		store, err = deps.openStore(dbPath)
+	} else {
+		openPairStore := deps.openPairStore
+		if openPairStore == nil {
+			openPairStore = client.OpenPairStore
+		}
+		store, err = openPairStore(dbPath, state.Pair)
+	}
 	if err != nil {
 		return err
 	}

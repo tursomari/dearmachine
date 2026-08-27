@@ -123,6 +123,37 @@ func TestRunUsesPrivateDefaultDatabasePath(t *testing.T) {
 	}
 }
 
+func TestRunUsesActivePairDatabaseByDefault(t *testing.T) {
+	app := &fakeApplication{}
+	deps := testDependencies(t, app)
+	home, err := deps.userHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := client.CreatePair(deps.userHomeDir, client.Pair{
+		DisplayName: "Test pair", UserEmail: "user@example.test", DearMachineAddress: "machine@example.test",
+		Transport: "agentmail", InboxID: "inbox-123", Allow: []string{"user@example.test", "machine@example.test"},
+	})
+	if err != nil {
+		t.Fatalf("CreatePair: %v", err)
+	}
+	var opened string
+	deps.openPairStore = func(path string, got client.Pair) (*client.Store, error) {
+		opened = path
+		if got.ID != pair.ID {
+			t.Fatalf("opened pair = %q, want %q", got.ID, pair.ID)
+		}
+		return client.OpenPairStore(filepath.Join(t.TempDir(), "state.db"), got)
+	}
+	if err := run([]string{"--inbox-id", "inbox-123", "--once"}, func(string) string { return "test-key" }, deps); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	want := filepath.Join(home, ".dearmachine", "pairs", pair.ID, "state", "dearmachine.db")
+	if opened != want {
+		t.Fatalf("opened database = %q, want %q", opened, want)
+	}
+}
+
 func TestParseConfigRejectsInvalidInput(t *testing.T) {
 	tests := []struct {
 		name string
