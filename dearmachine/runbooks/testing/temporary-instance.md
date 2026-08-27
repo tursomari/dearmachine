@@ -48,6 +48,7 @@ Identify or ask the tester for:
 - the DearMachine source directory and revision to test;
 - the project arrangement required by the protocol;
 - the ordered backend list;
+- the credential location for the selected machtiani model provider;
 - the credential location for the transport under test;
 - one or more transport accounts authorized to send the live messages;
 - the machtiani executable or source revision; and
@@ -177,8 +178,33 @@ Compose, mount, secret, or container-health paths.
 > Confirm the variable is absent in the launch environment before
 > proceeding.
 
-6. Load the transport credential without displaying it, export the isolated
-   `DEARMACHINE_HOME`, and launch the freshly built client in an observable
+6. Load both credential classes without displaying them. The transport key
+   follows the existing `AGENTMAIL_API_KEY` or `AGENTMAIL_API_KEY_FILE`
+   contract. The selected machtiani model provider has its own credential; for
+   the DeepSeek preset, load it from the operator's mode-`0600` secrets file
+   and export it as `DEEPSEEK_API_KEY` in the launch shell:
+
+   ```bash
+   operator_secrets=<mode-0600-operator-secrets-file>
+   test "$(stat -c %a "$operator_secrets")" = 600
+   set -a
+   . "$operator_secrets"
+   set +a
+   test -n "${DEEPSEEK_API_KEY:-}"
+   export DEEPSEEK_API_KEY
+   ```
+
+   Initialize the isolated machtiani configuration with
+   `--api-key-env DEEPSEEK_API_KEY`. The resulting configuration must contain
+   the literal reference `${DEEPSEEK_API_KEY}`, never the key value. Keep the
+   variable exported for every client command: the running client, Agent
+   Manager, machtiani, and its selected backend inherit it from that same
+   launch environment. For a containerized launch, pass the variable through
+   by name to the container; do not write its value to `stack.env`, a Compose
+   argument, a retained log, or another runtime file.
+
+7. Export the isolated `DEARMACHINE_HOME`, and launch the freshly built client
+   in an observable
    foreground terminal or a bounded service owned by the test. The effective
    command must explicitly provide:
 
@@ -208,7 +234,7 @@ Compose, mount, secret, or container-health paths.
    wait state means orchestration is blocked and must be corrected before mail
    is sent.
 
-7. Confirm startup before sending mail:
+8. Confirm startup before sending mail:
 
    - the PID belongs to the expected temporary binary;
    - its command references only the recorded test paths and inbox;

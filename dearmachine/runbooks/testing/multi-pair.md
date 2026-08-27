@@ -45,9 +45,16 @@ export DEARMACHINE_HOME="$runtime_root/dearmachine-home"
 export HOME="$DEARMACHINE_HOME"
 install -d -m 0700 "$DEARMACHINE_HOME" "$runtime_root/project-a" \
   "$runtime_root/project-b" "$runtime_root/project-c"
+export DEEPSEEK_API_KEY
 export AGENTMAIL_API_KEY_FILE=<mode-0600-operator-owned-key-file>
 test "$(stat -c %a "$AGENTMAIL_API_KEY_FILE")" = 600
 ```
+
+Load and validate `DEEPSEEK_API_KEY` through the shared temporary-instance
+credential procedure before this block. Initialize machtiani with
+`--api-key-env DEEPSEEK_API_KEY`, verify its configuration contains the
+literal `${DEEPSEEK_API_KEY}` reference, and keep the variable exported in the
+same shell for every `up` launch and backend process.
 
 Create three temporary AgentMail inboxes, then use `dearmachine up --new` three
 times to enter the corresponding registry records in its guided prompts:

@@ -33,6 +33,10 @@ grep -F 'Live integration protocols use the containerized production path' \
 grep -F 'without requiring systemd' "$temporary" >/dev/null
 grep -F 'nix run .#dearmachine-stack -- up' "$temporary" >/dev/null
 grep -F '### Native diagnostic exception' "$temporary" >/dev/null
+grep -F 'operator_secrets=<mode-0600-operator-secrets-file>' "$temporary" >/dev/null
+grep -F 'literal reference `${DEEPSEEK_API_KEY}`' "$temporary" >/dev/null
+grep -F 'running client, Agent' "$temporary" >/dev/null
+grep -F 'machtiani, and its selected backend inherit it' "$temporary" >/dev/null
 grep -F 'pending-to-processed transitions' "$temporary" >/dev/null
 grep -F 'two inbound user turns map to one mct session with sequence 2' \
   "$disposable" >/dev/null
@@ -47,6 +51,7 @@ for contract in \
 done
 grep -F -- "\`dearmachine up\` wizard" "$multi_pair" >/dev/null
 grep -F -- "\`dearmachine up --new\`" "$multi_pair" >/dev/null
+grep -F 'export DEEPSEEK_API_KEY' "$multi_pair" >/dev/null
 grep -F 'up --switch <pair-b-uuid>' "$multi_pair" >/dev/null
 if grep -Fq -- 'public pair provisioning surface' "$multi_pair"; then
   echo 'multi-pair protocol must provision through the up wizard' >&2
