@@ -14,10 +14,11 @@ state. Obtain authorization for every temporary inbox, sender, allow-policy
 entry, and message before starting. Use placeholders in the report and retain
 live IDs only in the Git-excluded private evidence directory.
 
-This protocol requires a supported public pairing flow that creates and selects
-registry records. If that flow is unavailable, record the missing CLI surface
-and classify the affected scenarios as blocked; do not manually author
-`pairs.toml` as a test-only workaround.
+This protocol provisions and selects registry records only through the
+`dearmachine up` wizard. Use `up --new` to add each record and `up --switch
+<pair-id-or-name>` before a selected launch. If that wizard is unavailable,
+record the missing CLI surface and classify the affected scenarios as blocked;
+do not manually author `pairs.toml` as a test-only workaround.
 
 ## Multi-pair lane isolation
 
@@ -36,14 +37,16 @@ export AGENTMAIL_API_KEY_FILE=<mode-0600-operator-owned-key-file>
 test "$(stat -c %a "$AGENTMAIL_API_KEY_FILE")" = 600
 ```
 
-Create three temporary AgentMail inboxes and corresponding registry records:
+Create three temporary AgentMail inboxes, then use `dearmachine up --new` three
+times to enter the corresponding registry records in its guided prompts:
 pair A uses `<user-paired-address-a>` and `<dear-machine-address-a>`, pair B
 uses `<user-paired-address-b>` and `<dear-machine-address-b>`, and pair C uses
 `<user-paired-address-c>` and `<dear-machine-address-c>`. Give each record a
 new UUID v4, its returned inbox ID, transport `agentmail`, and its own allow
-set. Store them in `$DEARMACHINE_HOME/.dearmachine/pairs.toml`; set exactly one
-record `active = true` before each launch. The active record is the current
-client's registry-default lane. Record the pair UUIDs privately as
+set. The wizard stores them in `$DEARMACHINE_HOME/.dearmachine/pairs.toml` and
+creates the empty metadata-bound state database. Select a lane with `up
+--switch` before each launch; the selected record becomes the current client's
+registry-default lane. Record the pair UUIDs privately as
 `<pair-a-uuid>`, `<pair-b-uuid>`, and `<pair-c-uuid>`.
 
 For all launches, create a version-1 config below the root, use a disposable
@@ -104,17 +107,15 @@ pending row through B's transport, errors or blocks startup, or otherwise
 touches A's state. Stop it and preserve the shared database evidence. This is a
 baseline demonstration only; do not send any message through the wrong lane.
 
-For the isolated green phase, set pair A active, create a fresh pending A row
-in `pair_a_db`, stop A, then set pair B active in `pairs.toml`. Launch B with
-the selected pair-B database and B's allow policy:
+For the isolated green phase, select pair A through `up --switch`, create a
+fresh pending A row in `pair_a_db`, stop A, then select pair B through `up
+--switch`. Launch B with B's registered database and allow policy:
 
 ```bash
 AGENTMAIL_API_KEY_FILE="$AGENTMAIL_API_KEY_FILE" \
 DEARMACHINE_HOME="$DEARMACHINE_HOME" HOME="$DEARMACHINE_HOME" \
 DEARMACHINE_ALLOW='<user-paired-address-b>' \
-"$runtime_root/dearmachine" \
-  --inbox-id <pair-b-inbox-id> \
-  --db "$pair_b_db" \
+"$runtime_root/dearmachine" up --switch <pair-b-uuid> \
   --project "$runtime_root/project-b" \
   --config "$runtime_root/dearmachine-b.toml" \
   --agent-manager "$runtime_root/agent-manager" \
@@ -127,16 +128,12 @@ DEARMACHINE_ALLOW='<user-paired-address-b>' \
 Verify B completes its first poll and, if a B message is sent, processes only
 that message. While B is running and after it stops, query both databases:
 A's pending row must remain pending, B must have no A row, and no request may
-reach the pair-A transport. Set A active and relaunch it with the analogous
-explicit A command:
+reach the pair-A transport. Select A through the wizard and relaunch it:
 
 ```bash
 AGENTMAIL_API_KEY_FILE="$AGENTMAIL_API_KEY_FILE" \
 DEARMACHINE_HOME="$DEARMACHINE_HOME" HOME="$DEARMACHINE_HOME" \
-"$runtime_root/dearmachine" \
-  --inbox-id <pair-a-inbox-id> \
-  --db "$pair_a_db" \
-  --allow '<user-paired-address-a>' \
+"$runtime_root/dearmachine" up --switch <pair-a-uuid> \
   --project "$runtime_root/project-a" \
   --config "$runtime_root/dearmachine-a.toml" \
   --agent-manager "$runtime_root/agent-manager" \
@@ -160,16 +157,13 @@ pre-pairs binary using the shared command above (substitute the pair-B inbox).
 Confirm and retain evidence that the footer joins or resumes A's session: the
 wrong-session attachment is the expected red outcome.
 
-For the green phase, keep the A state only in `pair_a_db`, set B active, and
-send a pair-B email with the same quoted A footer. Launch B exactly as follows:
+For the green phase, keep the A state only in `pair_a_db`, select B through
+the wizard, and send a pair-B email with the same quoted A footer. Launch B:
 
 ```bash
 AGENTMAIL_API_KEY_FILE="$AGENTMAIL_API_KEY_FILE" \
 DEARMACHINE_HOME="$DEARMACHINE_HOME" HOME="$DEARMACHINE_HOME" \
-"$runtime_root/dearmachine" \
-  --inbox-id <pair-b-inbox-id> \
-  --db "$pair_b_db" \
-  --allow '<user-paired-address-b>' \
+"$runtime_root/dearmachine" up --switch <pair-b-uuid> \
   --project "$runtime_root/project-b" \
   --config "$runtime_root/dearmachine-b.toml" \
   --agent-manager "$runtime_root/agent-manager" \
@@ -196,15 +190,13 @@ sent, inspect `pairs.toml` and `pair_c_db`: it must be a fresh database with
 an empty `thread_sessions`, `pending_messages`, `processed_messages`, and
 `thread_aliases` set, plus exactly the C `pair_meta` binding.
 
-Set C active and launch its registry-default lane:
+Select C through the wizard and launch its registry-default lane:
 
 ```bash
 AGENTMAIL_API_KEY_FILE="$AGENTMAIL_API_KEY_FILE" \
 DEARMACHINE_HOME="$DEARMACHINE_HOME" HOME="$DEARMACHINE_HOME" \
 DEARMACHINE_ALLOW='<user-paired-address-c>' \
-"$runtime_root/dearmachine" \
-  --inbox-id <pair-c-inbox-id> \
-  --db "$pair_c_db" \
+"$runtime_root/dearmachine" up --switch <pair-c-uuid> \
   --project "$runtime_root/project-c" \
   --config "$runtime_root/dearmachine-c.toml" \
   --agent-manager "$runtime_root/agent-manager" \
@@ -228,15 +220,12 @@ refuses `<user-paired-address-a>`. Do not send a negative-case message until
 the recipient inbox's allow policy is confirmed; a rejected message is not
 retroactively recoverable by changing policy.
 
-Set A active and launch it with the explicit A allow set:
+Select A through the wizard and launch it with its registered allow set:
 
 ```bash
 AGENTMAIL_API_KEY_FILE="$AGENTMAIL_API_KEY_FILE" \
 DEARMACHINE_HOME="$DEARMACHINE_HOME" HOME="$DEARMACHINE_HOME" \
-"$runtime_root/dearmachine" \
-  --inbox-id <pair-a-inbox-id> \
-  --db "$pair_a_db" \
-  --allow '<user-paired-address-a>' \
+"$runtime_root/dearmachine" up --switch <pair-a-uuid> \
   --project "$runtime_root/project-a" \
   --config "$runtime_root/dearmachine-a.toml" \
   --agent-manager "$runtime_root/agent-manager" \
@@ -248,15 +237,14 @@ DEARMACHINE_HOME="$DEARMACHINE_HOME" HOME="$DEARMACHINE_HOME" \
 
 Send the allowed A message and the B-address negative case to A's inbox.
 Confirm only the allowed message reaches processing and reply. Then stop A,
-set B active, and launch B with its distinct environment-driven allow set:
+select B through `up --switch`, and launch B with its distinct registered
+allow set:
 
 ```bash
 AGENTMAIL_API_KEY_FILE="$AGENTMAIL_API_KEY_FILE" \
 DEARMACHINE_HOME="$DEARMACHINE_HOME" HOME="$DEARMACHINE_HOME" \
 DEARMACHINE_ALLOW='<user-paired-address-b>' \
-"$runtime_root/dearmachine" \
-  --inbox-id <pair-b-inbox-id> \
-  --db "$pair_b_db" \
+"$runtime_root/dearmachine" up --switch <pair-b-uuid> \
   --project "$runtime_root/project-b" \
   --config "$runtime_root/dearmachine-b.toml" \
   --agent-manager "$runtime_root/agent-manager" \

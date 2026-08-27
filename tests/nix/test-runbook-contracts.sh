@@ -45,6 +45,13 @@ for contract in \
   '## Per-pair allow set keeps traffic in lane'; do
   grep -F "$contract" "$multi_pair" >/dev/null
 done
+grep -F '`dearmachine up` wizard' "$multi_pair" >/dev/null
+grep -F '`dearmachine up --new`' "$multi_pair" >/dev/null
+grep -F 'up --switch <pair-b-uuid>' "$multi_pair" >/dev/null
+if grep -F 'public pair provisioning surface' "$multi_pair"; then
+  echo 'multi-pair protocol must provision through the up wizard' >&2
+  exit 1
+fi
 grep -F 'exactly two allowed inbound messages' "$openmail" >/dev/null
 grep -F 'exactly two later outbound replies' "$openmail" >/dev/null
 grep -F 'Native foreground execution is the default' "$native" >/dev/null
