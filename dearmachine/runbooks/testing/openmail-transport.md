@@ -26,7 +26,11 @@ deployment path.
   but it is not sufficient for this runbook's provisioning or policy changes.
 - Use two temporary OpenMail inboxes when account capacity and policy permit.
   Record their exact IDs privately, and never delete or change an inbox the run
-  did not create.
+  did not create unless the operator explicitly authorizes deleting existing
+  test-only OpenMail inboxes to refresh capacity. Under that authorization,
+  inventory and record the exact metadata first, delete only the minimum number
+  needed for the fresh pair, and verify every deleted ID is not found before
+  provisioning the run-created inboxes.
 - Keep any normal account-level correspondent allow-list unchanged. If the
   temporary pair is blocked by an inherited policy, apply exact-address rules
   only at each run-created inbox scope. The sender needs inbound/outbound access
@@ -52,7 +56,9 @@ Check these operations in the current official OpenAPI document:
 - `PATCH /v1/threads/{id}` with `{"is_read":true}` marks the thread read.
 
 The API also documents `DELETE /v1/inboxes/{id}`. It is irreversible and is
-used during teardown only for exact IDs created by the current run.
+used during teardown only for exact IDs created by the current run. The sole
+pre-provisioning exception is the explicitly authorized test-only capacity
+refresh described above; it must be recorded separately from run teardown.
 
 ## Isolated inspect
 
