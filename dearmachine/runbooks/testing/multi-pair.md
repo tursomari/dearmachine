@@ -32,7 +32,13 @@ inbox-scoped, so equal provider IDs across the two inboxes must not be
 manufactured through SQLite; classify that equality sub-check as
 not-legitimately-observable. If a self-send API call does not produce an
 inbound message, use the documented cross-lane allow-set pattern instead and
-record the provider behavior.
+record the provider behavior. Because cross-lane delivery requires each pair's
+allow set to contain both physical addresses (the policy checks both `From` and
+`To`), that fallback cannot produce distinct converse-sender negative cases
+with only two identities. Preserve the positive canonicalization and state-lane
+assertions, and classify the converse-sender negative sub-check as
+`INCONCLUSIVE`; do not manufacture a third identity or claim distinct allow
+sets.
 
 Create a unique root and keep both `DEARMACHINE_HOME` and `HOME` below it so
 the registry's default home lookup is isolated. The operator-owned credential
