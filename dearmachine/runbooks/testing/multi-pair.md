@@ -14,6 +14,11 @@ state. Obtain authorization for every temporary inbox, sender, allow-policy
 entry, and message before starting. Use placeholders in the report and retain
 live IDs only in the Git-excluded private evidence directory.
 
+This protocol requires a supported public pairing flow that creates and selects
+registry records. If that flow is unavailable, record the missing CLI surface
+and classify the affected scenarios as blocked; do not manually author
+`pairs.toml` as a test-only workaround.
+
 ## Multi-pair lane isolation
 
 Create a unique root and keep both `DEARMACHINE_HOME` and `HOME` below it so
