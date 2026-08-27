@@ -8,6 +8,7 @@ import (
 	stdhtml "html"
 	"io"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
