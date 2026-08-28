@@ -121,7 +121,7 @@ func TestWhitespaceOnlyReplyFailsWithoutCloseArtifact(t *testing.T) {
 	}
 	waitForStatus(t, manager, id, StatusCrashed)
 	meta := readCompletionMeta(t, manager, id)
-	if meta.FailureReason != "empty_reply" || meta.ExitCode != nil || meta.Signal != "" {
+	if meta.FailureReason != "empty_reply" || meta.ExitCode == nil || *meta.ExitCode != 0 || meta.Signal != "" {
 		t.Fatalf("failure metadata = %+v", meta)
 	}
 	if _, err := os.Stat(filepath.Join(manager.TicketDir(id), "ticket-close.md")); !os.IsNotExist(err) {
@@ -142,7 +142,7 @@ func TestSupervisorDrainsStdoutAfterParserFailure(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitForStatus(t, manager, id, StatusCrashed)
-	if meta := readCompletionMeta(t, manager, id); meta.FailureReason != "output_failed" {
+	if meta := readCompletionMeta(t, manager, id); meta.FailureReason != "output_failed" || meta.ExitCode == nil || *meta.ExitCode != 0 {
 		t.Fatalf("failure metadata = %+v", meta)
 	}
 }
