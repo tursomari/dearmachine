@@ -22,8 +22,9 @@ path from that shared runbook.
 - The external correspondent may be any specifically authorized mailbox. This
   one-off operational choice must not introduce provider-, organization-, or
   account-specific behavior into Dear Machine or this procedure.
-- Configure the common `DEARMACHINE_ALLOW` paired-address list. A message addressed to, copied to, or
-  sharing a thread with anyone else must remain invisible to the adapter.
+- Configure the common `DEARMACHINE_ALLOW` paired-address list using only
+  email addresses. A message addressed to, copied to, or sharing a thread with
+  anyone else must remain invisible to the adapter.
 - Sendmux is inspect-only unless both `DEARMACHINE_LIVE_SENDMUX=1` and
   `DEARMACHINE_LIVE_SENDMUX_APPLY=1` are set. Leave both unset during the
   initial credential and poll checks.
@@ -38,7 +39,8 @@ mode `0600`, with values appropriate to this run:
 ```bash
 SENDMUX_MAILBOX_API_KEY_FILE=/absolute/path/to/sendmux-api-key
 SENDMUX_SEND_API_KEY_FILE=/absolute/path/to/sendmux-send-api-key
-SENDMUX_QSE_INBOX=<mailbox-id-or-address>
+SENDMUX_QSE_INBOX_ID=<mbx-mailbox-id>
+SENDMUX_QSE_INBOX_ADDRESS=<exact-mailbox-address>
 SENDMUX_QSE_CORRESPONDENT=<exact-external-address>
 ```
 
@@ -48,16 +50,21 @@ Load it without echoing its contents, then set the seam allow list:
 set -a
 . /absolute/path/to/sendmux-qse.env
 set +a
-export DEARMACHINE_ALLOW="$SENDMUX_QSE_CORRESPONDENT,$SENDMUX_QSE_INBOX"
+export DEARMACHINE_ALLOW="$SENDMUX_QSE_CORRESPONDENT,$SENDMUX_QSE_INBOX_ADDRESS"
 ```
+
+Never put the `mbx_...` mailbox ID in `DEARMACHINE_ALLOW`. The allow list
+accepts email addresses only; using the ID fails with
+`allow list must be a comma-separated email address list: mail: missing '@' or angle-addr`.
 
 Before continuing, require that the credential file and operator environment
 file are regular files owned by the current user with no group or other bits.
 
 The operator environment file remains the canonical source for
-`SENDMUX_QSE_INBOX`. When necessary, it may be resolved through the mailbox-
-scoped key's self endpoint using the Go mailbox SDK's `MailboxGetMe`, which
-returns the granted mailbox ID/email. Do this without printing the key or any
+`SENDMUX_QSE_INBOX_ID` and `SENDMUX_QSE_INBOX_ADDRESS`. Before the first poll,
+cross-check both values through the mailbox-scoped key's self endpoint using
+the Go mailbox SDK's `MailboxGetMe`: the granted mailbox ID and email must
+agree with the configured pair. Do this without printing the key or any
 addresses.
 
 ## Isolated inspect
@@ -74,7 +81,7 @@ addresses.
    ```bash
    "$QSE_ROOT/dearmachine" \
      --transport sendmux \
-     --inbox-id "$SENDMUX_QSE_INBOX" \
+     --inbox-id "$SENDMUX_QSE_INBOX_ID" \
      --once \
      --verbose \
      --db "$QSE_ROOT/inspect.db" \
@@ -92,51 +99,81 @@ authentication failure is a credential blocker, not evidence about delivery.
 
 ## Send, reply, send, reply
 
-1. From the external correspondent, send a new message to the Sendmux mailbox
+1. With the client stopped, create the fresh live database by locally skipping
+   the exact current eligible snapshot with a run-specific reason:
+
+   ```bash
+   "$QSE_ROOT/dearmachine" inbox skip \
+     --current \
+     --transport sendmux \
+     --inbox-id "$SENDMUX_QSE_INBOX_ID" \
+     --db "$QSE_ROOT/live.db" \
+     --pidfile "$QSE_ROOT/live.pid" \
+     --project "$QSE_ROOT/project" \
+     --agent-bin '<absolute-machtiani-path>' \
+     --reason "sendmux-qse-<run-id>-baseline"
+   ```
+
+   Record the skipped message IDs privately as the baseline. Do not reuse an
+   inspect database or a database from another run.
+2. From the external correspondent, send a new message to the Sendmux mailbox
    with a unique subject and a small read-only task scoped to the disposable
    project. Record identifiers privately; do not copy addresses or message
    contents into a committed artifact.
-2. Confirm through the Sendmux mailbox API that exactly that inbound message is
-   unread, has an RFC Message-ID, and is in a thread containing only the two
-   authorized participants.
-3. Enable both mutation gates and run the isolated client against a fresh live
-   database:
+3. Confirm through the Sendmux mailbox API that exactly that run-created
+   inbound message is unread, has an RFC Message-ID, and is in a thread
+   containing only the two authorized participants.
+4. Immediately before every client start in this procedure, re-poll through
+   the mailbox API. Abort if any eligible unread message ID is neither a
+   recorded baseline ID nor a message created by this run. Then enable both
+   mutation gates and run the isolated client against the live database:
 
    ```bash
    export DEARMACHINE_LIVE_SENDMUX=1
    export DEARMACHINE_LIVE_SENDMUX_APPLY=1
    ```
 
-4. Wait for the first Dear Machine response. In the external mail client,
-   reply normally to that response in the existing conversation, preserving
-   its quoted footer. Make the follow-up meaningfully depend on the first turn.
-5. Wait for the second inbound message to become unread and rerun the same
-   isolated client with the same live database and project. Identify the
-   follow-up by its authenticated sender and reply ancestry or stable
-   conversation reference; do not require exact subject equality because mail
-   clients commonly add or normalize a `Re:` prefix.
-6. Verify independently that:
+5. Wait for the first Dear Machine response. Reply to that response in the
+   existing conversation and make the follow-up meaningfully depend on the
+   first turn. For an automated follow-up, set `In-Reply-To` to the prior Dear
+   Machine response's RFC Message-ID, not a Gmail resource ID, Sendmux ID, or
+   thread ID. Extend `References` by appending that Message-ID exactly once to
+   the prior `References`; supply the provider thread ID in the send request;
+   use a `Re:` subject; and quote the full prior response in the body, including
+   the Dear Machine footer. This exercises both the ancestry and footer-
+   fallback paths on the receiving side.
+6. Wait for the second run-created inbound message to become unread, repeat the
+   pre-start re-poll guard, and rerun the same isolated client with the same
+   live database and project. Identify the follow-up by its authenticated
+   sender and reply ancestry or stable conversation reference; do not require
+   exact subject equality because mail clients commonly add or normalize a
+   `Re:` prefix.
+7. Verify independently that:
 
-   - exactly two allowed inbound messages were claimed and processed;
+   - exactly the two run-created, non-skipped inbound messages were claimed and
+     processed;
    - both turns map to one Machtiani session and the second advances its
      sequence rather than creating a new session;
    - both Dear Machine replies contain the same valid stable conversation
      reference;
    - each outbound send has a unique durable idempotency key;
-   - each outbound message has a provider-generated RFC Message-ID, and each
-     human follow-up references the answer it replied to;
+   - each outbound message has a provider-generated RFC Message-ID, and the
+     follow-up references the answer it replied to;
    - the second prompt contains the new human contribution but not the footer
      or quoted history as new user text;
-   - Sendmux reports both inbound messages seen after successful processing;
-   - the isolated database has no pending message and exactly two processed
-     messages; and
+   - Sendmux reports both run-created inbound messages seen after successful
+     processing;
+   - no baseline ID caused a session, Agent Manager ticket, or reply;
+   - the isolated database has exactly two processed run-created messages and
+     no pending rows; and
    - a repeated poll creates neither a third agent turn nor a duplicate reply.
 
-Sendmux's HTTP send API supports X-headers, not caller-supplied RFC
-`In-Reply-To` or `References`, and has no distinct reply operation. The outbound
-answer may therefore start a new provider-local thread. Provider thread IDs are
-evidence, not the continuity authority: this QSE passes only when the stable
-Dear Machine reference preserves the session across that change.
+Sendmux's HTTP send API rejects caller-supplied RFC `In-Reply-To` and
+`References` headers and has no distinct reply operation. A Dear Machine
+Sendmux response may therefore start a new provider-local thread. Conversation
+continuity is judged on the receiver side by the Gmail thread ID together with
+the stable Dear Machine conversation reference in the reply, even when the
+Sendmux provider-local thread changes.
 
 ## Teardown
 

@@ -67,6 +67,9 @@ protocol message, inspect applicable organization-, pod-, account-, and
 inbox-level `send`, `receive`, and `reply` policies. Refer to the transport
 runbook for provider-specific provisioning and policy scopes. Record which
 entries the run created so teardown never removes a pre-existing policy entry.
+For any protocol reusing a shared mailbox with no `accept_after` boundary,
+snapshot and locally skip every currently eligible message in the fresh
+database before sending anything; prefer a dedicated temporary mailbox.
 
 Before creating a temporary pair, confirm that the transport account can create
 two additional inboxes. If a provider limit rejects the second creation after
