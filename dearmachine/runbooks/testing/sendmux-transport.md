@@ -175,6 +175,27 @@ continuity is judged on the receiver side by the Gmail thread ID together with
 the stable Dear Machine conversation reference in the reply, even when the
 Sendmux provider-local thread changes.
 
+## Backend-native completion live probe
+
+Run the forced-delegation proof as a separate isolated live probe with a fresh
+database and disposable Git project. Give the project a deterministic failing
+test and one bounded implementation gap, such as implementing `slug.Normalize`
+so the provided tests pass. Require delegation so the coordinator cannot answer
+the task directly.
+
+Assert that exactly one Agent Manager ticket is created; its ticket envelope
+contains no close-file instruction; and it reaches `closed` with a nonempty,
+regular-file, mode-`0600` `ticket-close.md`. The close-file content must equal
+the backend's native final reply, and `completion_source == native_reply`.
+Confirm that only the expected project file changed and that the project tests
+pass.
+
+Cover the crashed/diagnostics path in a separate deterministic Agent Manager
+probe. Use a controlled backend that writes a stderr sentinel and exits
+nonzero, then assert the recorded failure reason, exit code or signal, and
+bounded stderr tail. Do not induce real-provider failures through the live
+mailbox to test diagnostics.
+
 ## Teardown
 
 Stop only the isolated client and confirm its PID file is gone. Preserve the
