@@ -390,7 +390,7 @@ func (m *Manager) Send(worker, requestPath, cwd string) (string, error) {
 }
 
 func ticketContent(id, worker, closePath string, request []byte) []byte {
-	return []byte(fmt.Sprintf("# Ticket: %s\n# Worker: %s\n# Close-Path: %s\n#\n# You have been delegated to complete the following work. Do your work\n# in the repository, then write your response (what you did, what changed,\n# any issues) to the Close-Path above. You do not need to run any other\n# commands or close any tickets. Just save your response to that path.\n\n%s", id, worker, closePath, request))
+	return []byte(fmt.Sprintf("# Ticket: %s\n# Worker: %s\n# Close-Path: %s\n#\n# You have been delegated to complete the following work. Do your work\n# in the repository and return a final response describing what you did,\n# what changed, and any issues.\n\n%s", id, worker, closePath, request))
 }
 
 func newTicketID(now time.Time) (string, error) {
@@ -463,7 +463,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		_, _ = io.Copy(io.Discard, stderr)
 		close(stderrDone)
 	}()
-	_, stdoutErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
+	observation, stdoutErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
 		latest, err := m.readMeta(id)
 		if err == nil {
 			latest.NativeSession = nativeSession
@@ -477,10 +477,37 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	if readErr == nil && latest.Status == StatusCancelled {
 		return waitErr
 	}
-	if _, err := os.Stat(filepath.Join(m.TicketDir(id), "ticket-close.md")); err == nil {
+	closePath := filepath.Join(m.TicketDir(id), "ticket-close.md")
+	if _, err := os.Stat(closePath); err == nil {
 		return m.finish(meta, StatusClosed)
 	}
+	if waitErr == nil && stdoutErr == nil && strings.TrimSpace(observation.Reply) != "" {
+		if err := publishReply(m.TicketDir(id), observation.Reply); err == nil || errors.Is(err, os.ErrExist) {
+			return m.finish(meta, StatusClosed)
+		}
+	}
 	return errors.Join(waitErr, stdoutErr, m.finish(meta, StatusCrashed))
+}
+
+func publishReply(ticketDir, reply string) error {
+	temporary, err := os.CreateTemp(ticketDir, ".ticket-close-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := io.WriteString(temporary, reply); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Link(temporaryPath, filepath.Join(ticketDir, "ticket-close.md"))
 }
 
 func (m *Manager) Status(id string) (Meta, error) {
