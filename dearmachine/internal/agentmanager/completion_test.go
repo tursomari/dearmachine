@@ -14,11 +14,12 @@ import (
 )
 
 type completionMeta struct {
-	Status        string `json:"status"`
-	FailureReason string `json:"failure_reason"`
-	StderrTail    string `json:"stderr_tail"`
-	ExitCode      *int   `json:"exit_code"`
-	Signal        string `json:"signal"`
+	Status           string `json:"status"`
+	CompletionSource string `json:"completion_source"`
+	FailureReason    string `json:"failure_reason"`
+	StderrTail       string `json:"stderr_tail"`
+	ExitCode         *int   `json:"exit_code"`
+	Signal           string `json:"signal"`
 }
 
 func readCompletionMeta(t *testing.T, manager *Manager, id string) completionMeta {
@@ -46,6 +47,9 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"n
 		t.Fatalf("Send: %v", err)
 	}
 	waitForStatus(t, manager, id, StatusClosed)
+	if meta := readCompletionMeta(t, manager, id); meta.CompletionSource != "worker_artifact" {
+		t.Fatalf("completion source = %q, want worker_artifact", meta.CompletionSource)
+	}
 	content, err := os.ReadFile(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
 	if err != nil {
 		t.Fatal(err)
@@ -62,12 +66,18 @@ func TestPublishedReplyHasPrivateMode(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitForStatus(t, manager, id, StatusClosed)
+	if meta := readCompletionMeta(t, manager, id); meta.CompletionSource != "native_reply" {
+		t.Fatalf("completion source = %q, want native_reply", meta.CompletionSource)
+	}
 	info, err := os.Stat(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("close artifact mode = %o, want 600", got)
+	}
+	if info.Size() == 0 {
+		t.Fatal("close artifact is empty")
 	}
 }
 
@@ -85,6 +95,9 @@ exit 7
 	}
 	waitForStatus(t, manager, id, StatusCrashed)
 	meta := readCompletionMeta(t, manager, id)
+	if meta.CompletionSource != "" {
+		t.Fatalf("completion source = %q, want empty", meta.CompletionSource)
+	}
 	if meta.FailureReason != "worker_exit" || meta.ExitCode == nil || *meta.ExitCode != 7 || meta.Signal != "" {
 		t.Fatalf("failure metadata = %+v", meta)
 	}
