@@ -470,7 +470,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		_, stdoutErr := io.Copy(io.Discard, stdout)
 		waitErr := command.Wait()
 		<-stderrDone
-		return errors.Join(err, stdoutErr, waitErr, m.fail(meta, "metadata_write_failed", stderrCapture.content, waitErr))
+		return errors.Join(err, stdoutErr, waitErr, m.failAfterExit(meta, "metadata_write_failed", stderrCapture.content, waitErr))
 	}
 	observation, consumeErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
 		latest, err := m.readMeta(id)
@@ -496,28 +496,28 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		if processWasSignaled(waitErr) {
 			reason = "worker_signal"
 		}
-		return errors.Join(waitErr, stdoutErr, m.fail(meta, reason, stderrCapture.content, waitErr))
+		return errors.Join(waitErr, stdoutErr, m.failAfterExit(meta, reason, stderrCapture.content, waitErr))
 	}
 	if stdoutErr != nil {
-		return errors.Join(stdoutErr, m.fail(meta, "output_failed", stderrCapture.content, nil))
+		return errors.Join(stdoutErr, m.failAfterExit(meta, "output_failed", stderrCapture.content, nil))
 	}
 	closePath := filepath.Join(m.TicketDir(id), "ticket-close.md")
 	if err := readableFile(closePath); err == nil {
 		return m.finish(meta, StatusClosed)
 	} else if !os.IsNotExist(err) {
-		return errors.Join(err, m.fail(meta, "close_artifact_unreadable", stderrCapture.content, nil))
+		return errors.Join(err, m.failAfterExit(meta, "close_artifact_unreadable", stderrCapture.content, nil))
 	}
 	if strings.TrimSpace(observation.Reply) == "" {
-		return m.fail(meta, "empty_reply", stderrCapture.content, nil)
+		return m.failAfterExit(meta, "empty_reply", stderrCapture.content, nil)
 	}
 	if err := publishReply(m.TicketDir(id), observation.Reply); err != nil {
 		if errors.Is(err, os.ErrExist) && readableFile(closePath) == nil {
 			return m.finish(meta, StatusClosed)
 		}
-		return errors.Join(err, m.fail(meta, "publish_failed", stderrCapture.content, nil))
+		return errors.Join(err, m.failAfterExit(meta, "publish_failed", stderrCapture.content, nil))
 	}
 	if err := readableFile(closePath); err != nil {
-		return errors.Join(err, m.fail(meta, "publish_failed", stderrCapture.content, nil))
+		return errors.Join(err, m.failAfterExit(meta, "publish_failed", stderrCapture.content, nil))
 	}
 	return m.finish(meta, StatusClosed)
 }
@@ -758,6 +758,14 @@ func (m *Manager) writeMeta(meta Meta) error {
 }
 
 func (m *Manager) finish(meta Meta, status string) error {
+	if status != StatusCancelled {
+		latest, err := m.readMeta(meta.TicketID)
+		if err == nil {
+			if latest.Status == StatusCancelled {
+				return nil
+			}
+		}
+	}
 	meta.Status = status
 	meta.FinishedAt = m.Now()
 	return m.writeMeta(meta)
@@ -769,6 +777,21 @@ func (m *Manager) fail(meta Meta, reason string, stderr []byte, processErr error
 	meta.ExitCode = nil
 	meta.Signal = ""
 	recordProcessFailure(&meta, processErr)
+	return m.finish(meta, StatusCrashed)
+}
+
+func (m *Manager) failAfterExit(meta Meta, reason string, stderr []byte, processErr error) error {
+	if processErr == nil {
+		exitCode := 0
+		meta.ExitCode = &exitCode
+	}
+	meta.FailureReason = reason
+	meta.StderrTail = string(stderr)
+	meta.Signal = ""
+	if processErr != nil {
+		meta.ExitCode = nil
+		recordProcessFailure(&meta, processErr)
+	}
 	return m.finish(meta, StatusCrashed)
 }
 
