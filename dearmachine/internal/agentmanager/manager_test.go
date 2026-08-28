@@ -252,6 +252,40 @@ printf '%s\n' 'worker complete' > "$close_path"
 	}
 }
 
+func TestSupervisorPublishesNativeReply(t *testing.T) {
+	manager := testManager(t, `
+cat >/dev/null
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"native worker reply"}}'
+`)
+	id, err := manager.Send("codex", writeRequest(t), t.TempDir())
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	meta := waitForStatus(t, manager, id, StatusClosed)
+	content, err := os.ReadFile(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
+	if err != nil {
+		t.Fatalf("read close ticket: %v", err)
+	}
+	if string(content) != "native worker reply" {
+		t.Fatalf("close ticket = %q", content)
+	}
+	if meta.Status != StatusClosed {
+		t.Fatalf("status = %q", meta.Status)
+	}
+}
+
+func TestTicketContentDoesNotInstructWorkerToWriteClosePath(t *testing.T) {
+	content := string(ticketContent("ticket-1", "codex", "/tickets/ticket-1/ticket-close.md", []byte("do work\n")))
+	if !strings.Contains(content, "# Close-Path: /tickets/ticket-1/ticket-close.md") {
+		t.Fatalf("ticket envelope lost Close-Path compatibility header: %s", content)
+	}
+	for _, forbidden := range []string{"write your response", "Close-Path above", "save your response to that path"} {
+		if strings.Contains(content, forbidden) {
+			t.Errorf("ticket content still contains %q: %s", forbidden, content)
+		}
+	}
+}
+
 func TestTicketCrash(t *testing.T) {
 	manager := testManager(t, `printf '%s\n' '{"type":"thread.started","thread_id":"native-crash"}'; exit 2`)
 	request := writeRequest(t)
