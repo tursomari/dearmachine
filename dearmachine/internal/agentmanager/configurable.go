@@ -60,7 +60,8 @@ func (c *ConfigurableAdapter) ConsumeStdout(stdout io.Reader, foundSession func(
 	case "plain":
 		return consumePlain(stdout)
 	default:
-		return Observation{}, fmt.Errorf("unknown output format %q", c.outputFormat)
+		_, drainErr := io.Copy(io.Discard, stdout)
+		return Observation{}, errors.Join(fmt.Errorf("unknown output format %q", c.outputFormat), drainErr)
 	}
 }
 

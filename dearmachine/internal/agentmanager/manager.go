@@ -34,6 +34,10 @@ type Meta struct {
 	PID           int       `json:"pid"`
 	NativeSession string    `json:"native_session_id,omitempty"`
 	Status        string    `json:"status"`
+	FailureReason string    `json:"failure_reason,omitempty"`
+	StderrTail    string    `json:"stderr_tail,omitempty"`
+	ExitCode      *int      `json:"exit_code,omitempty"`
+	Signal        string    `json:"signal,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	StartedAt     time.Time `json:"started_at,omitempty"`
 	FinishedAt    time.Time `json:"finished_at,omitempty"`
@@ -422,48 +426,52 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	}
 	adapter, ok := m.Adapters[meta.Worker]
 	if !ok {
-		return m.finish(meta, StatusCrashed)
+		err := fmt.Errorf("worker adapter %q is missing", meta.Worker)
+		return errors.Join(err, m.fail(meta, "missing_adapter", nil, nil))
 	}
 	openPath := filepath.Join(m.TicketDir(id), "ticket-open.md")
 	request, err := os.ReadFile(openPath)
 	if err != nil {
-		_ = m.finish(meta, StatusCrashed)
-		return err
+		return errors.Join(err, m.fail(meta, "open_ticket_failed", nil, nil))
 	}
 	launch, err := adapter.Prepare(ctx, meta.CWD, m.TicketDir(id))
 	if err != nil {
-		_ = m.finish(meta, StatusCrashed)
-		return err
+		return errors.Join(err, m.fail(meta, "prepare_failed", nil, nil))
 	}
 	command := launch.Command
+	if command == nil {
+		err := errors.New("adapter returned a nil command")
+		return errors.Join(err, m.fail(meta, "prepare_failed", nil, nil))
+	}
 	command.Stdin = strings.NewReader(string(request))
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		_ = m.finish(meta, StatusCrashed)
-		return err
+		return errors.Join(err, m.fail(meta, "stdout_pipe_failed", nil, nil))
 	}
 	stderr, err := command.StderrPipe()
 	if err != nil {
-		_ = m.finish(meta, StatusCrashed)
-		return err
+		return errors.Join(err, m.fail(meta, "stderr_pipe_failed", nil, nil))
 	}
 	if err := command.Start(); err != nil {
-		_ = m.finish(meta, StatusCrashed)
-		return err
+		return errors.Join(err, m.fail(meta, "start_failed", nil, nil))
 	}
 	meta.PID = command.Process.Pid
 	meta.NativeSession = launch.NativeSession
 	meta.StartedAt = m.Now()
-	if err := m.writeMeta(meta); err != nil {
-		_ = command.Process.Kill()
-		return err
-	}
+	stderrCapture := &tailWriter{limit: 64 * 1024}
 	stderrDone := make(chan struct{})
 	go func() {
-		_, _ = io.Copy(io.Discard, stderr)
+		_, _ = io.Copy(stderrCapture, stderr)
 		close(stderrDone)
 	}()
-	observation, stdoutErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
+	if err := m.writeMeta(meta); err != nil {
+		_ = command.Process.Kill()
+		_, stdoutErr := io.Copy(io.Discard, stdout)
+		waitErr := command.Wait()
+		<-stderrDone
+		return errors.Join(err, stdoutErr, waitErr, m.fail(meta, "metadata_write_failed", stderrCapture.content, waitErr))
+	}
+	observation, consumeErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
 		latest, err := m.readMeta(id)
 		if err == nil {
 			latest.NativeSession = nativeSession
@@ -471,22 +479,62 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 			_ = m.writeMeta(latest)
 		}
 	})
+	_, drainErr := io.Copy(io.Discard, stdout)
+	stdoutErr := errors.Join(consumeErr, drainErr)
 	waitErr := command.Wait()
 	<-stderrDone
 	latest, readErr := m.readMeta(id)
 	if readErr == nil && latest.Status == StatusCancelled {
 		return waitErr
 	}
-	closePath := filepath.Join(m.TicketDir(id), "ticket-close.md")
-	if _, err := os.Stat(closePath); err == nil {
-		return m.finish(meta, StatusClosed)
+	if readErr == nil {
+		meta = latest
 	}
-	if waitErr == nil && stdoutErr == nil && strings.TrimSpace(observation.Reply) != "" {
-		if err := publishReply(m.TicketDir(id), observation.Reply); err == nil || errors.Is(err, os.ErrExist) {
+	if waitErr != nil {
+		reason := "worker_exit"
+		if processWasSignaled(waitErr) {
+			reason = "worker_signal"
+		}
+		return errors.Join(waitErr, stdoutErr, m.fail(meta, reason, stderrCapture.content, waitErr))
+	}
+	if stdoutErr != nil {
+		return errors.Join(stdoutErr, m.fail(meta, "output_failed", stderrCapture.content, nil))
+	}
+	closePath := filepath.Join(m.TicketDir(id), "ticket-close.md")
+	if err := readableFile(closePath); err == nil {
+		return m.finish(meta, StatusClosed)
+	} else if !os.IsNotExist(err) {
+		return errors.Join(err, m.fail(meta, "close_artifact_unreadable", stderrCapture.content, nil))
+	}
+	if strings.TrimSpace(observation.Reply) == "" {
+		return m.fail(meta, "empty_reply", stderrCapture.content, nil)
+	}
+	if err := publishReply(m.TicketDir(id), observation.Reply); err != nil {
+		if errors.Is(err, os.ErrExist) && readableFile(closePath) == nil {
 			return m.finish(meta, StatusClosed)
 		}
+		return errors.Join(err, m.fail(meta, "publish_failed", stderrCapture.content, nil))
 	}
-	return errors.Join(waitErr, stdoutErr, m.finish(meta, StatusCrashed))
+	if err := readableFile(closePath); err != nil {
+		return errors.Join(err, m.fail(meta, "publish_failed", stderrCapture.content, nil))
+	}
+	return m.finish(meta, StatusClosed)
+}
+
+func readableFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("close artifact is not a regular file")
+	}
+	return nil
 }
 
 func publishReply(ticketDir, reply string) error {
@@ -511,18 +559,7 @@ func publishReply(ticketDir, reply string) error {
 }
 
 func (m *Manager) Status(id string) (Meta, error) {
-	meta, err := m.readMeta(id)
-	if err != nil {
-		return Meta{}, err
-	}
-	if meta.Status == StatusOpen {
-		if _, err := os.Stat(filepath.Join(m.TicketDir(id), "ticket-close.md")); err == nil {
-			meta.Status = StatusClosed
-		} else if meta.PID != 0 && !processAlive(meta.PID) {
-			meta.Status = StatusCrashed
-		}
-	}
-	return meta, nil
+	return m.readMeta(id)
 }
 
 func (m *Manager) View(id string, output io.Writer) error {
@@ -715,6 +752,40 @@ func (m *Manager) finish(meta Meta, status string) error {
 	meta.Status = status
 	meta.FinishedAt = m.Now()
 	return m.writeMeta(meta)
+}
+
+func (m *Manager) fail(meta Meta, reason string, stderr []byte, processErr error) error {
+	meta.FailureReason = reason
+	meta.StderrTail = string(stderr)
+	meta.ExitCode = nil
+	meta.Signal = ""
+	recordProcessFailure(&meta, processErr)
+	return m.finish(meta, StatusCrashed)
+}
+
+func processWasSignaled(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	return ok && status.Signaled()
+}
+
+func recordProcessFailure(meta *Meta, err error) {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	if ok && status.Signaled() {
+		meta.Signal = status.Signal().String()
+		return
+	}
+	exitCode := exitErr.ExitCode()
+	if exitCode >= 0 {
+		meta.ExitCode = &exitCode
+	}
 }
 
 func processAlive(pid int) bool {
