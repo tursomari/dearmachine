@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type completionMeta struct {
@@ -184,4 +185,165 @@ func (prepareAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) (Observati
 
 func commandLaunch(ctx context.Context, script string) Launch {
 	return Launch{Command: exec.CommandContext(ctx, "sh", "-c", script)}
+}
+
+func TestSupervisorPersistsEarlyFailureReasons(t *testing.T) {
+	tests := []struct {
+		name    string
+		reason  string
+		adapter Adapter
+		missing bool
+	}{
+		{
+			name:    "missing adapter",
+			reason:  "missing_adapter",
+			missing: true,
+		},
+		{
+			name:   "prepare",
+			reason: "prepare_failed",
+			adapter: prepareAdapter{prepare: func(context.Context) (Launch, error) {
+				return Launch{}, errors.New("prepare exploded")
+			}},
+		},
+		{
+			name:   "stdout pipe",
+			reason: "stdout_pipe_failed",
+			adapter: prepareAdapter{prepare: func(ctx context.Context) (Launch, error) {
+				launch := commandLaunch(ctx, "exit 0")
+				launch.Command.Stdout = io.Discard
+				return launch, nil
+			}},
+		},
+		{
+			name:   "stderr pipe",
+			reason: "stderr_pipe_failed",
+			adapter: prepareAdapter{prepare: func(ctx context.Context) (Launch, error) {
+				launch := commandLaunch(ctx, "exit 0")
+				launch.Command.Stderr = io.Discard
+				return launch, nil
+			}},
+		},
+		{
+			name:   "start",
+			reason: "start_failed",
+			adapter: prepareAdapter{prepare: func(ctx context.Context) (Launch, error) {
+				return Launch{Command: exec.CommandContext(ctx, "/definitely/not/a/worker")}, nil
+			}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, id := superviseFixture(t)
+			if test.missing {
+				delete(manager.Adapters, "codex")
+			} else if test.adapter != nil {
+				manager.Adapters["codex"] = test.adapter
+			}
+			if err := manager.Supervise(context.Background(), id); err == nil {
+				t.Fatal("Supervise unexpectedly succeeded")
+			}
+			meta := readCompletionMeta(t, manager, id)
+			if meta.Status != StatusCrashed || meta.FailureReason != test.reason {
+				t.Fatalf("failure metadata = %+v", meta)
+			}
+		})
+	}
+}
+
+func TestSupervisorBoundsPersistedStderrTail(t *testing.T) {
+	manager := testManager(t, `cat >/dev/null; head -c 131072 /dev/zero | tr '\000' x >&2; printf tail-marker >&2; exit 9`)
+	id, err := manager.Send("codex", writeRequest(t), t.TempDir())
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForStatus(t, manager, id, StatusCrashed)
+	meta := readCompletionMeta(t, manager, id)
+	if len(meta.StderrTail) != 64*1024 || !strings.HasSuffix(meta.StderrTail, "tail-marker") {
+		t.Fatalf("stderr tail length = %d, suffix present = %v", len(meta.StderrTail), strings.HasSuffix(meta.StderrTail, "tail-marker"))
+	}
+}
+
+func TestSupervisorPersistsInitialMetadataWriteFailure(t *testing.T) {
+	manager, id := superviseFixture(t)
+	manager.Adapters["codex"] = prepareAdapter{prepare: func(ctx context.Context) (Launch, error) {
+		return commandLaunch(ctx, `cat >/dev/null; exec sleep 30`), nil
+	}}
+	failNextStartedWrite := true
+	manager.beforeWriteMeta = func(meta Meta) error {
+		if failNextStartedWrite && meta.PID != 0 {
+			failNextStartedWrite = false
+			return errors.New("metadata storage unavailable")
+		}
+		return nil
+	}
+	if err := manager.Supervise(context.Background(), id); err == nil {
+		t.Fatal("Supervise unexpectedly succeeded")
+	}
+	meta := readCompletionMeta(t, manager, id)
+	if meta.Status != StatusCrashed || meta.FailureReason != "metadata_write_failed" || meta.Signal == "" {
+		t.Fatalf("failure metadata = %+v", meta)
+	}
+}
+
+func TestAcceptedCancellationWinsAndIsIdempotent(t *testing.T) {
+	manager := testManager(t, `cat >/dev/null; exec sleep 30`)
+	id, err := manager.Send("codex", writeRequest(t), t.TempDir())
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForPID(t, manager, id)
+	if err := manager.Cancel(id); err != nil {
+		t.Fatalf("first Cancel: %v", err)
+	}
+	first, err := manager.Status(id)
+	if err != nil || first.Status != StatusCancelled {
+		t.Fatalf("status after cancellation = %+v, %v", first, err)
+	}
+	if err := manager.Cancel(id); err != nil {
+		t.Fatalf("second Cancel: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	second, err := manager.Status(id)
+	if err != nil || second.Status != StatusCancelled || second.FinishedAt != first.FinishedAt {
+		t.Fatalf("status after repeated cancellation = %+v, %v; first = %+v", second, err, first)
+	}
+}
+
+func TestCancelAfterTerminalCompletionIsNoOp(t *testing.T) {
+	manager := testManager(t, `cat >/dev/null; printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'`)
+	id, err := manager.Send("codex", writeRequest(t), t.TempDir())
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	closed := waitForStatus(t, manager, id, StatusClosed)
+	if err := manager.Cancel(id); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	after, err := manager.Status(id)
+	if err != nil || after.Status != StatusClosed || after.FinishedAt != closed.FinishedAt {
+		t.Fatalf("status after Cancel = %+v, %v; closed = %+v", after, err, closed)
+	}
+}
+
+func superviseFixture(t *testing.T) (*Manager, string) {
+	t.Helper()
+	manager := New(filepath.Join(t.TempDir(), "agent-manager"))
+	id := "ticket-1"
+	if err := os.MkdirAll(manager.TicketDir(id), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manager.TicketDir(id), "ticket-open.md"), []byte("request\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.writeMeta(Meta{
+		TicketID:  id,
+		Worker:    "codex",
+		Status:    StatusOpen,
+		CreatedAt: manager.Now(),
+		CWD:       t.TempDir(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return manager, id
 }
