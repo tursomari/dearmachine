@@ -22,26 +22,29 @@ import (
 )
 
 const (
-	StatusOpen      = "open"
-	StatusClosed    = "closed"
-	StatusCrashed   = "crashed"
-	StatusCancelled = "cancelled"
+	StatusOpen                     = "open"
+	StatusClosed                   = "closed"
+	StatusCrashed                  = "crashed"
+	StatusCancelled                = "cancelled"
+	CompletionSourceNativeReply    = "native_reply"
+	CompletionSourceWorkerArtifact = "worker_artifact"
 )
 
 type Meta struct {
-	TicketID      string    `json:"ticket_id"`
-	Worker        string    `json:"worker"`
-	PID           int       `json:"pid"`
-	NativeSession string    `json:"native_session_id,omitempty"`
-	Status        string    `json:"status"`
-	FailureReason string    `json:"failure_reason,omitempty"`
-	StderrTail    string    `json:"stderr_tail,omitempty"`
-	ExitCode      *int      `json:"exit_code,omitempty"`
-	Signal        string    `json:"signal,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	StartedAt     time.Time `json:"started_at,omitempty"`
-	FinishedAt    time.Time `json:"finished_at,omitempty"`
-	CWD           string    `json:"cwd"`
+	TicketID         string    `json:"ticket_id"`
+	Worker           string    `json:"worker"`
+	PID              int       `json:"pid"`
+	NativeSession    string    `json:"native_session_id,omitempty"`
+	Status           string    `json:"status"`
+	CompletionSource string    `json:"completion_source,omitempty"`
+	FailureReason    string    `json:"failure_reason,omitempty"`
+	StderrTail       string    `json:"stderr_tail,omitempty"`
+	ExitCode         *int      `json:"exit_code,omitempty"`
+	Signal           string    `json:"signal,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	StartedAt        time.Time `json:"started_at,omitempty"`
+	FinishedAt       time.Time `json:"finished_at,omitempty"`
+	CWD              string    `json:"cwd"`
 }
 
 type Adapter interface {
@@ -503,6 +506,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	}
 	closePath := filepath.Join(m.TicketDir(id), "ticket-close.md")
 	if err := readableFile(closePath); err == nil {
+		meta.CompletionSource = CompletionSourceWorkerArtifact
 		return m.finish(meta, StatusClosed)
 	} else if !os.IsNotExist(err) {
 		return errors.Join(err, m.failAfterExit(meta, "close_artifact_unreadable", stderrCapture.content, nil))
@@ -512,6 +516,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	}
 	if err := publishReply(m.TicketDir(id), observation.Reply); err != nil {
 		if errors.Is(err, os.ErrExist) && readableFile(closePath) == nil {
+			meta.CompletionSource = CompletionSourceWorkerArtifact
 			return m.finish(meta, StatusClosed)
 		}
 		return errors.Join(err, m.failAfterExit(meta, "publish_failed", stderrCapture.content, nil))
@@ -519,6 +524,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	if err := readableFile(closePath); err != nil {
 		return errors.Join(err, m.failAfterExit(meta, "publish_failed", stderrCapture.content, nil))
 	}
+	meta.CompletionSource = CompletionSourceNativeReply
 	return m.finish(meta, StatusClosed)
 }
 
