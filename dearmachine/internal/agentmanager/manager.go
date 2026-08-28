@@ -212,6 +212,7 @@ type Manager struct {
 	ExecutablePath   func() (string, error)
 	LaunchSupervisor func(string) error
 	Now              func() time.Time
+	beforeWriteMeta  func(Meta) error
 }
 
 type HealthResult struct {
@@ -585,12 +586,15 @@ func (m *Manager) Cancel(id string) error {
 	if meta.Status != StatusOpen {
 		return nil
 	}
+	if err := m.finish(meta, StatusCancelled); err != nil {
+		return err
+	}
 	if meta.PID != 0 && processAlive(meta.PID) {
-		if err := syscall.Kill(meta.PID, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err := syscall.Kill(meta.PID, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("cancel worker: %w", err)
 		}
 	}
-	return m.finish(meta, StatusCancelled)
+	return nil
 }
 
 func (m *Manager) CancelAll() error {
@@ -738,6 +742,11 @@ func (m *Manager) readMeta(id string) (Meta, error) {
 }
 
 func (m *Manager) writeMeta(meta Meta) error {
+	if m.beforeWriteMeta != nil {
+		if err := m.beforeWriteMeta(meta); err != nil {
+			return fmt.Errorf("write ticket metadata: %w", err)
+		}
+	}
 	content, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
