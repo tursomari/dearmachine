@@ -516,7 +516,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		return errors.Join(stdoutErr, m.failAfterExit(meta, StatusFailed, "output_failed", stderrCapture.content, nil))
 	}
 	closePath := filepath.Join(m.TicketDir(id), "ticket-close.md")
-	if err := readableFile(closePath); err == nil {
+	if err := secureCloseArtifact(closePath); err == nil {
 		meta.CompletionSource = CompletionSourceWorkerArtifact
 		return m.finish(meta, StatusClosed)
 	} else if !os.IsNotExist(err) {
@@ -526,20 +526,27 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		return m.failAfterExit(meta, StatusIncomplete, "empty_reply", stderrCapture.content, nil)
 	}
 	if err := publishReply(m.TicketDir(id), observation.Reply); err != nil {
-		if errors.Is(err, os.ErrExist) && readableFile(closePath) == nil {
+		if errors.Is(err, os.ErrExist) && secureCloseArtifact(closePath) == nil {
 			meta.CompletionSource = CompletionSourceWorkerArtifact
 			return m.finish(meta, StatusClosed)
 		}
 		return errors.Join(err, m.failAfterExit(meta, StatusFailed, "publish_failed", stderrCapture.content, nil))
 	}
-	if err := readableFile(closePath); err != nil {
+	if err := secureCloseArtifact(closePath); err != nil {
 		return errors.Join(err, m.failAfterExit(meta, StatusFailed, "publish_failed", stderrCapture.content, nil))
 	}
 	meta.CompletionSource = CompletionSourceNativeReply
 	return m.finish(meta, StatusClosed)
 }
 
-func readableFile(path string) error {
+func secureCloseArtifact(path string) error {
+	linkInfo, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !linkInfo.Mode().IsRegular() {
+		return fmt.Errorf("close artifact is not a regular file")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -551,6 +558,14 @@ func readableFile(path string) error {
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("close artifact is not a regular file")
+	}
+	if info.Size() > maxTicketCloseBytes {
+		return fmt.Errorf("close artifact exceeds %d-byte limit", maxTicketCloseBytes)
+	}
+	if info.Mode().Perm() != 0o600 {
+		if err := file.Chmod(0o600); err != nil {
+			return fmt.Errorf("set private close artifact mode: %w", err)
+		}
 	}
 	return nil
 }

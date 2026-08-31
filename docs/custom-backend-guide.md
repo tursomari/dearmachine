@@ -221,7 +221,9 @@ Your executable should return a nonempty final answer through its configured
 stdout format. After a successful exit, Agent Manager atomically publishes
 that native answer to `ticket-close.md` with private permissions and a bounded
 size. A backend may instead write `ticket-close.md` itself; Agent Manager
-preserves that compatibility artifact and never overwrites it.
+preserves that compatibility artifact and never overwrites its content. Before
+accepting it, the manager requires a regular, size-bounded file and normalizes
+its permissions to `0600`.
 
 The completion instructions appear after the delegated request and take
 precedence over request wording such as `read-only`, `reply only`, or `do not

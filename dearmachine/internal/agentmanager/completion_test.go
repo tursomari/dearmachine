@@ -57,6 +57,37 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"n
 	if string(content) != "legacy response\nwith final newline\n" {
 		t.Fatalf("legacy close artifact was changed: %q", content)
 	}
+	info, err := os.Stat(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("legacy close artifact mode = %v; want 0600", info.Mode().Perm())
+	}
+}
+
+func TestOversizedWorkerArtifactFailsWithoutOverwrite(t *testing.T) {
+	manager := testManager(t, `
+request=$(cat)
+close_path=$(printf '%s\n' "$request" | sed -n 's/^# Close-Path: //p')
+head -c 65537 /dev/zero | tr '\000' x > "$close_path"
+`)
+	id, err := manager.Send("codex", writeRequest(t), t.TempDir())
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForStatus(t, manager, id, StatusFailed)
+	meta := readCompletionMeta(t, manager, id)
+	if meta.FailureReason != "close_artifact_unreadable" {
+		t.Fatalf("failure metadata = %+v", meta)
+	}
+	info, err := os.Stat(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != maxTicketCloseBytes+1 {
+		t.Fatalf("worker artifact size = %v; content was overwritten", info.Size())
+	}
 }
 
 func TestPublishedReplyHasPrivateMode(t *testing.T) {
