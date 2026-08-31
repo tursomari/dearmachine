@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/mail"
-	"path/filepath"
 	"strings"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -73,7 +72,7 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 				return fmt.Errorf("pair email %s is already registered as %s", request.email, existing.ID)
 			}
 		}
-		if err := initializeDefaultEntryPoint(context.Background(), cfg, deps, output); err != nil {
+		if err := initializeSelectedEntryPoint(context.Background(), cfg, deps, output); err != nil {
 			return err
 		}
 		inbox, err := resolveCreateInbox(context.Background(), request, registry, deps)
@@ -144,17 +143,10 @@ func parseUpRunConfig(args []string, deps dependencies) (config, error) {
 	return parseConfig(args, output)
 }
 
-func initializeDefaultEntryPoint(ctx context.Context, cfg config, deps dependencies, output io.Writer) error {
+func initializeSelectedEntryPoint(ctx context.Context, cfg config, deps dependencies, output io.Writer) error {
 	repoPath, err := resolvePath(cfg.entryPointRepo, deps.userHomeDir)
 	if err != nil {
 		return err
-	}
-	defaultPath, err := resolvePath(defaultEntryPointRepo, deps.userHomeDir)
-	if err != nil {
-		return err
-	}
-	if filepath.Clean(repoPath) != filepath.Clean(defaultPath) {
-		return nil
 	}
 	initialize := deps.initializeEntryPoint
 	if initialize == nil {
@@ -165,12 +157,12 @@ func initializeDefaultEntryPoint(ctx context.Context, cfg config, deps dependenc
 		AgentBinary: cfg.agentBinary,
 	})
 	if err != nil {
-		return fmt.Errorf("initialize default entry point: %w", err)
+		return fmt.Errorf("initialize selected entry point: %w", err)
 	}
 	if result.AlreadyInitialized {
 		return nil
 	}
-	_, err = fmt.Fprintf(output, "Initialized default entry point: %s\n", result.RepoPath)
+	_, err = fmt.Fprintf(output, "Initialized entry point: %s\n", result.RepoPath)
 	return err
 }
 
@@ -379,8 +371,8 @@ and containers. --pair is repeatable and narrows only this invocation; it never
 changes global state. --create is the sole creation path. Sharing an inbox is always
 intentional and requires --inbox. Pair creation asks the selected transport to
 authorize the correspondent before publishing local pair state. It also initializes
-the default entry point when absent; custom entry points remain explicit init
-operations. Creation requires the daemon to be down.
+the selected entry point when absent and leaves existing Git repositories unchanged.
+Creation requires the daemon to be down.
 `)
 	return err
 }

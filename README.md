@@ -48,8 +48,9 @@ dearmachine up --create \
   --magnifica-humanitas
 ```
 
-On the first run, `up --create` also initializes the default entry-point
-repository if it is absent. It then records one isolated pair database and
+On the first run, `up --create` also initializes the selected entry-point
+repository if it is absent. With no flag, that is the default repository at
+`~/.dearmachine/entrypoint/main`. It then records one isolated pair database and
 starts all registered pairs in one background client. Inspect or stop it with:
 
 ```bash

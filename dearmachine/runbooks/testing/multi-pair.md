@@ -23,9 +23,10 @@ Create pairs only with `dearmachine up --create` while the daemon is stopped:
 
 OpenMail and Sendmux support exact adoption but not provider provisioning.
 Incomplete non-interactive creation must fail before any provider mutation.
-First-pair creation initializes the missing default entry-point repository
-before provider mutation. Existing default repositories remain untouched, and
-custom entry-point paths are never initialized implicitly.
+First-pair creation initializes the missing selected entry-point repository
+before provider mutation. Existing Git repositories remain untouched. Unsafe
+files, symlinks, and non-empty non-Git directories fail before provider
+mutation.
 
 ## Isolated setup
 

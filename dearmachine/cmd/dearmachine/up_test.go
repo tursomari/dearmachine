@@ -87,12 +87,12 @@ func TestUpCreateAutoInitializesDefaultEntryPointBeforeProviderMutation(t *testi
 	if err != nil {
 		t.Fatalf("run up --create: %v", err)
 	}
-	if !initialized || !strings.Contains(output.String(), "Initialized default entry point") {
+	if !initialized || !strings.Contains(output.String(), "Initialized entry point") {
 		t.Fatalf("automatic initialization = %v, output = %q", initialized, output.String())
 	}
 }
 
-func TestUpCreateInitializationFailurePrecedesProviderMutation(t *testing.T) {
+func TestUpCreateSelectedInitializationFailurePrecedesProviderMutation(t *testing.T) {
 	deps := testDependencies(t, &fakeApplication{})
 	deps.isInteractive = func(io.Reader) bool { return false }
 	deps.initializeEntryPoint = func(context.Context, entrypoint.Options) (entrypoint.Result, error) {
@@ -105,8 +105,9 @@ func TestUpCreateInitializationFailurePrecedesProviderMutation(t *testing.T) {
 	}
 	err := run([]string{
 		"up", "--create", "--email", "user@example.test", "--new-inbox", "--transport", "agentmail", "--once",
+		"--entry-point-repo", filepath.Join(t.TempDir(), "selected-entrypoint"),
 	}, func(string) string { return "" }, deps)
-	if err == nil || !strings.Contains(err.Error(), "initialize default entry point") ||
+	if err == nil || !strings.Contains(err.Error(), "initialize selected entry point") ||
 		!strings.Contains(err.Error(), "injected bootstrap failure") || mutated {
 		t.Fatalf("initialization error = %v, provider mutated = %v", err, mutated)
 	}
@@ -116,15 +117,11 @@ func TestUpCreateInitializationFailurePrecedesProviderMutation(t *testing.T) {
 	}
 }
 
-func TestUpCreateLeavesExistingDefaultEntryPointUntouched(t *testing.T) {
+func TestUpCreateLeavesExistingSelectedCustomEntryPointUntouched(t *testing.T) {
 	deps := testDependencies(t, &fakeApplication{})
 	deps.isInteractive = func(io.Reader) bool { return false }
 	deps.initializeEntryPoint = nil
-	home, err := deps.userHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := filepath.Join(home, ".dearmachine", "entrypoint", "main")
+	repo := filepath.Join(t.TempDir(), "custom-entrypoint")
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +133,7 @@ func TestUpCreateLeavesExistingDefaultEntryPointUntouched(t *testing.T) {
 	deps.stdout = &output
 	if err := run([]string{
 		"up", "--create", "--email", "user@example.test", "--new-inbox", "--transport", "agentmail", "--once",
+		"--entry-point-repo", repo,
 	}, func(string) string { return "" }, deps); err != nil {
 		t.Fatalf("run up --create: %v", err)
 	}
@@ -143,24 +141,59 @@ func TestUpCreateLeavesExistingDefaultEntryPointUntouched(t *testing.T) {
 	if err != nil || string(contents) != "existing entry point\n" {
 		t.Fatalf("existing entry point changed: %q, %v", contents, err)
 	}
-	if strings.Contains(output.String(), "Initialized default entry point") {
+	if strings.Contains(output.String(), "Initialized entry point") {
 		t.Fatalf("existing initialization reported as new: %q", output.String())
 	}
 }
 
-func TestUpCreateDoesNotAutoInitializeCustomEntryPoint(t *testing.T) {
+func TestUpCreateAutoInitializesSelectedCustomEntryPointBeforeProviderMutation(t *testing.T) {
 	deps := testDependencies(t, &fakeApplication{})
 	deps.isInteractive = func(io.Reader) bool { return false }
-	deps.initializeEntryPoint = func(context.Context, entrypoint.Options) (entrypoint.Result, error) {
-		t.Fatal("custom entry point was initialized automatically")
-		return entrypoint.Result{}, nil
-	}
 	customRepo := filepath.Join(t.TempDir(), "custom-entrypoint")
+	initialized := false
+	deps.initializeEntryPoint = func(_ context.Context, options entrypoint.Options) (entrypoint.Result, error) {
+		if options.RepoPath != customRepo {
+			t.Fatalf("selected initialization path = %q, want %q", options.RepoPath, customRepo)
+		}
+		initialized = true
+		return entrypoint.Result{RepoPath: customRepo}, nil
+	}
+	deps.provisionInbox = func(_ context.Context, transport string) (client.Inbox, error) {
+		if !initialized {
+			t.Fatal("provider mutation happened before selected entry-point initialization")
+		}
+		return client.Inbox{Transport: transport, ProviderID: "provisioned-inbox", Address: "machine@example.test"}, nil
+	}
 	if err := run([]string{
 		"up", "--create", "--email", "user@example.test", "--new-inbox", "--transport", "agentmail",
 		"--entry-point-repo", customRepo, "--once",
 	}, func(string) string { return "" }, deps); err != nil {
 		t.Fatalf("run with custom entry point: %v", err)
+	}
+	if !initialized {
+		t.Fatal("selected custom entry point was not initialized")
+	}
+}
+
+func TestUpCreateRejectsUnsafeSelectedEntryPointBeforeProviderMutation(t *testing.T) {
+	deps := testDependencies(t, &fakeApplication{})
+	deps.isInteractive = func(io.Reader) bool { return false }
+	deps.initializeEntryPoint = nil
+	customRepo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(customRepo, "user-file.txt"), []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutated := false
+	deps.provisionInbox = func(context.Context, string) (client.Inbox, error) {
+		mutated = true
+		return client.Inbox{}, nil
+	}
+	err := run([]string{
+		"up", "--create", "--email", "user@example.test", "--new-inbox", "--transport", "agentmail",
+		"--entry-point-repo", customRepo, "--once",
+	}, func(string) string { return "" }, deps)
+	if err == nil || !strings.Contains(err.Error(), "not a Git repository, and is not empty") || mutated {
+		t.Fatalf("unsafe selected path error = %v, provider mutated = %v", err, mutated)
 	}
 }
 
@@ -362,7 +395,7 @@ func TestPublicHelpDescribesAllPairsAndCreation(t *testing.T) {
 	if err := run([]string{"up", "--help"}, func(string) string { return "" }, dependencies{stdout: &output}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"starts every registered pair", "--pair", "--create", "--new-inbox", "--inbox", "default entry point when absent", "authorize the correspondent"} {
+	for _, want := range []string{"starts every registered pair", "--pair", "--create", "--new-inbox", "--inbox", "selected entry point when absent", "authorize the correspondent"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help missing %q:\n%s", want, output.String())
 		}

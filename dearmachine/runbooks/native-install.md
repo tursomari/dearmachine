@@ -87,7 +87,7 @@ environment.
 ## Create and run
 
 Create the first pair and start DearMachine's native background client. The
-same command initializes the default entry-point repository when it is absent:
+same command initializes the selected entry-point repository when it is absent:
 
 ```bash
 project="$HOME/.dearmachine/entrypoint/main"
@@ -102,9 +102,9 @@ dearmachine up --create \
 dearmachine status
 ```
 
-Existing repositories are left unchanged. To use a custom entry-point path,
-initialize it explicitly with `dearmachine init --entry-point-repo <path>`
-before selecting it with `up --create`.
+Existing repositories are left unchanged. Passing a custom
+`--entry-point-repo <path>` to `up --create` initializes that selected path when
+absent. The separate `dearmachine init` command is optional preparation.
 
 Use `dearmachine down` and `dearmachine up` to stop and restart all registered
 pairs. To adopt an existing inbox, replace `--new-inbox` with
