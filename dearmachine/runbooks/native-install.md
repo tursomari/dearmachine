@@ -86,15 +86,11 @@ environment.
 
 ## Create and run
 
-Initialize the selected entry point if necessary, then create the first pair
-and start DearMachine's native background client:
+Create the first pair and start DearMachine's native background client. The
+same command initializes the default entry-point repository when it is absent:
 
 ```bash
 project="$HOME/.dearmachine/entrypoint/main"
-
-dearmachine init \
-  --entry-point-repo "$project" \
-  --agent-bin machtiani
 
 dearmachine up --create \
   --email <user-email> \
@@ -105,6 +101,10 @@ dearmachine up --create \
 
 dearmachine status
 ```
+
+Existing repositories are left unchanged. To use a custom entry-point path,
+initialize it explicitly with `dearmachine init --entry-point-repo <path>`
+before selecting it with `up --create`.
 
 Use `dearmachine down` and `dearmachine up` to stop and restart all registered
 pairs. To adopt an existing inbox, replace `--new-inbox` with

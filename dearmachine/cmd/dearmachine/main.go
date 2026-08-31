@@ -48,19 +48,22 @@ type config struct {
 	magnificaHumanitas     bool
 }
 
+const defaultEntryPointRepo = "~/.dearmachine/entrypoint/main"
+
 type application interface {
 	Run(context.Context) error
 	RunOnce(context.Context) error
 }
 
 type dependencies struct {
-	openPairStore   func(string, client.Pair) (*client.Store, error)
-	newRawTransport func(string, string) (client.Transport, error)
-	provisionInbox  func(context.Context, string) (client.Inbox, error)
-	inspectInbox    func(context.Context, string, string) (client.Inbox, error)
-	authorizePair   func(context.Context, string, string, string) error
-	newRunner       func(string, string, string) (*client.AgentRunner, error)
-	newApp          func(
+	initializeEntryPoint func(context.Context, entrypoint.Options) (entrypoint.Result, error)
+	openPairStore        func(string, client.Pair) (*client.Store, error)
+	newRawTransport      func(string, string) (client.Transport, error)
+	provisionInbox       func(context.Context, string) (client.Inbox, error)
+	inspectInbox         func(context.Context, string, string) (client.Inbox, error)
+	authorizePair        func(context.Context, string, string, string) error
+	newRunner            func(string, string, string) (*client.AgentRunner, error)
+	newApp               func(
 		client.Transport,
 		*client.Store,
 		*client.AgentRunner,
@@ -89,12 +92,13 @@ type dependencies struct {
 
 func defaultDependencies() dependencies {
 	return dependencies{
-		openPairStore:   client.OpenPairStore,
-		newRawTransport: transports.NewRaw,
-		provisionInbox:  transports.ProvisionInbox,
-		inspectInbox:    transports.InspectInbox,
-		authorizePair:   transports.AuthorizePair,
-		newRunner:       client.NewAgentRunner,
+		initializeEntryPoint: entrypoint.Initialize,
+		openPairStore:        client.OpenPairStore,
+		newRawTransport:      transports.NewRaw,
+		provisionInbox:       transports.ProvisionInbox,
+		inspectInbox:         transports.InspectInbox,
+		authorizePair:        transports.AuthorizePair,
+		newRunner:            client.NewAgentRunner,
 		newApp: func(
 			transport client.Transport,
 			store *client.Store,
@@ -199,7 +203,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	flags.StringVar(
 		&cfg.entryPointRepo,
 		"entry-point-repo",
-		"~/.dearmachine/entrypoint/main",
+		defaultEntryPointRepo,
 		"repository used for entry-point documentation sync, not the session working directory",
 	)
 	flags.StringVar(
@@ -312,7 +316,7 @@ func runInit(args []string, deps dependencies) error {
 	flags.SetOutput(output)
 	repoPath := flags.String(
 		"entry-point-repo",
-		"~/.dearmachine/entrypoint/main",
+		defaultEntryPointRepo,
 		"entry-point repository to initialize",
 	)
 	agentBinary := flags.String("agent-bin", "machtiani", "path to the machtiani executable")
@@ -338,7 +342,11 @@ func runInit(args []string, deps dependencies) error {
 			return err
 		}
 	}
-	result, err := entrypoint.Initialize(context.Background(), entrypoint.Options{
+	initialize := deps.initializeEntryPoint
+	if initialize == nil {
+		initialize = entrypoint.Initialize
+	}
+	result, err := initialize(context.Background(), entrypoint.Options{
 		RepoPath:    resolvedRepo,
 		AgentBinary: *agentBinary,
 		SnapshotDir: resolvedSnapshots,

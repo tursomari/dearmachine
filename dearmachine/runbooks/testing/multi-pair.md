@@ -23,6 +23,9 @@ Create pairs only with `dearmachine up --create` while the daemon is stopped:
 
 OpenMail and Sendmux support exact adoption but not provider provisioning.
 Incomplete non-interactive creation must fail before any provider mutation.
+First-pair creation initializes the missing default entry-point repository
+before provider mutation. Existing default repositories remain untouched, and
+custom entry-point paths are never initialized implicitly.
 
 ## Isolated setup
 
@@ -44,7 +47,9 @@ interval and an outer timeout for every command.
 2. Prove `up --new` and `up --switch` are unknown flags.
 3. Prove incomplete non-interactive `up --create` fails without creating an
    inbox, registry, or database.
-4. Create pair A with a new AgentMail inbox and its authorized correspondent:
+4. Create pair A with a new AgentMail inbox and its authorized correspondent.
+   Prove the same command initialized the previously absent default entry point
+   before calling the provider:
 
    ```bash
    dearmachine up --create \

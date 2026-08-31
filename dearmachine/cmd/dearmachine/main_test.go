@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
+	"github.com/dearmachine/dearmachine/internal/entrypoint"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
@@ -264,6 +265,9 @@ func testDependencies(t *testing.T, app application) dependencies {
 	t.Setenv("AGENTMAIL_API_KEY", "offline-test-key")
 	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
 	deps := dependencies{
+		initializeEntryPoint: func(_ context.Context, options entrypoint.Options) (entrypoint.Result, error) {
+			return entrypoint.Result{AlreadyInitialized: true, RepoPath: options.RepoPath}, nil
+		},
 		newRawTransport: func(_, _ string) (client.Transport, error) {
 			return &emptyTransport{}, nil
 		},

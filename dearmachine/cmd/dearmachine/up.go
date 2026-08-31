@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/mail"
+	"path/filepath"
 	"strings"
 
 	"github.com/dearmachine/dearmachine/internal/client"
+	"github.com/dearmachine/dearmachine/internal/entrypoint"
 )
 
 type stringListFlag []string
@@ -51,7 +53,8 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		return err
 	}
 	output := outputOrDiscard(deps.stdout)
-	if err := validateUpRunArgs(runArgs, deps); err != nil {
+	cfg, err := parseUpRunConfig(runArgs, deps)
+	if err != nil {
 		return err
 	}
 	if command.create {
@@ -69,6 +72,9 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 			if strings.EqualFold(existing.UserEmail, request.email) {
 				return fmt.Errorf("pair email %s is already registered as %s", request.email, existing.ID)
 			}
+		}
+		if err := initializeDefaultEntryPoint(context.Background(), cfg, deps, output); err != nil {
+			return err
 		}
 		inbox, err := resolveCreateInbox(context.Background(), request, registry, deps)
 		if err != nil {
@@ -89,10 +95,6 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		_, _ = fmt.Fprintf(output, "Created pair %s (%s) on inbox %s (%s).\n", pair.UserEmail, pair.ID, inbox.Address, inbox.ID)
 	}
 	states, err := client.ResolvePairStates(deps.userHomeDir, command.pairSelectors)
-	if err != nil {
-		return err
-	}
-	cfg, err := parseConfig(runArgs, io.Discard)
 	if err != nil {
 		return err
 	}
@@ -134,12 +136,41 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	return err
 }
 
-func validateUpRunArgs(args []string, deps dependencies) error {
+func parseUpRunConfig(args []string, deps dependencies) (config, error) {
 	output := deps.flagOutput
 	if output == nil {
 		output = io.Discard
 	}
-	_, err := parseConfig(args, output)
+	return parseConfig(args, output)
+}
+
+func initializeDefaultEntryPoint(ctx context.Context, cfg config, deps dependencies, output io.Writer) error {
+	repoPath, err := resolvePath(cfg.entryPointRepo, deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	defaultPath, err := resolvePath(defaultEntryPointRepo, deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(repoPath) != filepath.Clean(defaultPath) {
+		return nil
+	}
+	initialize := deps.initializeEntryPoint
+	if initialize == nil {
+		initialize = entrypoint.Initialize
+	}
+	result, err := initialize(ctx, entrypoint.Options{
+		RepoPath:    repoPath,
+		AgentBinary: cfg.agentBinary,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize default entry point: %w", err)
+	}
+	if result.AlreadyInitialized {
+		return nil
+	}
+	_, err = fmt.Fprintf(output, "Initialized default entry point: %s\n", result.RepoPath)
 	return err
 }
 
@@ -347,8 +378,9 @@ background client. --foreground keeps that client attached for service managers
 and containers. --pair is repeatable and narrows only this invocation; it never
 changes global state. --create is the sole creation path. Sharing an inbox is always
 intentional and requires --inbox. Pair creation asks the selected transport to
-authorize the correspondent before publishing local pair state and requires the
-daemon to be down.
+authorize the correspondent before publishing local pair state. It also initializes
+the default entry point when absent; custom entry points remain explicit init
+operations. Creation requires the daemon to be down.
 `)
 	return err
 }

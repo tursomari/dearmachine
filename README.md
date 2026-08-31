@@ -48,8 +48,9 @@ dearmachine up --create \
   --magnifica-humanitas
 ```
 
-`up --create` records one isolated pair database and then starts all registered
-pairs in one background client. Inspect or stop it with:
+On the first run, `up --create` also initializes the default entry-point
+repository if it is absent. It then records one isolated pair database and
+starts all registered pairs in one background client. Inspect or stop it with:
 
 ```bash
 dearmachine status

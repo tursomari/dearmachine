@@ -88,9 +88,10 @@ dearmachine up --create \
 
 `AGENTMAIL_API_KEY_FILE` must contain exactly one non-empty line.
 `AGENTMAIL_API_KEY` remains supported as an environment-based alternative.
-Creation provisions and registers the inbox, asks the selected transport to
-authorize the exact correspondent, creates the pair's UUID-path SQLite
-database, and then starts the daemon. AgentMail pairing idempotently ensures
+Creation first initializes the default entry-point repository when it is
+absent. It then provisions and registers the inbox, asks the selected transport
+to authorize the exact correspondent, creates the pair's UUID-path SQLite
+database, and starts the daemon. AgentMail pairing idempotently ensures
 inbox-scoped receive, reply, and send allow entries before the local pair is
 published. Later, plain `dearmachine up` starts every registered pair. Repeat
 `--pair <email-or-uuid>` to run only a specific subset for that invocation.
@@ -326,10 +327,12 @@ testing arrangements. A disposable test normally supplies its test project
 through `--project` and disables real entry-point maintenance with
 `--entry-point-repo ""`.
 
-## Initialize the machine entry point
+## Custom machine entry points
 
-Before using entry-point session maintenance on a new machine, initialize its
-user-owned repository:
+`up --create` initializes `~/.dearmachine/entrypoint/main` automatically when
+that default repository is absent. It never replaces or rewrites an existing
+Git repository. Use the separate `init` command when deliberately preparing a
+custom entry-point path before pair creation:
 
 ```bash
 dearmachine init \
