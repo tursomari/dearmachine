@@ -128,18 +128,25 @@ live service or start a second poller:
 systemctl --user stop dearmachine-native.service
 ```
 
-Then start the service from a shell in which all selected backends resolve:
+Then start the service from a current shell in which all selected backends
+resolve. After a profile upgrade, do not reuse `PATH` from the running client's
+`/proc/<pid>/environ`: the Nix wrapper may have prepended its old store path,
+which can make the launcher select a stale Agent Manager. Pass the matching
+profile executable explicitly so the client and Agent Manager advance together:
 
 ```bash
 project="$HOME/.dearmachine/entrypoint/main"
 credential_file="$HOME/.config/dearmachine/agentmail-api-key"
 backend_environment_file="$HOME/.config/dearmachine/backends.env"
+client="$HOME/.nix-profile/bin/dearmachine"
+manager="$HOME/.nix-profile/bin/agent-manager"
 
 nix run .#dearmachine-native-service -- \
   --credential-file "$credential_file" \
   --environment-file "$backend_environment_file" \
+  --agent-manager "$manager" \
   --working-directory "$project" \
-  -- dearmachine \
+  -- "$client" \
     --inbox-id <inbox-id> \
     --project "$project" \
     --entry-point-repo "$project" \
@@ -147,9 +154,12 @@ nix run .#dearmachine-native-service -- \
     --verbose
 ```
 
-The launcher reads `~/.dearmachine/config/dearmachine.toml` by default and
-adds its matching `--config` and absolute `--agent-manager` arguments to the
-client. Use `--config`, `--agent-manager`, `--home`, or `--unit` before the
+The launcher reads `~/.dearmachine/config/dearmachine.toml` by default and adds
+its matching `--config` and absolute `--agent-manager` arguments to the client.
+The explicit `--agent-manager` above prevents an upgrade from mixing package
+revisions. When it is omitted, the launcher resolves `agent-manager` from the
+current launch shell's normalized `PATH`, never from a previous service
+process. Use `--config`, `--agent-manager`, `--home`, or `--unit` before the
 separator when the normal paths differ. `--environment-file` is optional, but
 use it for non-AgentMail backend credentials such as `DEEPSEEK_API_KEY`; it is
 recorded in the unit only as a path. The launcher passes the AgentMail
@@ -164,6 +174,14 @@ systemctl --user show dearmachine-native.service \
 
 service_pid=$(systemctl --user show dearmachine-native.service -p MainPID --value)
 service_path=$(tr '\0' '\n' <"/proc/$service_pid/environ" | sed -n 's/^PATH=//p')
+service_manager=$(
+  tr '\0' '\n' <"/proc/$service_pid/cmdline" |
+    awk 'previous == "--agent-manager" { print; exit } { previous = $0 }'
+)
+test "$(readlink -f "$service_manager")" = \
+  "$(readlink -f "$HOME/.nix-profile/bin/agent-manager")"
+test "$(tr '\0' '\n' <"/proc/$service_pid/cmdline" | \
+  grep -cx -- '--magnifica-humanitas')" -eq 1
 env -i HOME="$HOME" PATH="$service_path" \
   agent-manager backend resolve --config "$HOME/.dearmachine/config/dearmachine.toml"
 ```
