@@ -138,6 +138,18 @@ func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
 	return newSendmuxTransport(config)
 }
 
+func InspectSendmuxInbox(ctx context.Context, selection string) (Inbox, error) {
+	transport, err := NewSendmuxTransport(selection)
+	if err != nil {
+		return Inbox{}, err
+	}
+	resolved, err := transport.mailbox(ctx)
+	if err != nil {
+		return Inbox{}, err
+	}
+	return Inbox{Transport: "sendmux", ProviderID: resolved.ID, Address: resolved.Email}, nil
+}
+
 func newSendmuxTransport(config sendmuxTransportConfig) (*SendmuxTransport, error) {
 	if strings.TrimSpace(config.Inbox) == "" {
 		return nil, fmt.Errorf("Sendmux mailbox ID or address is required")

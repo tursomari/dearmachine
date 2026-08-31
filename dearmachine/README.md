@@ -77,30 +77,40 @@ direction; it never falls back to modifying project files directly.
 ```bash
 export AGENTMAIL_API_KEY_FILE="$HOME/.config/dearmachine/agentmail-api-key"
 
-dearmachine \
-  --inbox-id your-inbox-id \
+dearmachine up --create \
+  --email you@example.com \
+  --new-inbox --transport agentmail \
   --project ~/.dearmachine/entrypoint/main \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
   --maintenance-min-turns 20 \
+  --magnifica-humanitas \
   --pidfile ~/.dearmachine/run/dearmachine.pid
 ```
 
 `AGENTMAIL_API_KEY_FILE` must contain exactly one non-empty line.
 `AGENTMAIL_API_KEY` remains supported as an environment-based alternative.
-DearMachine runs in the foreground and handles `SIGINT` and `SIGTERM`; it does
-not require a particular process supervisor.
+Creation provisions and registers the inbox, creates the pair's UUID-path
+SQLite database, and then starts the daemon. Later, plain `dearmachine up`
+starts every registered pair. Repeat `--pair <email-or-uuid>` to run only a
+specific subset for that invocation. Selection never changes registry state.
+
+To add a pair, stop the daemon and run `up --create` again. Use `--new-inbox`
+for a new provider inbox, or `--inbox <registered-uuid-or-address>` to
+intentionally share an existing inbox. The version-2 registry stores inboxes
+separately from pairs; there is no active pair, display name, `--new`, or
+`--switch`. DearMachine runs in the foreground and handles `SIGINT` and
+`SIGTERM`; its PID file is an exclusive daemon lock.
 
 ### Optional OpenMail transport
 
-`--transport` defaults to `agentmail`. To inspect a dedicated OpenMail inbox,
-select `openmail` and provide its inbox ID or full address:
+To adopt a dedicated OpenMail inbox as the first pair, provide its exact inbox
+ID or full address and transport during creation:
 
 ```bash
 export OPENMAIL_API_KEY_FILE="$HOME/.config/dearmachine/openmail-api-key"
 # Or point OPENMAIL_API_KEY_FILE at another operator-managed one-line key file.
-export DEARMACHINE_ALLOW='user@example.test, device@example.test'
-
-dearmachine --transport openmail --inbox-id '<openmail-inbox-id-or-address>'
+dearmachine up --create --email 'user@example.test' \
+  --inbox '<openmail-inbox-id-or-address>' --transport openmail --once
 ```
 
 `OPENMAIL_API_KEY` is the direct environment alternative. OpenMail credentials
@@ -120,10 +130,9 @@ export DEARMACHINE_LIVE_OPENMAIL=1
 export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
 ```
 
-`--allow` or `DEARMACHINE_ALLOW` is required and accepts a comma-separated RFC
-5322 paired-address set. A message is available only if its sender and every
-non-empty recipient are members of that one set; mutations are reauthorized and
-unknown attachment IDs are rejected. There is no permissive default.
+The central inbox router authorizes the exact canonical pair sender and inbox
+recipient before work is created. Mutations are reauthorized and unknown
+attachment IDs are rejected. There is no permissive default.
 
 OpenMail exposes unread state per thread rather than per message. Polling
 therefore returns the newest inbound message in each unread, fully allowed
@@ -137,28 +146,24 @@ inbox, follow the
 
 ### Optional Sendmux transport
 
-Select `sendmux` with a mailbox ID or full address. The mailbox key may be
-provided directly or through an operator-owned one-line file; when neither is
-set, the adapter optionally checks
+Adopt Sendmux with an exact mailbox ID or full address. The mailbox key may be
+provided directly or through an operator-owned one-line file; when neither is set, the adapter optionally checks
 `$HOME/.config/dearmachine/sendmux-api-key`.
 
 ```bash
 export SENDMUX_MAILBOX_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-api-key"
 # Optional: use Sendmux's separate email.send credential for outbound replies.
 export SENDMUX_SEND_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-send-api-key"
-export DEARMACHINE_ALLOW='<paired-address-1>,<paired-address-2>'
-
-dearmachine --transport sendmux --inbox-id '<sendmux-mailbox-id-or-address>'
+dearmachine up --create --email '<paired-address>' \
+  --inbox '<sendmux-mailbox-id-or-address>' --transport sendmux --once
 ```
 
 `SENDMUX_MAILBOX_API_KEY` and `SENDMUX_SEND_API_KEY` are the direct
 environment alternatives. The optional send credential is used only for
 outbound replies; receiving and marking messages processed continue to use the
-mailbox credential. The paired-address set is required and is a comma-separated
-RFC 5322 exact-address list.
-Inbound mail must come from an allowed sender and be addressed exclusively to
-the configured mailbox; a thread containing any other correspondent is ignored
-without fetching attachments or mutating provider state.
+mailbox credential. Inbound mail must come from the pair's exact canonical
+sender and be addressed to the registered mailbox. Other correspondents fail
+closed without creating pair work.
 
 Sendmux is inspect-only unless both live gates are explicitly enabled:
 
@@ -178,11 +183,11 @@ policy. Follow the isolated
 [Sendmux transport runbook](runbooks/testing/sendmux-transport.md) for a
 credentialed two-turn continuation test.
 
-The default SQLite state database is
-`~/.dearmachine/state/dearmachine.db`. DearMachine Client creates its state
-directory with mode `0700` and creates or tightens the database to mode `0600`.
-Pass `--db /absolute/path/to/dearmachine.db` only when an isolated instance
-needs a separate store.
+Each pair's SQLite state database is
+`~/.dearmachine/pairs/<pair-uuid>/state/dearmachine.db`. DearMachine Client
+creates its state directory with mode `0700` and creates or tightens the
+database to mode `0600`. `--db` is reserved for explicit direct diagnostics
+and is rejected by `dearmachine up`.
 
 The daemon runs `machtiani sync` before polling begins and again immediately
 before each `machtiani run`. Runs use `--mode agent-managed` and receive the
@@ -314,10 +319,10 @@ entry point's context, documentation, or session history. For normal installed
 operation, point both settings at the initialized entry point:
 
 ```bash
-dearmachine \
-  --inbox-id your-inbox-id \
+dearmachine up \
   --project ~/.dearmachine/entrypoint/main \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
+  --magnifica-humanitas \
   --pidfile ~/.dearmachine/run/dearmachine.pid
 ```
 

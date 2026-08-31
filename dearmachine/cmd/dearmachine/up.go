@@ -2,18 +2,38 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
 	"strings"
 
 	"github.com/dearmachine/dearmachine/internal/client"
 )
 
-// up is the only public entry point for creating and changing pairs. It
-// intentionally intercepts an empty registry before runStart can take its
-// legacy fallback: an operator who explicitly asks to bring the client up is
-// guided into pairing, while older direct invocations retain the legacy DB.
+type stringListFlag []string
+
+func (values *stringListFlag) add(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("--pair requires an email address or UUID")
+	}
+	*values = append(*values, value)
+	return nil
+}
+
+type upCommand struct {
+	create        bool
+	list          bool
+	help          bool
+	newInbox      bool
+	email         string
+	inbox         string
+	transport     string
+	pairSelectors stringListFlag
+}
+
 func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	command, runArgs, err := parseUpArgs(args)
 	if err != nil {
@@ -22,7 +42,6 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	if command.help {
 		return upHelp(deps.stdout)
 	}
-
 	registryPath, err := client.DefaultPairRegistryPath(deps.userHomeDir)
 	if err != nil {
 		return err
@@ -33,64 +52,65 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	}
 	output := outputOrDiscard(deps.stdout)
 	if command.list {
-		return printPairs(output, registry.Pairs)
+		return printRegistry(output, registry)
 	}
-
-	var selected client.Pair
-	switch {
-	case command.new:
-		selected, err = collectPair(deps.stdin, output)
-		if err == nil {
-			selected.Active = true
-			selected, err = client.CreatePair(deps.userHomeDir, selected)
-		}
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(output, "Created pair %s (%s).\n", selected.DisplayName, selected.ID)
-	case command.switchTo != "":
-		selected, err = findRegisteredPair(deps.userHomeDir, command.switchTo)
-		if err != nil {
-			return err
-		}
-		if err := setActivePair(deps.userHomeDir, selected.ID); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(output, "Selected pair %s (%s).\n", selected.DisplayName, selected.ID)
-	case len(registry.Pairs) == 0:
-		selected, err = collectPair(deps.stdin, output)
-		if err == nil {
-			selected.Active = true
-			selected, err = client.CreatePair(deps.userHomeDir, selected)
-		}
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(output, "Created pair %s (%s).\n", selected.DisplayName, selected.ID)
-	case len(registry.Pairs) == 1:
-		selected = registry.Pairs[0]
-		if err := setActivePair(deps.userHomeDir, selected.ID); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(output, "Using pair %s (%s).\n", selected.DisplayName, selected.ID)
-	default:
-		selected, err = pickPair(deps.stdin, output, registry.Pairs)
-		if err != nil {
-			return err
-		}
-		if err := setActivePair(deps.userHomeDir, selected.ID); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(output, "Using pair %s (%s).\n", selected.DisplayName, selected.ID)
+	if err := validateUpRunArgs(runArgs, deps); err != nil {
+		return err
 	}
-	return runStart(runArgs, getenv, deps, &selected)
+	if command.create {
+		if len(command.pairSelectors) != 0 {
+			return errors.New("--pair cannot be combined with --create")
+		}
+		request, err := collectCreateRequest(command, deps.stdin, output, inputIsInteractive(deps))
+		if err != nil {
+			return err
+		}
+		if err := requireDaemonStopped(deps.userHomeDir); err != nil {
+			return fmt.Errorf("create pair: %w", err)
+		}
+		inbox, err := resolveCreateInbox(context.Background(), request, registry, deps)
+		if err != nil {
+			return err
+		}
+		pair, err := client.CreatePair(deps.userHomeDir, client.Pair{UserEmail: request.email, InboxID: inbox.ID})
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(output, "Created pair %s (%s) on inbox %s (%s).\n", pair.UserEmail, pair.ID, inbox.Address, inbox.ID)
+	}
+	states, err := client.ResolvePairStates(deps.userHomeDir, command.pairSelectors)
+	if err != nil {
+		return err
+	}
+	return runPairStates(runArgs, getenv, deps, states)
 }
 
-type upCommand struct {
-	new      bool
-	list     bool
-	help     bool
-	switchTo string
+func validateUpRunArgs(args []string, deps dependencies) error {
+	output := deps.flagOutput
+	if output == nil {
+		output = io.Discard
+	}
+	cfg, err := parseConfig(args, output)
+	if err != nil {
+		return err
+	}
+	if cfg.inboxID != "" || cfg.dbPath != "" || cfg.allowSet {
+		return errors.New("--inbox-id, --db, and --allow are direct diagnostic flags and cannot be used with `dearmachine up`")
+	}
+	if strings.TrimSpace(cfg.pidfile) != "" {
+		lockPath, err := client.DefaultDaemonLockPath(deps.userHomeDir)
+		if err != nil {
+			return err
+		}
+		requested, err := resolvePath(cfg.pidfile, deps.userHomeDir)
+		if err != nil {
+			return err
+		}
+		if requested != lockPath {
+			return fmt.Errorf("--pidfile must be the daemon lock path %s", lockPath)
+		}
+	}
+	return nil
 }
 
 func parseUpArgs(args []string) (upCommand, []string, error) {
@@ -98,154 +118,190 @@ func parseUpArgs(args []string) (upCommand, []string, error) {
 	runArgs := make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
 		arg := args[index]
+		value := func(name string) (string, error) {
+			index++
+			if index == len(args) || strings.TrimSpace(args[index]) == "" {
+				return "", fmt.Errorf("%s requires a value", name)
+			}
+			return args[index], nil
+		}
 		switch {
-		case arg == "--new":
-			command.new = true
+		case arg == "--create":
+			command.create = true
+		case arg == "--new-inbox":
+			command.newInbox = true
 		case arg == "--list":
 			command.list = true
 		case arg == "--help" || arg == "-h":
 			command.help = true
-		case arg == "--switch":
-			index++
-			if index == len(args) || strings.TrimSpace(args[index]) == "" {
-				return upCommand{}, nil, errors.New("--switch requires a pair ID or display name")
+		case arg == "--new" || strings.HasPrefix(arg, "--new="):
+			return upCommand{}, nil, errors.New("flag provided but not defined: --new")
+		case arg == "--switch" || strings.HasPrefix(arg, "--switch="):
+			return upCommand{}, nil, errors.New("flag provided but not defined: --switch")
+		case arg == "--pair":
+			selected, err := value("--pair")
+			if err != nil {
+				return upCommand{}, nil, err
 			}
-			command.switchTo = args[index]
-		case strings.HasPrefix(arg, "--switch="):
-			command.switchTo = strings.TrimPrefix(arg, "--switch=")
-			if strings.TrimSpace(command.switchTo) == "" {
-				return upCommand{}, nil, errors.New("--switch requires a pair ID or display name")
+			if err := command.pairSelectors.add(selected); err != nil {
+				return upCommand{}, nil, err
 			}
+		case strings.HasPrefix(arg, "--pair="):
+			if err := command.pairSelectors.add(strings.TrimPrefix(arg, "--pair=")); err != nil {
+				return upCommand{}, nil, err
+			}
+		case arg == "--email" || arg == "--inbox" || arg == "--transport":
+			selected, err := value(arg)
+			if err != nil {
+				return upCommand{}, nil, err
+			}
+			switch arg {
+			case "--email":
+				command.email = selected
+			case "--inbox":
+				command.inbox = selected
+			case "--transport":
+				command.transport = selected
+			}
+		case strings.HasPrefix(arg, "--email="):
+			command.email = strings.TrimPrefix(arg, "--email=")
+		case strings.HasPrefix(arg, "--inbox="):
+			command.inbox = strings.TrimPrefix(arg, "--inbox=")
+		case strings.HasPrefix(arg, "--transport="):
+			command.transport = strings.TrimPrefix(arg, "--transport=")
 		default:
 			runArgs = append(runArgs, arg)
 		}
 	}
-	count := 0
-	for _, used := range []bool{command.new, command.list, command.help, command.switchTo != ""} {
-		if used {
-			count++
-		}
+	if command.list && (command.create || command.newInbox || command.email != "" || command.inbox != "" || command.transport != "" || len(command.pairSelectors) != 0) {
+		return upCommand{}, nil, errors.New("--list cannot be combined with creation or selection flags")
 	}
-	if count > 1 {
-		return upCommand{}, nil, errors.New("choose only one of --new, --list, or --switch")
+	if !command.create && (command.newInbox || command.email != "" || command.inbox != "" || command.transport != "") {
+		return upCommand{}, nil, errors.New("--email, --inbox, --new-inbox, and --transport require --create")
+	}
+	if command.newInbox && strings.TrimSpace(command.inbox) != "" {
+		return upCommand{}, nil, errors.New("choose exactly one of --new-inbox or --inbox")
 	}
 	return command, runArgs, nil
 }
 
-func collectPair(input io.Reader, output io.Writer) (client.Pair, error) {
+type createRequest struct {
+	email     string
+	newInbox  bool
+	inbox     string
+	transport string
+}
+
+func collectCreateRequest(command upCommand, input io.Reader, output io.Writer, interactive bool) (createRequest, error) {
+	request := createRequest{
+		email: strings.TrimSpace(command.email), newInbox: command.newInbox,
+		inbox: strings.TrimSpace(command.inbox), transport: strings.ToLower(strings.TrimSpace(command.transport)),
+	}
 	reader := bufio.NewReader(inputOrEmpty(input))
-	fields := []struct {
-		label string
-		set   func(*client.Pair, string)
-	}{
-		{"Display name", func(pair *client.Pair, value string) { pair.DisplayName = value }},
-		{"Your email address", func(pair *client.Pair, value string) { pair.UserEmail = value }},
-		{"Dear Machine address", func(pair *client.Pair, value string) { pair.DearMachineAddress = value }},
-		{"Transport name", func(pair *client.Pair, value string) { pair.Transport = value }},
-		{"Inbox ID", func(pair *client.Pair, value string) { pair.InboxID = value }},
-		{"Allowed addresses (comma-separated)", func(pair *client.Pair, value string) { pair.Allow = strings.Split(value, ",") }},
-	}
-	if _, err := fmt.Fprintln(output, "Create a paired inbox:"); err != nil {
-		return client.Pair{}, err
-	}
-	var pair client.Pair
-	for _, field := range fields {
-		if _, err := fmt.Fprintf(output, "%s: ", field.label); err != nil {
-			return client.Pair{}, err
+	prompt := func(label string, target *string) error {
+		if strings.TrimSpace(*target) != "" {
+			return nil
+		}
+		if !interactive {
+			return fmt.Errorf("%s is required in non-interactive mode", label)
+		}
+		if _, err := fmt.Fprintf(output, "%s: ", label); err != nil {
+			return err
 		}
 		value, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
-			return client.Pair{}, err
+			return err
 		}
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return client.Pair{}, fmt.Errorf("%s is required", strings.ToLower(field.label))
+		*target = strings.TrimSpace(value)
+		if *target == "" {
+			return fmt.Errorf("%s is required", label)
 		}
-		field.set(&pair, value)
+		return nil
 	}
-	return pair, nil
+	if _, err := fmt.Fprintln(output, "Create a DearMachine pair:"); err != nil {
+		return createRequest{}, err
+	}
+	if err := prompt("User email", &request.email); err != nil {
+		return createRequest{}, err
+	}
+	parsedEmail, err := mail.ParseAddress(request.email)
+	if err != nil || strings.TrimSpace(parsedEmail.Address) == "" {
+		return createRequest{}, errors.New("user email must be an RFC 5322 address")
+	}
+	request.email = strings.ToLower(strings.TrimSpace(parsedEmail.Address))
+	if !request.newInbox && request.inbox == "" {
+		if !interactive {
+			return createRequest{}, errors.New("choose exactly one of --new-inbox or --inbox")
+		}
+		choice := ""
+		if err := prompt("Existing inbox UUID/address, or 'new'", &choice); err != nil {
+			return createRequest{}, err
+		}
+		if strings.EqualFold(choice, "new") {
+			request.newInbox = true
+		} else {
+			request.inbox = choice
+		}
+	}
+	if request.newInbox {
+		if err := prompt("Transport", &request.transport); err != nil {
+			return createRequest{}, err
+		}
+	}
+	if request.newInbox == (request.inbox != "") {
+		return createRequest{}, errors.New("choose exactly one of --new-inbox or --inbox")
+	}
+	return request, nil
 }
 
-func pickPair(input io.Reader, output io.Writer, pairs []client.Pair) (client.Pair, error) {
-	defaultIndex := 0
-	for index, pair := range pairs {
-		if pair.Active {
-			defaultIndex = index
+func resolveCreateInbox(ctx context.Context, request createRequest, registry client.PairRegistry, deps dependencies) (client.Inbox, error) {
+	if request.inbox != "" {
+		registered, err := client.ResolveInbox(registry, request.inbox)
+		if err == nil {
+			if request.transport != "" && request.transport != registered.Transport {
+				return client.Inbox{}, fmt.Errorf("inbox %q uses transport %q, not %q", request.inbox, registered.Transport, request.transport)
+			}
+			return registered, nil
 		}
-	}
-	if _, err := fmt.Fprintln(output, "Choose a pair:"); err != nil {
-		return client.Pair{}, err
-	}
-	for index, pair := range pairs {
-		marker := ""
-		if index == defaultIndex {
-			marker = " (default)"
+		if !errors.Is(err, client.ErrUnknownInbox) {
+			return client.Inbox{}, err
 		}
-		if _, err := fmt.Fprintf(output, "  %d. %s%s\n", index+1, pair.DisplayName, marker); err != nil {
-			return client.Pair{}, err
+		if request.transport == "" {
+			return client.Inbox{}, fmt.Errorf("%w; add --transport to adopt an exact provider inbox", err)
 		}
-	}
-	if _, err := fmt.Fprintf(output, "Selection [%d]: ", defaultIndex+1); err != nil {
-		return client.Pair{}, err
-	}
-	line, err := bufio.NewReader(inputOrEmpty(input)).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return client.Pair{}, err
-	}
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return pairs[defaultIndex], nil
-	}
-	for index, pair := range pairs {
-		if line == fmt.Sprint(index+1) || strings.EqualFold(line, pair.ID) || strings.EqualFold(line, pair.DisplayName) {
-			return pair, nil
+		if deps.inspectInbox == nil {
+			return client.Inbox{}, fmt.Errorf("transport %q cannot inspect an existing inbox", request.transport)
 		}
+		inspected, inspectErr := deps.inspectInbox(ctx, request.transport, request.inbox)
+		if inspectErr != nil {
+			return client.Inbox{}, fmt.Errorf("inspect %s inbox %q: %w", request.transport, request.inbox, inspectErr)
+		}
+		inspected.Transport = request.transport
+		return client.RegisterInbox(deps.userHomeDir, inspected)
 	}
-	return client.Pair{}, fmt.Errorf("unknown pair selection %q", line)
-}
-
-func findRegisteredPair(userHomeDir func() (string, error), selection string) (client.Pair, error) {
-	state, err := client.ResolvePairState(userHomeDir, selection)
+	if deps.provisionInbox == nil {
+		return client.Inbox{}, fmt.Errorf("transport %q does not support inbox provisioning; use --inbox to share or adopt an existing inbox", request.transport)
+	}
+	provisioned, err := deps.provisionInbox(ctx, request.transport)
 	if err != nil {
-		return client.Pair{}, err
+		return client.Inbox{}, fmt.Errorf("provision %s inbox: %w", request.transport, err)
 	}
-	if state.Legacy {
-		return client.Pair{}, fmt.Errorf("no pairs are registered")
-	}
-	return state.Pair, nil
+	provisioned.Transport = request.transport
+	return client.RegisterInbox(deps.userHomeDir, provisioned)
 }
 
-func setActivePair(userHomeDir func() (string, error), pairID string) error {
-	path, err := client.DefaultPairRegistryPath(userHomeDir)
-	if err != nil {
-		return err
-	}
-	registry, err := client.LoadPairRegistry(path)
-	if err != nil {
-		return err
-	}
-	found := false
-	for index := range registry.Pairs {
-		registry.Pairs[index].Active = registry.Pairs[index].ID == pairID
-		found = found || registry.Pairs[index].Active
-	}
-	if !found {
-		return fmt.Errorf("pair selection %q is unknown", pairID)
-	}
-	return client.SavePairRegistry(path, registry)
-}
-
-func printPairs(output io.Writer, pairs []client.Pair) error {
-	if len(pairs) == 0 {
+func printRegistry(output io.Writer, registry client.PairRegistry) error {
+	if len(registry.Pairs) == 0 {
 		_, err := fmt.Fprintln(output, "No pairs are registered.")
 		return err
 	}
-	for _, pair := range pairs {
-		active := ""
-		if pair.Active {
-			active = " (active)"
-		}
-		if _, err := fmt.Fprintf(output, "%s\t%s%s\n", pair.ID, pair.DisplayName, active); err != nil {
+	inboxes := make(map[string]client.Inbox, len(registry.Inboxes))
+	for _, inbox := range registry.Inboxes {
+		inboxes[inbox.ID] = inbox
+	}
+	for _, pair := range registry.Pairs {
+		inbox := inboxes[pair.InboxID]
+		if _, err := fmt.Fprintf(output, "%s\t%s\t%s\t%s\n", pair.ID, pair.UserEmail, inbox.Address, inbox.Transport); err != nil {
 			return err
 		}
 	}
@@ -254,11 +310,14 @@ func printPairs(output io.Writer, pairs []client.Pair) error {
 
 func upHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
-  dearmachine up [--new | --switch <id-or-name> | --list] [run flags]
+  dearmachine up [--pair <email-or-uuid> ...] [run flags]
+  dearmachine up --create --email <address> (--new-inbox --transport <id> | --inbox <selector>) [run flags]
+  dearmachine up --list
 
-Starts a paired inbox. With no registered pairs it opens a guided setup; with
-several it offers a numbered selector. A blank selector response, including
-non-interactive EOF, uses the active pair (or the first registered pair).
+Plain "up" starts every registered pair and every referenced inbox in one
+daemon. --pair is repeatable and narrows only this invocation; it never changes
+global state. --create is the sole creation path. Sharing an inbox is always
+intentional and requires --inbox. Pair creation requires the daemon to be down.
 `)
 	return err
 }

@@ -187,9 +187,20 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 		go func() {
 			defer workers.Done()
 			for item := range jobs {
+				if a.workerGate != nil {
+					select {
+					case a.workerGate <- struct{}{}:
+					case <-ctx.Done():
+						results <- workResult{work: item, err: ctx.Err()}
+						continue
+					}
+				}
 				result := a.processWork(ctx, item, func() {
 					started <- workStarted{work: item, at: a.preemptionNow()}
 				})
+				if a.workerGate != nil {
+					<-a.workerGate
+				}
 				results <- workResult{work: item, err: result}
 			}
 		}()

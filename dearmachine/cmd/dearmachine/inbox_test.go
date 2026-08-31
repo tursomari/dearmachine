@@ -525,13 +525,14 @@ func TestInboxMutationRefusesLiveDeviceClientPID(t *testing.T) {
 	}
 }
 
-func TestInboxSkippedUsesActivePairState(t *testing.T) {
+func TestInboxSkippedUsesOnlyRegisteredPairState(t *testing.T) {
 	home := t.TempDir()
 	homeDir := func() (string, error) { return home, nil }
-	pair, err := client.CreatePair(homeDir, client.Pair{
-		DisplayName: "Inbox lane", UserEmail: "user@example.test", DearMachineAddress: "machine@example.test",
-		Transport: "agentmail", InboxID: "inbox", Allow: []string{"user@example.test", "machine@example.test"},
-	})
+	inbox, err := client.RegisterInbox(homeDir, client.Inbox{Transport: "agentmail", ProviderID: "inbox", Address: "machine@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := client.CreatePair(homeDir, client.Pair{UserEmail: "user@example.test", InboxID: inbox.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +553,7 @@ func TestInboxSkippedUsesActivePairState(t *testing.T) {
 
 	var output strings.Builder
 	deps := dependencies{
-		openStore:     func(string) (*client.Store, error) { return nil, errors.New("legacy store opened") },
+		openStore:     func(string) (*client.Store, error) { return nil, errors.New("direct store opened") },
 		openPairStore: client.OpenPairStore,
 		stdout:        &output,
 		flagOutput:    io.Discard,

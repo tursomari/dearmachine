@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -137,15 +138,23 @@ func TestOpenPairStoreRejectsPairMetaMismatch(t *testing.T) {
 func TestResolvePairStateRejectsUnknownAndAmbiguousSelection(t *testing.T) {
 	home := t.TempDir()
 	first := createTestPair(t, home, "Shared")
-	second := Pair{ID: "00000000-0000-4000-8000-000000000002", DisplayName: "Shared", UserEmail: "second-user@example.test", DearMachineAddress: "second-machine@example.test", Transport: "test", InboxID: "second-inbox", Allow: []string{"second-user@example.test", "second-machine@example.test"}}
+	inbox, err := RegisterInbox(homeDir(home), Inbox{Transport: "test", ProviderID: "second-inbox", Address: "second-machine@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := CreatePair(homeDir(home), Pair{ID: "00000000-0000-4000-8000-000000000002", UserEmail: first.UserEmail, InboxID: inbox.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
 	registryPath, err := DefaultPairRegistryPath(homeDir(home))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SavePairRegistry(registryPath, PairRegistry{Pairs: []Pair{first, second}}); err != nil {
-		t.Fatal(err)
+	registry, err := LoadPairRegistry(registryPath)
+	if err != nil || len(registry.Pairs) != 2 || second.ID == first.ID {
+		t.Fatalf("registry = %+v, %v", registry, err)
 	}
-	for _, selection := range []string{"missing", "Shared"} {
+	for _, selection := range []string{"missing", first.UserEmail} {
 		if _, err := ResolvePairState(homeDir(home), selection); err == nil || !strings.Contains(err.Error(), "pair selection") {
 			t.Fatalf("ResolvePairState(%q) error = %v", selection, err)
 		}
@@ -154,7 +163,11 @@ func TestResolvePairStateRejectsUnknownAndAmbiguousSelection(t *testing.T) {
 
 func TestCreatePairCreatesFreshStoreWithMatchingMeta(t *testing.T) {
 	home := t.TempDir()
-	pair, err := CreatePair(homeDir(home), Pair{DisplayName: "Alpha", UserEmail: " user@example.test ", DearMachineAddress: " MACHINE@example.test ", Transport: "test", InboxID: " inbox ", Allow: []string{"MACHINE@example.test", "user@example.test"}, Active: true})
+	inbox, err := RegisterInbox(homeDir(home), Inbox{Transport: "test", ProviderID: "inbox", Address: " MACHINE@example.test "})
+	if err != nil {
+		t.Fatalf("RegisterInbox: %v", err)
+	}
+	pair, err := CreatePair(homeDir(home), Pair{UserEmail: " user@example.test ", InboxID: inbox.ID})
 	if err != nil {
 		t.Fatalf("CreatePair: %v", err)
 	}
@@ -167,15 +180,14 @@ func TestCreatePairCreatesFreshStoreWithMatchingMeta(t *testing.T) {
 		t.Fatalf("LoadPairRegistry: %v", err)
 	}
 	if len(registry.Pairs) != 1 || registry.Pairs[0].UserEmail != "user@example.test" ||
-		registry.Pairs[0].DearMachineAddress != "machine@example.test" ||
-		strings.Join(registry.Pairs[0].Allow, ",") != "machine@example.test,user@example.test" {
+		len(registry.Inboxes) != 1 || registry.Inboxes[0].Address != "machine@example.test" {
 		t.Fatalf("normalized registry = %+v", registry)
 	}
 	state, err := ResolvePairState(homeDir(home), "")
 	if err != nil {
 		t.Fatalf("ResolvePairState: %v", err)
 	}
-	if state.Legacy || state.Pair.ID != pair.ID || state.Path != filepath.Join(home, ".dearmachine", "pairs", pair.ID, "state", "dearmachine.db") {
+	if state.Pair.ID != pair.ID || state.Inbox.ID != inbox.ID || state.Path != filepath.Join(home, ".dearmachine", "pairs", pair.ID, "state", "dearmachine.db") {
 		t.Fatalf("resolved state = %+v", state)
 	}
 	store, err := OpenPairStore(state.Path, state.Pair)
@@ -197,20 +209,55 @@ func TestCreatePairCreatesFreshStoreWithMatchingMeta(t *testing.T) {
 	}
 }
 
-func TestResolvePairStateUsesLegacyDatabaseWhenRegistryIsEmpty(t *testing.T) {
+func TestResolvePairStateRequiresExplicitCreationWhenRegistryIsEmpty(t *testing.T) {
 	home := t.TempDir()
-	state, err := ResolvePairState(homeDir(home), "")
-	if err != nil {
-		t.Fatalf("ResolvePairState: %v", err)
+	_, err := ResolvePairState(homeDir(home), "")
+	if err == nil || !strings.Contains(err.Error(), "up --create") {
+		t.Fatalf("ResolvePairState error = %v", err)
 	}
-	if !state.Legacy || state.Path != filepath.Join(home, ".dearmachine", "state", "dearmachine.db") {
-		t.Fatalf("legacy state = %+v", state)
+}
+
+func TestPairRegistryVersionOneIsRejectedWithoutMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pairs.toml")
+	if err := os.WriteFile(path, []byte("version = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadPairRegistry(path)
+	if err == nil || !strings.Contains(err.Error(), "recreate pairing") {
+		t.Fatalf("LoadPairRegistry error = %v", err)
+	}
+}
+
+func TestResolvePairStatesDefaultsToAllAndSelectorsDoNotMutateRegistry(t *testing.T) {
+	home := t.TempDir()
+	first := createTestPair(t, home, "Alpha")
+	second := createTestPair(t, home, "Beta")
+	path, _ := DefaultPairRegistryPath(homeDir(home))
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, err := ResolvePairStates(homeDir(home), nil)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("all states = %+v, %v", all, err)
+	}
+	selected, err := ResolvePairStates(homeDir(home), []string{second.UserEmail, first.ID})
+	if err != nil || len(selected) != 2 || selected[0].Pair.ID != second.ID || selected[1].Pair.ID != first.ID {
+		t.Fatalf("selected states = %+v, %v", selected, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("selector mutated registry: %v", err)
 	}
 }
 
 func createTestPair(t *testing.T, home, name string) Pair {
 	t.Helper()
-	pair, err := CreatePair(homeDir(home), Pair{DisplayName: name, UserEmail: strings.ToLower(name) + "-user@example.test", DearMachineAddress: strings.ToLower(name) + "-machine@example.test", Transport: "test", InboxID: strings.ToLower(name) + "-inbox", Allow: []string{strings.ToLower(name) + "-machine@example.test", strings.ToLower(name) + "-user@example.test"}})
+	inbox, err := RegisterInbox(homeDir(home), Inbox{Transport: "test", ProviderID: strings.ToLower(name) + "-inbox", Address: strings.ToLower(name) + "-machine@example.test"})
+	if err != nil {
+		t.Fatalf("RegisterInbox(%s): %v", name, err)
+	}
+	pair, err := CreatePair(homeDir(home), Pair{UserEmail: strings.ToLower(name) + "-user@example.test", InboxID: inbox.ID})
 	if err != nil {
 		t.Fatalf("CreatePair(%s): %v", name, err)
 	}

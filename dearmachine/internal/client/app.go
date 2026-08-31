@@ -34,6 +34,7 @@ type App struct {
 	statsMu          sync.Mutex
 	processed        int
 	threads          map[string]struct{}
+	workerGate       chan struct{}
 }
 
 func New(
@@ -98,6 +99,10 @@ func (a *App) Run(ctx context.Context) (runErr error) {
 	defer func() {
 		runErr = errors.Join(runErr, cleanup())
 	}()
+	return a.runLoop(ctx)
+}
+
+func (a *App) runLoop(ctx context.Context) error {
 	a.logger.Printf(
 		"DearMachine Client started. Polling %s every %s. Project: %s.",
 		a.pollTarget(),

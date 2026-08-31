@@ -62,11 +62,14 @@ type application interface {
 }
 
 type dependencies struct {
-	openStore     func(string) (*client.Store, error)
-	openPairStore func(string, client.Pair) (*client.Store, error)
-	newTransport  func(string) (client.Transport, error)
-	newRunner     func(string, string, string) (*client.AgentRunner, error)
-	newApp        func(
+	openStore       func(string) (*client.Store, error)
+	openPairStore   func(string, client.Pair) (*client.Store, error)
+	newTransport    func(string) (client.Transport, error)
+	newRawTransport func(string, string) (client.Transport, error)
+	provisionInbox  func(context.Context, string) (client.Inbox, error)
+	inspectInbox    func(context.Context, string, string) (client.Inbox, error)
+	newRunner       func(string, string, string) (*client.AgentRunner, error)
+	newApp          func(
 		client.Transport,
 		*client.Store,
 		*client.AgentRunner,
@@ -78,6 +81,7 @@ type dependencies struct {
 		string,
 		client.ResponseTier,
 	) (application, error)
+	newPairDaemon func([]application, int, string) (application, error)
 	newLogger     func() *log.Logger
 	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
 	flagOutput    io.Writer
@@ -85,13 +89,17 @@ type dependencies struct {
 	stdout        io.Writer
 	lookPath      func(string) (string, error)
 	userHomeDir   func() (string, error)
+	isInteractive func(io.Reader) bool
 }
 
 func defaultDependencies() dependencies {
 	return dependencies{
-		openStore:     client.OpenStore,
-		openPairStore: client.OpenPairStore,
-		newRunner:     client.NewAgentRunner,
+		openStore:       client.OpenStore,
+		openPairStore:   client.OpenPairStore,
+		newRawTransport: transports.NewRaw,
+		provisionInbox:  transports.ProvisionInbox,
+		inspectInbox:    transports.InspectInbox,
+		newRunner:       client.NewAgentRunner,
 		newApp: func(
 			transport client.Transport,
 			store *client.Store,
@@ -117,6 +125,17 @@ func defaultDependencies() dependencies {
 				responseTier,
 			)
 		},
+		newPairDaemon: func(applications []application, concurrency int, lockPath string) (application, error) {
+			apps := make([]*client.App, 0, len(applications))
+			for _, application := range applications {
+				app, ok := application.(*client.App)
+				if !ok {
+					return nil, fmt.Errorf("pair application has unexpected type %T", application)
+				}
+				apps = append(apps, app)
+			}
+			return client.NewMultiDaemon(apps, concurrency, lockPath)
+		},
 		newLogger: func() *log.Logger {
 			return log.New(os.Stderr, "dearmachine: ", log.LstdFlags)
 		},
@@ -126,7 +145,22 @@ func defaultDependencies() dependencies {
 		stdout:        os.Stdout,
 		lookPath:      exec.LookPath,
 		userHomeDir:   os.UserHomeDir,
+		isInteractive: func(input io.Reader) bool {
+			file, ok := input.(*os.File)
+			if !ok {
+				return false
+			}
+			info, err := file.Stat()
+			return err == nil && info.Mode()&os.ModeCharDevice != 0
+		},
 	}
+}
+
+func inputIsInteractive(deps dependencies) bool {
+	if deps.isInteractive == nil {
+		return false
+	}
+	return deps.isInteractive(deps.stdin)
 }
 
 func parseConfig(args []string, output io.Writer) (config, error) {
@@ -255,13 +289,12 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if len(args) > 0 && args[0] == "up" {
 		return runUp(args[1:], getenv, deps)
 	}
-	return runStart(args, getenv, deps, nil)
+	return runStart(args, getenv, deps)
 }
 
-// runStart is shared by the historical direct invocation and up. A pair passed
-// by up owns its connection settings; direct invocation deliberately preserves
-// its existing explicit-flag behavior for compatibility with legacy installs.
-func runStart(args []string, getenv func(string) string, deps dependencies, selectedPair *client.Pair) error {
+// runStart is the deliberately low-level, direct diagnostic path. Normal
+// daemon operation always goes through `dearmachine up` and the pair registry.
+func runStart(args []string, getenv func(string) string, deps dependencies) error {
 	flagOutput := deps.flagOutput
 	if flagOutput == nil {
 		flagOutput = io.Discard
@@ -270,14 +303,11 @@ func runStart(args []string, getenv func(string) string, deps dependencies, sele
 	if err != nil {
 		return err
 	}
-	if selectedPair != nil {
-		cfg.inboxID = selectedPair.InboxID
-		cfg.transport = selectedPair.Transport
-		cfg.allow = strings.Join(selectedPair.Allow, ",")
-		cfg.allowSet = true
-	}
 	if cfg.inboxID == "" {
 		return fmt.Errorf("--inbox-id is required")
+	}
+	if strings.TrimSpace(cfg.dbPath) == "" {
+		return fmt.Errorf("--db is required for direct diagnostic invocation; use `dearmachine up` for registered pairs")
 	}
 	if deps.newTransport == nil {
 		allow, err := resolveAllow(cfg.allow, cfg.allowSet, getenv)
@@ -297,24 +327,11 @@ func runStart(args []string, getenv func(string) string, deps dependencies, sele
 	if err != nil {
 		return err
 	}
-	state, err := client.ResolvePairState(deps.userHomeDir, "")
+	dbPath, err := resolvePath(cfg.dbPath, deps.userHomeDir)
 	if err != nil {
 		return err
 	}
-	dbPath := cfg.dbPath
-	if strings.TrimSpace(dbPath) == "" {
-		dbPath = state.Path
-	}
-	var store *client.Store
-	if state.Legacy {
-		store, err = deps.openStore(dbPath)
-	} else {
-		openPairStore := deps.openPairStore
-		if openPairStore == nil {
-			openPairStore = client.OpenPairStore
-		}
-		store, err = openPairStore(dbPath, state.Pair)
-	}
+	store, err := deps.openStore(dbPath)
 	if err != nil {
 		return err
 	}

@@ -98,59 +98,27 @@ func TestParseConfigRejectsMagnificaHumanitasAliases(t *testing.T) {
 	}
 }
 
-func TestRunUsesPrivateDefaultDatabasePath(t *testing.T) {
+func TestDirectRunRequiresAndUsesExplicitDatabasePath(t *testing.T) {
 	app := &fakeApplication{}
 	deps := testDependencies(t, app)
-	home, err := deps.userHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
 	var opened string
 	deps.openStore = func(path string) (*client.Store, error) {
 		opened = path
 		return client.OpenStore(filepath.Join(t.TempDir(), "test.db"))
 	}
+	dbPath := filepath.Join(t.TempDir(), "explicit.db")
 	if err := run(
-		[]string{"--inbox-id", "inbox-123", "--once"},
+		[]string{"--inbox-id", "inbox-123", "--db", dbPath, "--once"},
 		func(string) string { return "test-key" },
 		deps,
 	); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	want := filepath.Join(home, ".dearmachine", "state", "dearmachine.db")
-	if opened != want {
-		t.Fatalf("opened database = %q, want %q", opened, want)
+	if opened != dbPath {
+		t.Fatalf("opened database = %q, want %q", opened, dbPath)
 	}
-}
-
-func TestRunUsesActivePairDatabaseByDefault(t *testing.T) {
-	app := &fakeApplication{}
-	deps := testDependencies(t, app)
-	home, err := deps.userHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	pair, err := client.CreatePair(deps.userHomeDir, client.Pair{
-		DisplayName: "Test pair", UserEmail: "user@example.test", DearMachineAddress: "machine@example.test",
-		Transport: "agentmail", InboxID: "inbox-123", Allow: []string{"user@example.test", "machine@example.test"},
-	})
-	if err != nil {
-		t.Fatalf("CreatePair: %v", err)
-	}
-	var opened string
-	deps.openPairStore = func(path string, got client.Pair) (*client.Store, error) {
-		opened = path
-		if got.ID != pair.ID {
-			t.Fatalf("opened pair = %q, want %q", got.ID, pair.ID)
-		}
-		return client.OpenPairStore(filepath.Join(t.TempDir(), "state.db"), got)
-	}
-	if err := run([]string{"--inbox-id", "inbox-123", "--once"}, func(string) string { return "test-key" }, deps); err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	want := filepath.Join(home, ".dearmachine", "pairs", pair.ID, "state", "dearmachine.db")
-	if opened != want {
-		t.Fatalf("opened database = %q, want %q", opened, want)
+	if err := run([]string{"--inbox-id", "inbox-123", "--once"}, func(string) string { return "test-key" }, deps); err == nil || !strings.Contains(err.Error(), "--db is required") {
+		t.Fatalf("direct invocation without --db error = %v", err)
 	}
 }
 
@@ -231,7 +199,7 @@ func TestRunUsesSelectedTransportConstructor(t *testing.T) {
 		return client.NewAgentMailTransport(inboxID)
 	}
 	if err := run(
-		[]string{"--transport", "openmail", "--inbox-id", "inb-test", "--once"},
+		[]string{"--transport", "openmail", "--inbox-id", "inb-test", "--db", filepath.Join(t.TempDir(), "state.db"), "--once"},
 		func(string) string { return "" },
 		deps,
 	); err != nil {
@@ -265,7 +233,7 @@ func TestRunValidatesRequiredConfigurationBeforeConstruction(t *testing.T) {
 		},
 		{
 			name:   "missing API key",
-			args:   []string{"--inbox-id", "inbox-123", "--allow", "paired@example.test"},
+			args:   []string{"--inbox-id", "inbox-123", "--db", "state.db", "--allow", "paired@example.test"},
 			getenv: func(string) string { return "" },
 			want:   "AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required",
 		},
@@ -369,7 +337,7 @@ func TestRunConstructsDependenciesWiresSignalsAndDispatches(t *testing.T) {
 			}, deps); err != nil {
 				t.Fatalf("run: %v", err)
 			}
-			if storePath != "configured.db" || inboxID != "inbox-123" ||
+			if !strings.HasSuffix(storePath, string(filepath.Separator)+"configured.db") || inboxID != "inbox-123" ||
 				binary != "/bin/machtiani" || projectDir != "/project" || model != "model-123" ||
 				concurrency != 7 || pollInterval != 3*time.Second || !verbose ||
 				pidfile != "/run/dearmachine.pid" || responseTier != client.TierPlain {
@@ -439,7 +407,7 @@ func TestRunReportsDependencyConstructionFailures(t *testing.T) {
 				}
 			}
 			err := run(
-				[]string{"--inbox-id", "inbox-123"},
+				[]string{"--inbox-id", "inbox-123", "--db", "state.db"},
 				func(string) string { return "test-key" },
 				deps,
 			)
@@ -455,7 +423,7 @@ func TestRunReturnsSelectedCommandError(t *testing.T) {
 	app := &fakeApplication{err: want}
 	deps := testDependencies(t, app)
 	err := run(
-		[]string{"--inbox-id", "inbox-123", "--once"},
+		[]string{"--inbox-id", "inbox-123", "--db", "state.db", "--once"},
 		func(string) string { return "test-key" },
 		deps,
 	)
@@ -645,7 +613,7 @@ func TestRunWiresConfiguredResponseTierToApp(t *testing.T) {
 				return "", os.ErrNotExist
 			}
 			if err := run(
-				[]string{"--inbox-id", "inbox-123", "--once"},
+				[]string{"--inbox-id", "inbox-123", "--db", "state.db", "--once"},
 				func(string) string { return "test-key" },
 				deps,
 			); err != nil {
@@ -697,6 +665,15 @@ func testDependencies(t *testing.T, app application) dependencies {
 		newTransport: func(inboxID string) (client.Transport, error) {
 			return client.NewAgentMailTransport(inboxID)
 		},
+		newRawTransport: func(_, _ string) (client.Transport, error) {
+			return &emptyTransport{}, nil
+		},
+		provisionInbox: func(_ context.Context, transport string) (client.Inbox, error) {
+			return client.Inbox{Transport: transport, ProviderID: "provisioned-inbox", Address: "machine@example.test"}, nil
+		},
+		inspectInbox: func(_ context.Context, transport, selection string) (client.Inbox, error) {
+			return client.Inbox{Transport: transport, ProviderID: selection, Address: "adopted@example.test"}, nil
+		},
 		newRunner: client.NewAgentRunner,
 		newApp: func(
 			client.Transport,
@@ -712,14 +689,34 @@ func testDependencies(t *testing.T, app application) dependencies {
 		) (application, error) {
 			return app, nil
 		},
-		newLogger: func() *log.Logger { return log.New(io.Discard, "", 0) },
+		newLogger:     func() *log.Logger { return log.New(io.Discard, "", 0) },
+		newPairDaemon: newApplicationGroup,
 		notifyContext: func(parent context.Context, _ ...os.Signal) (context.Context, context.CancelFunc) {
 			return context.WithCancel(parent)
 		},
-		flagOutput: io.Discard,
+		flagOutput:    io.Discard,
+		isInteractive: func(io.Reader) bool { return true },
 	}
 	configureAgentTestDeps(t, &deps)
 	return deps
+}
+
+type emptyTransport struct{}
+
+func (*emptyTransport) Poll(context.Context) ([]client.Message, error)           { return nil, nil }
+func (*emptyTransport) Thread(context.Context, string) ([]client.Message, error) { return nil, nil }
+func (*emptyTransport) Message(context.Context, string) (client.Message, error) {
+	return client.Message{}, nil
+}
+func (*emptyTransport) Reply(context.Context, string, client.ReplyPayload, string) (string, error) {
+	return "", nil
+}
+func (*emptyTransport) ReplyReceipt(context.Context, client.Message) (string, bool, error) {
+	return "", false, nil
+}
+func (*emptyTransport) MarkProcessed(context.Context, string) error { return nil }
+func (*emptyTransport) FetchAttachment(context.Context, string, int64) ([]byte, error) {
+	return nil, nil
 }
 
 func configureAgentTestDeps(t *testing.T, deps *dependencies) {

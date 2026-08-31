@@ -69,6 +69,18 @@ func NewOpenMailTransport(inboxID string) (*OpenMailTransport, error) {
 	})
 }
 
+func InspectOpenMailInbox(ctx context.Context, selection string) (Inbox, error) {
+	transport, err := NewOpenMailTransport(selection)
+	if err != nil {
+		return Inbox{}, err
+	}
+	providerID, err := transport.inboxID(ctx)
+	if err != nil {
+		return Inbox{}, err
+	}
+	return Inbox{Transport: "openmail", ProviderID: providerID, Address: transport.resolvedAddress}, nil
+}
+
 func newOpenMailTransport(config openMailTransportConfig) (*OpenMailTransport, error) {
 	if strings.TrimSpace(config.Inbox) == "" {
 		return nil, fmt.Errorf("OpenMail inbox ID or address is required")

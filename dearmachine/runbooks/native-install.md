@@ -96,10 +96,21 @@ dearmachine init \
   --entry-point-repo "$project" \
   --agent-bin machtiani
 
-dearmachine \
-  --inbox-id <inbox-id> \
+# First-time pairing: adopt the exact existing provider inbox. To provision a
+# new AgentMail inbox instead, replace the last line with
+# --new-inbox --transport agentmail.
+dearmachine up --create \
+  --email <user-email> \
+  --inbox <inbox-id-or-address> --transport agentmail \
   --project "$project" \
   --entry-point-repo "$project" \
+  --magnifica-humanitas \
+  --once
+
+dearmachine up \
+  --project "$project" \
+  --entry-point-repo "$project" \
+  --magnifica-humanitas \
   --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
   --verbose
 ```
@@ -121,8 +132,8 @@ the same runtime environment as their preflight check. The snapshot does not
 follow later shell changes; rerun the launcher after changing a backend
 installation, its runtime, or your relevant `PATH` entries.
 
-First stop any existing client for this inbox and database. Do not replace a
-live service or start a second poller:
+First stop any existing client. Do not replace a live service or start a
+second daemon:
 
 ```bash
 systemctl --user stop dearmachine-native.service
@@ -146,10 +157,10 @@ nix run .#dearmachine-native-service -- \
   --environment-file "$backend_environment_file" \
   --agent-manager "$manager" \
   --working-directory "$project" \
-  -- "$client" \
-    --inbox-id <inbox-id> \
+  -- "$client" up \
     --project "$project" \
     --entry-point-repo "$project" \
+    --magnifica-humanitas \
     --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
     --verbose
 ```

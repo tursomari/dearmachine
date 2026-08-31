@@ -409,9 +409,8 @@ func runInboxSkipped(args []string, deps dependencies) error {
 	return nil
 }
 
-// resolveInboxStatePaths keeps an explicit --db override for maintenance and
-// recovery work. Without one, inbox operations follow the active pair lane;
-// an empty registry deliberately retains the historical shared database.
+// resolveInboxStatePaths keeps an explicit --db override for low-level
+// maintenance. Without one, exactly one registered pair must be resolvable.
 func resolveInboxStatePaths(dbPath, pidfile string, deps dependencies) (string, string, *client.Pair, error) {
 	var err error
 	var pair *client.Pair
@@ -421,10 +420,8 @@ func resolveInboxStatePaths(dbPath, pidfile string, deps dependencies) (string, 
 			return "", "", nil, resolveErr
 		}
 		dbPath = state.Path
-		if !state.Legacy {
-			selected := state.Pair
-			pair = &selected
-		}
+		selected := state.Pair
+		pair = &selected
 	} else {
 		dbPath, err = resolvePath(dbPath, deps.userHomeDir)
 		if err != nil {

@@ -43,22 +43,22 @@ grep -F 'two inbound user turns map to one mct session with sequence 2' \
   "$disposable" >/dev/null
 grep -F 'exactly two substantive replies arrive' "$disposable" >/dev/null
 for contract in \
-  '## Multi-pair lane isolation' \
-  '## Pair-A pending revival falls through to pair B without pair isolation' \
-  '## Pair-A reply footer cannot join pair B session' \
-  '## Provider ID overlap stays independent' \
-  '## Per-pair allow set keeps traffic in lane'; do
+  '## Contract under test' \
+  '## Creation and intent checks' \
+  '## Single-daemon routing and state isolation' \
+  '## Selection, restart, and scheduling' \
+  '## Teardown and report'; do
   grep -F "$contract" "$multi_pair" >/dev/null
 done
-grep -F -- "\`dearmachine up\` wizard" "$multi_pair" >/dev/null
-grep -F -- "\`dearmachine up --new\`" "$multi_pair" >/dev/null
-grep -F 'export DEEPSEEK_API_KEY' "$multi_pair" >/dev/null
-grep -F 'up --switch <pair-b-uuid>' "$multi_pair" >/dev/null
-grep -F 'classify the converse-sender negative sub-check as' "$multi_pair" >/dev/null
-if grep -Fq -- 'public pair provisioning surface' "$multi_pair"; then
-  echo 'multi-pair protocol must provision through the up wizard' >&2
-  exit 1
-fi
+grep -F -- 'starts every pair. A repeatable' "$multi_pair" >/dev/null
+grep -F -- 'email-or-uuid' "$multi_pair" >/dev/null
+grep -F -- 'narrows only that invocation and never changes the registry' "$multi_pair" >/dev/null
+grep -F -- 'provisions a real randomized AgentMail' "$multi_pair" >/dev/null
+grep -F -- 'intentionally shares an inbox' "$multi_pair" >/dev/null
+grep -F -- 'are unknown flags.' "$multi_pair" >/dev/null
+grep -F -- 'on every daemon launch.' "$multi_pair" >/dev/null
+grep -F -- 'schema version' "$multi_pair" >/dev/null
+grep -F -- 'must equal 2.' "$multi_pair" >/dev/null
 grep -F 'exactly two allowed inbound messages' "$openmail" >/dev/null
 grep -F 'exactly two later outbound replies' "$openmail" >/dev/null
 grep -F 'Native foreground execution is the default' "$native" >/dev/null

@@ -471,6 +471,7 @@
             no_allow=$(AGENTMAIL_API_KEY_FILE="$TMPDIR/agentmail-api-key" \
               PATH=/missing ${project.dearmachine}/bin/dearmachine \
               --inbox-id smoke \
+              --db "$TMPDIR/smoke.db" \
               --config /missing \
               --once 2>&1 || true)
             grep -F 'allow list is required' <<<"$no_allow" > /dev/null
@@ -478,6 +479,7 @@
               DEARMACHINE_ALLOW='smoke@example.com' \
               PATH=/missing ${project.dearmachine}/bin/dearmachine \
               --inbox-id smoke \
+              --db "$TMPDIR/smoke.db" \
               --config /missing \
               --once 2>&1 || true)
             grep -F 'read device config' <<<"$credential_smoke" > /dev/null

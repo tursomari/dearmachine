@@ -47,6 +47,57 @@ func NewAgentMailTransport(inboxID string) (*Mailbox, error) {
 	return NewMailbox(agentmail.NewClient(option.WithAPIKey(credential)), inboxID)
 }
 
+// ProvisionAgentMailInbox creates a provider-owned inbox with a randomized
+// address. The caller is responsible for persisting the returned identity.
+func ProvisionAgentMailInbox(ctx context.Context) (Inbox, error) {
+	credential, err := loadAgentMailCredential()
+	if err != nil {
+		return Inbox{}, err
+	}
+	api := agentmail.NewClient(option.WithAPIKey(credential))
+	created, err := api.Inboxes.New(ctx, agentmail.InboxNewParams{CreateInbox: agentmail.CreateInboxParam{}})
+	if err != nil {
+		return Inbox{}, fmt.Errorf("create AgentMail inbox: %w", err)
+	}
+	return Inbox{Transport: "agentmail", ProviderID: created.InboxID, Address: created.Email}, nil
+}
+
+func InspectAgentMailInbox(ctx context.Context, selection string) (Inbox, error) {
+	credential, err := loadAgentMailCredential()
+	if err != nil {
+		return Inbox{}, err
+	}
+	api := agentmail.NewClient(option.WithAPIKey(credential))
+	pageToken := ""
+	var matches []agentmail.Inbox
+	for {
+		params := agentmail.InboxListParams{Limit: agentmail.Int(100)}
+		if pageToken != "" {
+			params.PageToken = agentmail.String(pageToken)
+		}
+		page, err := api.Inboxes.List(ctx, params)
+		if err != nil {
+			return Inbox{}, fmt.Errorf("list AgentMail inboxes: %w", err)
+		}
+		for _, inbox := range page.Inboxes {
+			if strings.EqualFold(strings.TrimSpace(selection), inbox.InboxID) || strings.EqualFold(strings.TrimSpace(selection), inbox.Email) {
+				matches = append(matches, inbox)
+			}
+		}
+		pageToken = page.NextPageToken
+		if pageToken == "" {
+			break
+		}
+	}
+	if len(matches) == 0 {
+		return Inbox{}, fmt.Errorf("AgentMail inbox %q was not found", selection)
+	}
+	if len(matches) > 1 {
+		return Inbox{}, fmt.Errorf("AgentMail inbox %q is ambiguous", selection)
+	}
+	return Inbox{Transport: "agentmail", ProviderID: matches[0].InboxID, Address: matches[0].Email}, nil
+}
+
 func loadAgentMailCredential() (string, error) {
 	if credential := strings.TrimSpace(os.Getenv("AGENTMAIL_API_KEY")); credential != "" {
 		return credential, nil
