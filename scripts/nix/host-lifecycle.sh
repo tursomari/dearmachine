@@ -29,6 +29,7 @@ usage() {
 Usage: dearmachine-host-lifecycle <command> [options]
 
   install                         Install and start the user stack
+  create ARGS...                  Create a pair while the stack is down
   upgrade                         Upgrade and retain one rollback release
   upgrade --rollback              Swap current and rollback releases
   start|stop|restart|status|health|logs
@@ -127,13 +128,13 @@ ensure_directories() {
     "$CLIENT_ROOT/state" "$CLIENT_ROOT/run" "$CLIENT_ROOT/log" \
     "$CLIENT_ROOT/agent-manager" \
     "$DATA_DIR/tools" "$SYSTEMD_DIR"
+  install -d -m 0700 "$CLIENT_HOME/.config/dearmachine"
 }
 
 require_stack_environment() {
   [[ -f $STACK_ENV && ! -L $STACK_ENV ]] || {
     printf 'Create %s before installation. It must define at least:\n' "$STACK_ENV" >&2
     printf '  DEARMACHINE_PROJECT_DIR=/absolute/project\n' >&2
-    printf '  DEARMACHINE_INBOX_ID=<inbox-id>\n' >&2
     die "missing stack environment file"
   }
   [[ $(stat -c %u "$STACK_ENV") -eq $(id -u) ]] || \
@@ -252,7 +253,7 @@ export_stack_context() {
   export DEARMACHINE_TOOLS_DIR=$DATA_DIR/tools
   export DEARMACHINE_PROJECT_NAME=dearmachine
   export DEARMACHINE_STACK_MODE=$mode
-  export DEARMACHINE_IMAGE_ARCHIVE=$ARCHIVE_DIR/current
+  export DEARMACHINE_IMAGE_ARCHIVE=${DEARMACHINE_CREATE_IMAGE_ARCHIVE:-$ARCHIVE_DIR/current}
 }
 
 stack_executable() {
@@ -435,6 +436,18 @@ stack_command() {
   run_stack "$@"
 }
 
+create_pair() {
+  [[ $# -gt 0 ]] || die "create requires pair arguments"
+  require_packaged_inputs
+  validate_service_name
+  ensure_directories
+  require_stack_environment
+  if [[ ! -e $ARCHIVE_DIR/current ]]; then
+    export DEARMACHINE_CREATE_IMAGE_ARCHIVE=$DEARMACHINE_IMAGE_SOURCE
+  fi
+  run_stack create "$@"
+}
+
 secrets_host() {
   require_packaged_inputs
   [[ $# -gt 0 ]] || set -- status
@@ -564,6 +577,7 @@ main() {
   shift
   case $command in
     install) install_host "$@" ;;
+    create) create_pair "$@" ;;
     upgrade) upgrade_host "$@" ;;
     uninstall) uninstall_host "$@" ;;
     start|stop|restart) operate_service "$command" "$@" ;;

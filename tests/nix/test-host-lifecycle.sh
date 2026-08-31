@@ -25,7 +25,6 @@ export TEST_FAIL_POLL=$TEST_ROOT/fail-poll
 mkdir -p "$HOME" "$XDG_CONFIG_HOME/dearmachine"
 cat >"$XDG_CONFIG_HOME/dearmachine/stack.env" <<EOF
 DEARMACHINE_PROJECT_DIR=$TEST_ROOT/project
-DEARMACHINE_INBOX_ID=credential-free-test
 DEARMACHINE_STACK_MODE=test
 EOF
 chmod 0600 "$XDG_CONFIG_HOME/dearmachine/stack.env"
@@ -59,9 +58,13 @@ make_runtime() {
 set -euo pipefail
 printf 'stack %s\n' "$*" >>"$TEST_ACTION_LOG"
 case ${1:-} in
+  create)
+    printf 'create-image %s\n' "${DEARMACHINE_IMAGE_ARCHIVE:-}" \
+      >>"$TEST_ACTION_LOG"
+    ;;
   container-logs)
-    printf 'stack-env %s %s\n' \
-      "${DEARMACHINE_PROJECT_DIR:-}" "${DEARMACHINE_INBOX_ID:-}" \
+    printf 'stack-env %s\n' \
+      "${DEARMACHINE_PROJECT_DIR:-}" \
       >>"$TEST_ACTION_LOG"
     echo 'DearMachine credential-free Compose test service ready'
     ;;
@@ -94,6 +97,12 @@ assert_link() {
   }
 }
 
+run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" create \
+  --email person@example.test --new-inbox --transport agentmail
+grep -F "stack create --email person@example.test --new-inbox --transport agentmail" \
+  "$TEST_ACTION_LOG" >/dev/null
+grep -F "create-image $IMAGE_ONE" "$TEST_ACTION_LOG" >/dev/null
+
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" install
 archive_dir=$XDG_DATA_HOME/dearmachine/image-archive
 runtime_dir=$XDG_DATA_HOME/dearmachine/runtime
@@ -108,7 +117,7 @@ touch "$HOME/.dearmachine/state/preserved-client-state"
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" install
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" status
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" logs
-grep -F "stack-env $TEST_ROOT/project credential-free-test" \
+grep -F "stack-env $TEST_ROOT/project" \
   "$TEST_ACTION_LOG" >/dev/null
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" secrets status
 

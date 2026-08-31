@@ -3,6 +3,7 @@ services:
     environment:
       AGENTMAIL_API_KEY: ""
       AGENTMAIL_API_KEY_FILE: /run/secrets/dearmachine_agentmail_api_key
+      DEARMACHINE_BACKEND_ENVIRONMENT_FILE: /home/dearmachine/.config/dearmachine/backends.env
     secrets:
       - dearmachine_agentmail_api_key
 

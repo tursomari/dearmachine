@@ -15,7 +15,8 @@ runtime mounts.
   package as the client;
 - BusyBox and CA certificates;
 - a small entry point that can load `AGENTMAIL_API_KEY` from a production
-  Podman secret; and
+  Podman secret and validated backend variables from the private client home;
+  and
 - a PID-file health probe.
 
 The image contains no inbox identity, API key, backend credential, machtiani
@@ -42,7 +43,9 @@ The explicit client directories default beneath the private client home, while
 the client home and tools directory default beneath `DEARMACHINE_STATE_DIR`.
 The stack never mounts the ambient host home. Authenticate
 backend CLIs into that private client home, or provision only their narrowly
-required files there. Do not mount a normal home directory merely to make a
+required files there. Backend `NAME=value` assignments live at
+`.config/dearmachine/backends.env` in that private home, must be mode `0600`,
+and are validated and exported by the entry point. Do not mount a normal home directory merely to make a
 backend discover its credentials.
 
 The selected project is deliberately the only coding tree mounted in v1. It

@@ -112,6 +112,35 @@
           containerEntrypoint = pkgs.writeShellScriptBin "dearmachine-container-entrypoint" ''
             set -eu
 
+            backend_environment_file="''${DEARMACHINE_BACKEND_ENVIRONMENT_FILE:-}"
+            if [ -n "$backend_environment_file" ]; then
+              if [ ! -r "$backend_environment_file" ]; then
+                printf 'DEARMACHINE_BACKEND_ENVIRONMENT_FILE is not readable: %s\n' \
+                  "$backend_environment_file" >&2
+                exit 1
+              fi
+              while IFS= read -r environment_line || [ -n "$environment_line" ]; do
+                case "$environment_line" in
+                  ""|'#'*) continue ;;
+                  *=*)
+                    environment_name=''${environment_line%%=*}
+                    case "$environment_name" in
+                      ""|[0-9]*|*[!A-Za-z0-9_]*)
+                        printf 'invalid backend environment variable name: %s\n' \
+                          "$environment_name" >&2
+                        exit 1
+                        ;;
+                    esac
+                    export "$environment_line"
+                    ;;
+                  *)
+                    printf 'invalid backend environment file line\n' >&2
+                    exit 1
+                    ;;
+                esac
+              done < "$backend_environment_file"
+            fi
+
             if [ -n "''${AGENTMAIL_API_KEY_FILE:-}" ]; then
               if [ ! -r "$AGENTMAIL_API_KEY_FILE" ]; then
                 printf 'AGENTMAIL_API_KEY_FILE is not readable: %s\n' \
@@ -196,6 +225,12 @@
             assert service["image"] == "''${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}"
             assert service["restart"] == "unless-stopped"
             assert service["healthcheck"]["test"] == ["CMD", "dearmachine-health"]
+            assert service["command"][0] == "up"
+            assert "--magnifica-humanitas" in service["command"]
+            assert service["command"].count("--magnifica-humanitas") == 1
+            assert "--inbox-id" not in service["command"]
+            assert "--db" not in service["command"]
+            assert "--allow" not in service["command"]
             assert "--agent-manager" not in service["command"]
             assert service["environment"]["HOME"] == "/home/dearmachine"
             for directory in ("config", "state", "run", "log"):
@@ -215,6 +250,7 @@
             assert production["services"]["dearmachine"]["environment"] == {
                 "AGENTMAIL_API_KEY": "",
                 "AGENTMAIL_API_KEY_FILE": "/run/secrets/dearmachine_agentmail_api_key",
+                "DEARMACHINE_BACKEND_ENVIRONMENT_FILE": "/home/dearmachine/.config/dearmachine/backends.env",
             }
             assert production["services"]["dearmachine"]["secrets"] == [
                 "dearmachine_agentmail_api_key"
@@ -324,6 +360,12 @@
             PROJECT_ROOT=${./.} bash ${./tests/nix/test-host-lifecycle.sh}
             touch $out
           '';
+          stackRuntimeCheck = pkgs.runCommand "dearmachine-stack-runtime-check" {
+            nativeBuildInputs = with pkgs; [ bash coreutils gnugrep ];
+          } ''
+            PROJECT_ROOT=${./.} bash ${./tests/nix/test-stack-runtime.sh}
+            touch $out
+          '';
           stateMigrationCheck = pkgs.runCommand "dearmachine-state-migration-check" {
             nativeBuildInputs = [ pkgs.bash pkgs.coreutils pkgs.python3 pkgs.sqlite ];
           } ''
@@ -354,6 +396,7 @@
               ${./tests/nix/test-host-lifecycle.sh} \
               ${./tests/nix/test-native-service-launch.sh} \
               ${./tests/nix/test-host-podman-integration.sh} \
+              ${./tests/nix/test-stack-runtime.sh} \
               ${./tests/nix/test-runbook-contracts.sh} \
               ${./tests/nix/test-state-migration.sh}
             touch $out
@@ -365,7 +408,7 @@
             hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
             containerLifecycle containerInstall containerUpgrade containerUninstall
             containerSecrets containerMigrate
-            unitCheck hostLifecycleCheck stateMigrationCheck runbookCheck nativeServiceLauncherCheck shellCheck;
+            unitCheck hostLifecycleCheck stackRuntimeCheck stateMigrationCheck runbookCheck nativeServiceLauncherCheck shellCheck;
         };
     in {
       packages = forAllSystems (system:
@@ -503,6 +546,7 @@
           compose = project.composeCheck;
           host-lifecycle = project.hostLifecycle;
           host-lifecycle-test = project.hostLifecycleCheck;
+          stack-runtime-test = project.stackRuntimeCheck;
           state-migration-test = project.stateMigrationCheck;
           systemd-user-unit = project.unitCheck;
           runbook-contracts = project.runbookCheck;

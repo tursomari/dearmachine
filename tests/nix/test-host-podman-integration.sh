@@ -57,7 +57,6 @@ export NIX_CONFIG=${NIX_CONFIG:-experimental-features = nix-command flakes}
 install -d -m 0700 "$HOME" "$XDG_CONFIG_HOME/dearmachine" "$DEARMACHINE_PROJECT_DIR"
 cat >"$XDG_CONFIG_HOME/dearmachine/stack.env" <<EOF
 DEARMACHINE_PROJECT_DIR=$DEARMACHINE_PROJECT_DIR
-DEARMACHINE_INBOX_ID=credential-free-test
 DEARMACHINE_STACK_MODE=test
 EOF
 chmod 0600 "$XDG_CONFIG_HOME/dearmachine/stack.env"

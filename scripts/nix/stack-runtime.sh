@@ -28,6 +28,7 @@ export DEARMACHINE_CLIENT_AGENT_MANAGER_DIR=${DEARMACHINE_CLIENT_AGENT_MANAGER_D
 export DEARMACHINE_MACHTIANI_DIR=${DEARMACHINE_MACHTIANI_DIR:-$DEARMACHINE_CLIENT_HOME/.machtiani}
 export DEARMACHINE_PROJECT_DIR=${DEARMACHINE_PROJECT_DIR:-}
 export DEARMACHINE_TOOLS_DIR=${DEARMACHINE_TOOLS_DIR:-$state_dir/tools}
+export DEARMACHINE_BACKEND_ENVIRONMENT_FILE=${DEARMACHINE_BACKEND_ENVIRONMENT_FILE:-$DEARMACHINE_CLIENT_HOME/.config/dearmachine/backends.env}
 export DEARMACHINE_PROJECT_NAME=$project
 export CONTAINERS_STORAGE_CONF=$storage_conf
 export HOME=${DEARMACHINE_PODMAN_HOME:-$config_dir/home}
@@ -80,10 +81,6 @@ case $mode in
   development) ;;
   production) compose_files+=(-f "$compose_dir/compose.production.yaml") ;;
   test)
-    # podman-compose interpolates the base file before applying this overlay.
-    # Supply an unused value so the base file's strict development/production
-    # substitution does not reject credential-free test mode.
-    export DEARMACHINE_INBOX_ID=${DEARMACHINE_INBOX_ID:-credential-free-test}
     compose_files+=(-f "$compose_dir/compose.test.yaml")
     if [[ ! -f $test_service ]]; then
       cat >"$test_service" <<'EOF'
@@ -119,6 +116,10 @@ container_id() {
 }
 
 preflight() {
+  if [[ ${DEARMACHINE_TEST_SKIP_HOST_PREFLIGHT:-0} == 1 ]]; then
+    podman info >/dev/null
+    return
+  fi
   [[ -r /sys/fs/cgroup/cgroup.controllers ]] || {
     echo "cgroup v2 is required" >&2
     return 1
@@ -224,6 +225,24 @@ require_runtime_boundary() {
     echo "place a Linux-compatible executable or Nix-store symlink there" >&2
     return 1
   }
+  if [[ $mode == production ]]; then
+    [[ -f $DEARMACHINE_BACKEND_ENVIRONMENT_FILE && \
+       ! -L $DEARMACHINE_BACKEND_ENVIRONMENT_FILE && \
+       -r $DEARMACHINE_BACKEND_ENVIRONMENT_FILE ]] || {
+      echo "backend environment must be a readable regular file, not a symlink: $DEARMACHINE_BACKEND_ENVIRONMENT_FILE" >&2
+      return 1
+    }
+    [[ $(stat -c %u "$DEARMACHINE_BACKEND_ENVIRONMENT_FILE") -eq $(id -u) ]] || {
+      echo "backend environment must be owned by the current user: $DEARMACHINE_BACKEND_ENVIRONMENT_FILE" >&2
+      return 1
+    }
+    local backend_mode
+    backend_mode=$(stat -c %a "$DEARMACHINE_BACKEND_ENVIRONMENT_FILE")
+    (( (8#$backend_mode & 8#077) == 0 )) || {
+      echo "backend environment must not be accessible by group or other: $DEARMACHINE_BACKEND_ENVIRONMENT_FILE" >&2
+      return 1
+    }
+  fi
 }
 
 wait_healthy() {
@@ -270,6 +289,36 @@ case $action in
     preflight
     load_image
     podman run --rm "${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}" "$@"
+    ;;
+  create)
+    [[ $mode == production ]] || {
+      echo "dearmachine-stack create requires DEARMACHINE_STACK_MODE=production" >&2
+      exit 2
+    }
+    [[ $# -gt 0 ]] || {
+      echo "usage: dearmachine-stack create --email ADDRESS (--new-inbox --transport ID | --inbox SELECTOR [--transport ID])" >&2
+      exit 2
+    }
+    require_runtime_boundary
+    preflight
+    require_production_secret
+    load_image
+    [[ -z $(container_id) ]] || {
+      echo "dearmachine-stack create requires the project stack to be down" >&2
+      exit 1
+    }
+    compose run --rm --no-deps dearmachine \
+      up --create "$@" \
+      --project /workspace \
+      --config /home/dearmachine/.dearmachine/config/dearmachine.toml \
+      --agent-bin /opt/dearmachine/bin/machtiani \
+      --pidfile /home/dearmachine/.dearmachine/run/dearmachine.pid \
+      --entry-point-repo "${DEARMACHINE_ENTRY_POINT_REPO:-}" \
+      --entry-point-prompt "${DEARMACHINE_ENTRY_POINT_PROMPT:-/home/dearmachine/.dearmachine/entrypoint/main/documentation/update-prompt-template.md}" \
+      --poll-interval "${DEARMACHINE_POLL_INTERVAL:-60s}" \
+      --once \
+      --magnifica-humanitas \
+      --verbose
     ;;
   up)
     require_runtime_boundary
@@ -321,7 +370,7 @@ case $action in
     ;;
   down) compose down ;;
   *)
-    echo "usage: dearmachine-stack <preflight|config|load|unload|image|run|up|rebuild|wait|health|status|stop|exec|logs|container-logs|containers|poll-ready|secrets|down>" >&2
+    echo "usage: dearmachine-stack <preflight|config|load|unload|image|run|create|up|rebuild|wait|health|status|stop|exec|logs|container-logs|containers|poll-ready|secrets|down>" >&2
     exit 2
     ;;
 esac

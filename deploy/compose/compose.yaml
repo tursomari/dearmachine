@@ -16,16 +16,13 @@ services:
       XDG_CONFIG_HOME: /home/dearmachine/.config
       XDG_STATE_HOME: /home/dearmachine/.local/state
     command:
-      - --inbox-id
-      - ${DEARMACHINE_INBOX_ID:?set DEARMACHINE_INBOX_ID}
+      - up
       - --project
       - /workspace
       - --config
       - /home/dearmachine/.dearmachine/config/dearmachine.toml
       - --agent-bin
       - /opt/dearmachine/bin/machtiani
-      - --db
-      - /home/dearmachine/.dearmachine/state/dearmachine.db
       - --pidfile
       - /home/dearmachine/.dearmachine/run/dearmachine.pid
       - --entry-point-repo
@@ -34,6 +31,7 @@ services:
       - ${DEARMACHINE_ENTRY_POINT_PROMPT:-/home/dearmachine/.dearmachine/entrypoint/main/documentation/update-prompt-template.md}
       - --poll-interval
       - ${DEARMACHINE_POLL_INTERVAL:-60s}
+      - --magnifica-humanitas
       - --verbose
     volumes:
       - ${DEARMACHINE_CLIENT_HOME:?set DEARMACHINE_CLIENT_HOME}:/home/dearmachine:Z

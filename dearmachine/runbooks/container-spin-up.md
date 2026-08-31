@@ -108,7 +108,6 @@ install -d -m 0700 \
 install -m 0600 /dev/null "$XDG_CONFIG_HOME/dearmachine/stack.env"
 printf '%s\n' \
   "DEARMACHINE_PROJECT_DIR=$DEARMACHINE_PROJECT_DIR" \
-  'DEARMACHINE_INBOX_ID=credential-free-test' \
   'DEARMACHINE_STACK_MODE=test' \
   >"$XDG_CONFIG_HOME/dearmachine/stack.env"
 

@@ -45,7 +45,6 @@ test -d "$project_dir/.git"
 install -m 0600 /dev/null "$HOME/.config/dearmachine/stack.env"
 printf '%s\n' \
   "DEARMACHINE_PROJECT_DIR=$project_dir" \
-  'DEARMACHINE_INBOX_ID=<inbox-id>' \
   >"$HOME/.config/dearmachine/stack.env"
 ```
 
@@ -54,6 +53,21 @@ Nix-store symlinks in
 `~/.local/share/dearmachine/tools`. Authenticate backends only in the private
 client home at `~/.local/share/dearmachine/client-home`. The service mounts the
 selected project and the current user's `~/.machtiani` separately.
+
+If the selected Machtiani backend references environment variables, copy only
+those assignments into the container's private backend environment file. An
+empty mode-`0600` file is valid for backends that authenticate another way:
+
+```bash
+backend_environment="$HOME/.local/share/dearmachine/client-home/.config/dearmachine/backends.env"
+install -d -m 0700 "$(dirname "$backend_environment")"
+install -m 0600 /dev/null "$backend_environment"
+# Copy authorized NAME=value assignments into this file without printing them.
+```
+
+The image entry point validates variable names and exports this file before it
+starts DearMachine. Values never belong in `stack.env`, Compose arguments, or
+service logs.
 
 Agent Manager is built from the DearMachine source and included in the OCI
 image. The flake exposes a separately pinned compatible Codex CLI as an
@@ -92,6 +106,21 @@ nix run .#container-secrets -- rotate --file "$secret_file"
 ```
 
 ## Install and verify
+
+Create the first pair explicitly while the stack is down. This command uses
+the same production image, mounts, private home, and Podman secret as the
+installed service. Use `--inbox <exact-id-or-address> --transport <id>` instead
+when adopting an existing provider inbox.
+
+```bash
+nix run .#dearmachine-container-lifecycle -- create \
+  --email <authorized-user-email> \
+  --new-inbox --transport agentmail
+```
+
+Additional pairs require the same explicit `create` command. Plain service
+startup subsequently runs `dearmachine up`, which starts every registered
+pair and never creates one because of a mistyped selector.
 
 ```bash
 nix run .#container-install

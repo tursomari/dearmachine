@@ -291,6 +291,12 @@ under the canonical `.dearmachine/config` path in that private home. Agent
 Manager comes from the tested DearMachine image and must not be replaced by a
 host-mounted copy.
 
+Put only the selected backend's authorized `NAME=value` assignments in
+`$DEARMACHINE_CLIENT_HOME/.config/dearmachine/backends.env`, owned by the
+current user and mode `0600`. Use an empty file when the backend does not need
+environment variables. The production entry point validates names and exports
+the assignments without placing values in Compose arguments or logs.
+
 Before `dearmachine-stack up`, run `machtiani sync` once in the disposable
 project with the same isolated Machtiani home/configuration that the container
 will mount, then copy or mount that synchronized UUID store. DearMachine creates
@@ -298,13 +304,14 @@ its PID file only after its startup sync completes. A brand-new unsynchronized
 store can therefore spend the entire PID health window doing a legitimate live
 README sync and make an otherwise working container appear unhealthy.
 
-Write `stack.env` with the temporary receiver and project, then synchronize the
-transport credential into the isolated Podman secret without printing it:
+Write `stack.env` with the project and timing controls, then synchronize the
+transport credential into the isolated Podman secret without printing it.
+Create the pair explicitly through the production container before starting
+the all-pairs daemon:
 
 ```bash
 cat >"$XDG_CONFIG_HOME/dearmachine/stack.env" <<EOF
 DEARMACHINE_PROJECT_DIR=$runtime_root/project
-DEARMACHINE_INBOX_ID=<temporary-receiver-id>
 DEARMACHINE_STACK_MODE=production
 DEARMACHINE_ENTRY_POINT_REPO=
 DEARMACHINE_POLL_INTERVAL=10s
@@ -317,6 +324,9 @@ set +a
 
 cd "$repository"
 nix run .#dearmachine-stack -- secrets sync --file <mode-0600-transport-key-file>
+nix run .#dearmachine-stack -- create \
+  --email <temporary-authorized-sender> \
+  --new-inbox --transport agentmail
 nix run .#dearmachine-stack -- up
 nix run .#dearmachine-stack -- health
 nix run .#dearmachine-stack -- status
