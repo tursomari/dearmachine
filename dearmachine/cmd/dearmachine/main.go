@@ -68,6 +68,7 @@ type dependencies struct {
 	newRawTransport func(string, string) (client.Transport, error)
 	provisionInbox  func(context.Context, string) (client.Inbox, error)
 	inspectInbox    func(context.Context, string, string) (client.Inbox, error)
+	authorizePair   func(context.Context, string, string, string) error
 	newRunner       func(string, string, string) (*client.AgentRunner, error)
 	newApp          func(
 		client.Transport,
@@ -99,6 +100,7 @@ func defaultDependencies() dependencies {
 		newRawTransport: transports.NewRaw,
 		provisionInbox:  transports.ProvisionInbox,
 		inspectInbox:    transports.InspectInbox,
+		authorizePair:   transports.AuthorizePair,
 		newRunner:       client.NewAgentRunner,
 		newApp: func(
 			transport client.Transport,

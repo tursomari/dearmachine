@@ -72,6 +72,14 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		if err != nil {
 			return err
 		}
+		if deps.authorizePair == nil {
+			return fmt.Errorf("transport %q cannot authorize pair creation", inbox.Transport)
+		}
+		if err := deps.authorizePair(
+			context.Background(), inbox.Transport, inbox.ProviderID, request.email,
+		); err != nil {
+			return fmt.Errorf("authorize %s pair: %w", inbox.Transport, err)
+		}
 		pair, err := client.CreatePair(deps.userHomeDir, client.Pair{UserEmail: request.email, InboxID: inbox.ID})
 		if err != nil {
 			return err
@@ -317,7 +325,9 @@ func upHelp(output io.Writer) error {
 Plain "up" starts every registered pair and every referenced inbox in one
 daemon. --pair is repeatable and narrows only this invocation; it never changes
 global state. --create is the sole creation path. Sharing an inbox is always
-intentional and requires --inbox. Pair creation requires the daemon to be down.
+intentional and requires --inbox. Pair creation asks the selected transport to
+authorize the correspondent before publishing local pair state and requires the
+daemon to be down.
 `)
 	return err
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -100,12 +101,46 @@ func TestUpCreateCanIntentionallyShareRegisteredInbox(t *testing.T) {
 		t.Fatal("shared inbox creation called provisioning")
 		return client.Inbox{}, nil
 	}
+	authorized := false
+	deps.authorizePair = func(_ context.Context, transport, providerID, email string) error {
+		authorized = true
+		if transport != inbox.Transport || providerID != inbox.ProviderID || email != "second@example.test" {
+			t.Fatalf("authorize pair = %q/%q/%q", transport, providerID, email)
+		}
+		return nil
+	}
 	if err := run([]string{"up", "--create", "--email", "second@example.test", "--inbox", inbox.ID, "--once"}, func(string) string { return "" }, deps); err != nil {
 		t.Fatalf("share inbox: %v", err)
 	}
 	states, err := client.ResolvePairStates(deps.userHomeDir, nil)
-	if err != nil || len(states) != 2 || states[0].Pair.ID != first.ID || states[1].Inbox.ID != inbox.ID {
-		t.Fatalf("shared states = %+v, %v", states, err)
+	if err != nil || !authorized || len(states) != 2 || states[0].Pair.ID != first.ID || states[1].Inbox.ID != inbox.ID {
+		t.Fatalf("shared states = %+v, authorized=%v, %v", states, authorized, err)
+	}
+}
+
+func TestUpCreateAuthorizationFailureDoesNotPublishPair(t *testing.T) {
+	deps := testDependencies(t, &fakeApplication{})
+	deps.isInteractive = func(io.Reader) bool { return false }
+	inbox, err := client.RegisterInbox(deps.userHomeDir, client.Inbox{
+		Transport: "agentmail", ProviderID: "provider-inbox", Address: "machine@example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps.authorizePair = func(context.Context, string, string, string) error {
+		return errors.New("injected policy failure")
+	}
+	err = run([]string{
+		"up", "--create", "--email", "user@example.test", "--inbox", inbox.ID, "--once",
+	}, func(string) string { return "" }, deps)
+	if err == nil || !strings.Contains(err.Error(), "authorize agentmail pair") ||
+		!strings.Contains(err.Error(), "injected policy failure") {
+		t.Fatalf("authorization error = %v", err)
+	}
+	registryPath, _ := client.DefaultPairRegistryPath(deps.userHomeDir)
+	registry, err := client.LoadPairRegistry(registryPath)
+	if err != nil || len(registry.Pairs) != 0 {
+		t.Fatalf("registry after failed authorization = %+v, %v", registry, err)
 	}
 }
 
@@ -201,7 +236,7 @@ func TestPublicHelpDescribesAllPairsAndCreation(t *testing.T) {
 	if err := run([]string{"up", "--help"}, func(string) string { return "" }, dependencies{stdout: &output}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"starts every registered pair", "--pair", "--create", "--new-inbox", "--inbox"} {
+	for _, want := range []string{"starts every registered pair", "--pair", "--create", "--new-inbox", "--inbox", "authorize the correspondent"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help missing %q:\n%s", want, output.String())
 		}

@@ -1,9 +1,22 @@
 package transports
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/dearmachine/dearmachine/internal/client"
 )
+
+type factoryAuthorizingTransport struct {
+	*allowlistFake
+	email string
+}
+
+func (transport *factoryAuthorizingTransport) AuthorizePair(_ context.Context, email string) error {
+	transport.email = email
+	return nil
+}
 
 func TestFactoryConstructsAgentMail(t *testing.T) {
 	t.Setenv("AGENTMAIL_API_KEY", "offline-test-key")
@@ -54,5 +67,28 @@ func TestFactoryDistinguishesUnknownAndUnimplemented(t *testing.T) {
 	_, err = New("openmail", "inbox-test", allow)
 	if err == nil || !strings.Contains(err.Error(), `transport "openmail" is not implemented`) {
 		t.Fatalf("unimplemented error = %v", err)
+	}
+}
+
+func TestFactoryDelegatesPairAuthorizationToAdapter(t *testing.T) {
+	fake := &factoryAuthorizingTransport{allowlistFake: &allowlistFake{
+		messages: map[string]client.Message{}, calls: map[string]int{},
+	}}
+	build := constructors["agentmail"]
+	constructors["agentmail"] = func(inboxID string) (client.Transport, error) {
+		if inboxID != "provider-inbox" {
+			t.Fatalf("inbox ID = %q", inboxID)
+		}
+		return fake, nil
+	}
+	t.Cleanup(func() { constructors["agentmail"] = build })
+
+	if err := AuthorizePair(
+		context.Background(), "agentmail", "provider-inbox", "pair@example.test",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if fake.email != "pair@example.test" {
+		t.Fatalf("authorized email = %q", fake.email)
 	}
 }

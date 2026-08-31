@@ -89,10 +89,13 @@ dearmachine up --create \
 
 `AGENTMAIL_API_KEY_FILE` must contain exactly one non-empty line.
 `AGENTMAIL_API_KEY` remains supported as an environment-based alternative.
-Creation provisions and registers the inbox, creates the pair's UUID-path
-SQLite database, and then starts the daemon. Later, plain `dearmachine up`
-starts every registered pair. Repeat `--pair <email-or-uuid>` to run only a
-specific subset for that invocation. Selection never changes registry state.
+Creation provisions and registers the inbox, asks the selected transport to
+authorize the exact correspondent, creates the pair's UUID-path SQLite
+database, and then starts the daemon. AgentMail pairing idempotently ensures
+inbox-scoped receive, reply, and send allow entries before the local pair is
+published. Later, plain `dearmachine up` starts every registered pair. Repeat
+`--pair <email-or-uuid>` to run only a specific subset for that invocation.
+Selection never changes registry state.
 
 To add a pair, stop the daemon and run `up --create` again. Use `--new-inbox`
 for a new provider inbox, or `--inbox <registered-uuid-or-address>` to

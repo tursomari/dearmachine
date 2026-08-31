@@ -58,6 +58,13 @@ type Transport interface {
 	FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error)
 }
 
+// PairAuthorizer is an optional provider capability used while creating a
+// pair. Adapters with provider-side correspondent policy implement it so the
+// sender is accepted before the local pair becomes reachable.
+type PairAuthorizer interface {
+	AuthorizePair(ctx context.Context, email string) error
+}
+
 func sortMessages(messages []Message) {
 	sort.SliceStable(messages, func(i, j int) bool {
 		return messageTime(messages[i]).Before(messageTime(messages[j]))

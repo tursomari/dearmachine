@@ -57,6 +57,97 @@ func TestNewAgentMailTransportRejectsMissingOrInvalidCredential(t *testing.T) {
 	}
 }
 
+func TestMailboxAuthorizePairEnsuresReceiveReplyAndSendAllowEntries(t *testing.T) {
+	allowed := make(map[string]bool)
+	posts := make(map[string]int)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		direction := ""
+		for _, candidate := range []string{"receive", "reply", "send"} {
+			prefix := "/v0/inboxes/test-inbox/lists/" + candidate + "/allow"
+			if request.URL.Path == prefix || strings.HasPrefix(request.URL.Path, prefix+"/") {
+				direction = candidate
+				break
+			}
+		}
+		if direction == "" {
+			http.NotFound(writer, request)
+			return
+		}
+		response := map[string]any{
+			"created_at": "2026-08-31T00:00:00Z", "direction": direction,
+			"entry": "pair@example.test", "entry_type": "email", "list_type": "allow",
+			"organization_id": "org-test", "pod_id": "pod-test", "inbox_id": "test-inbox",
+		}
+		switch request.Method {
+		case http.MethodGet:
+			if !allowed[direction] {
+				writer.WriteHeader(http.StatusNotFound)
+				_, _ = writer.Write([]byte(`{"error":{"message":"missing"}}`))
+				return
+			}
+		case http.MethodPost:
+			var body struct {
+				Entry string `json:"entry"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.Entry != "pair@example.test" {
+				t.Errorf("authorize %s body = %+v, %v", direction, body, err)
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			allowed[direction] = true
+			posts[direction]++
+		default:
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(writer).Encode(response); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	api := agentmail.NewClient(
+		option.WithBaseURL(server.URL+"/"), option.WithAPIKey("test-key"), option.WithMaxRetries(0),
+	)
+	mailbox, err := NewMailbox(api, "test-inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := mailbox.AuthorizePair(context.Background(), " Pair <PAIR@Example.test> "); err != nil {
+			t.Fatalf("AuthorizePair attempt %d: %v", attempt+1, err)
+		}
+	}
+	if posts["receive"] != 1 || posts["reply"] != 1 || posts["send"] != 1 || len(posts) != 3 {
+		t.Fatalf("authorization posts = %+v", posts)
+	}
+}
+
+func TestMailboxAuthorizePairSurfacesPolicyFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodGet {
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = writer.Write([]byte(`{"error":{"message":"missing"}}`))
+			return
+		}
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = writer.Write([]byte(`{"error":{"message":"injected outage"}}`))
+	}))
+	t.Cleanup(server.Close)
+	api := agentmail.NewClient(
+		option.WithBaseURL(server.URL+"/"), option.WithAPIKey("test-key"), option.WithMaxRetries(0),
+	)
+	mailbox, err := NewMailbox(api, "test-inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = mailbox.AuthorizePair(context.Background(), "pair@example.test")
+	if err == nil || !strings.Contains(err.Error(), "authorize AgentMail receive") ||
+		!strings.Contains(err.Error(), "503") {
+		t.Fatalf("AuthorizePair error = %v", err)
+	}
+}
+
 func TestMailboxAPIErrorContracts(t *testing.T) {
 	tests := []struct {
 		name      string

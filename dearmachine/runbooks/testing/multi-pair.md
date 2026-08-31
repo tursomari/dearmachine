@@ -55,7 +55,9 @@ interval and an outer timeout for every command.
 
 5. Stop the daemon. Create pair B on a second new inbox. Then create pair C on
    A's inbox using `--inbox <a-inbox-uuid>`. Confirm C creation did not call
-   the provider create API and that A and C reference the same inbox UUID.
+   the provider create API, that A and C reference the same inbox UUID, and
+   that creation ensured exact receive, reply, and send allow entries for C on
+   A's provider inbox before publishing C locally.
 6. While a daemon owns the PID lock, prove another `up` and every
    `up --create` fail before polling or provider mutation.
 

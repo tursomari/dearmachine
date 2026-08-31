@@ -61,6 +61,21 @@ func InspectInbox(ctx context.Context, id, selection string) (client.Inbox, erro
 	}
 }
 
+// AuthorizePair asks the selected adapter to establish any provider-side
+// correspondent policy required for a local pair. Providers without such a
+// policy rely on the central inbox router's fail-closed authorization.
+func AuthorizePair(ctx context.Context, id, inboxID, email string) error {
+	transport, err := NewRaw(id, inboxID)
+	if err != nil {
+		return err
+	}
+	authorizer, ok := transport.(client.PairAuthorizer)
+	if !ok {
+		return nil
+	}
+	return authorizer.AuthorizePair(ctx, email)
+}
+
 // New constructs the selected mail transport. Authentication remains local to
 // the selected adapter.
 func New(id, inboxID string, allow AllowList) (client.Transport, error) {

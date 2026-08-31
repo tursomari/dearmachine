@@ -674,7 +674,8 @@ func testDependencies(t *testing.T, app application) dependencies {
 		inspectInbox: func(_ context.Context, transport, selection string) (client.Inbox, error) {
 			return client.Inbox{Transport: transport, ProviderID: selection, Address: "adopted@example.test"}, nil
 		},
-		newRunner: client.NewAgentRunner,
+		authorizePair: func(context.Context, string, string, string) error { return nil },
+		newRunner:     client.NewAgentRunner,
 		newApp: func(
 			client.Transport,
 			*client.Store,

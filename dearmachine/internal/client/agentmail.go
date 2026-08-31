@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 const pageSize = 100
 
 var _ Transport = (*Mailbox)(nil)
+var _ PairAuthorizer = (*Mailbox)(nil)
 
 // Mailbox calls AgentMail REST endpoints directly through the Go SDK.
 type Mailbox struct {
@@ -45,6 +47,61 @@ func NewAgentMailTransport(inboxID string) (*Mailbox, error) {
 		return nil, err
 	}
 	return NewMailbox(agentmail.NewClient(option.WithAPIKey(credential)), inboxID)
+}
+
+// AuthorizePair ensures AgentMail will accept mail from the paired
+// correspondent and permit both replies and outbound delivery to that
+// correspondent. AgentMail's reply endpoint enforces the send allow list too.
+// It is idempotent so an interrupted creation can be retried safely.
+func (m *Mailbox) AuthorizePair(ctx context.Context, email string) error {
+	email, err := canonicalPairAddress(email)
+	if err != nil {
+		return fmt.Errorf("authorize AgentMail pair: %w", err)
+	}
+	for _, direction := range []string{"receive", "reply", "send"} {
+		if err := m.ensurePairAllowEntry(ctx, direction, email); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Mailbox) ensurePairAllowEntry(ctx context.Context, direction, email string) error {
+	getParams := agentmail.InboxListGetParams{
+		InboxID:   m.inboxID,
+		Direction: agentmail.InboxListGetParamsDirection(direction),
+		Type:      agentmail.InboxListGetParamsTypeAllow,
+	}
+	if _, err := m.client.Inboxes.Lists.Get(ctx, email, getParams); err == nil {
+		return nil
+	} else if !agentMailStatus(err, http.StatusNotFound) {
+		return fmt.Errorf("inspect AgentMail %s allow entry for %s: %w", direction, email, err)
+	}
+	_, err := m.client.Inboxes.Lists.New(
+		ctx,
+		agentmail.InboxListNewParamsTypeAllow,
+		agentmail.InboxListNewParams{
+			InboxID:   m.inboxID,
+			Direction: agentmail.InboxListNewParamsDirection(direction),
+			Entry:     email,
+		},
+	)
+	if err == nil {
+		return nil
+	}
+	// A concurrent retry may win the create race. Accept conflict only after
+	// proving the exact entry now exists.
+	if agentMailStatus(err, http.StatusConflict) {
+		if _, verifyErr := m.client.Inboxes.Lists.Get(ctx, email, getParams); verifyErr == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("authorize AgentMail %s for %s: %w", direction, email, err)
+}
+
+func agentMailStatus(err error, status int) bool {
+	var apiErr *agentmail.Error
+	return errors.As(err, &apiErr) && apiErr.StatusCode == status
 }
 
 // ProvisionAgentMailInbox creates a provider-owned inbox with a randomized
