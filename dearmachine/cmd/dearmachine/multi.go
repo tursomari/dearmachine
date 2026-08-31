@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,9 +34,6 @@ func runPairStates(args []string, getenv func(string) string, deps dependencies,
 	cfg, err := parseConfig(args, output)
 	if err != nil {
 		return err
-	}
-	if cfg.inboxID != "" || cfg.dbPath != "" || cfg.allowSet {
-		return errors.New("--inbox-id, --db, and --allow are direct diagnostic flags and cannot be used with `dearmachine up`")
 	}
 	backends, managerPath, customBackends, responseTier, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {
@@ -135,15 +131,6 @@ func runPairStates(args []string, getenv func(string) string, deps dependencies,
 	lockPath, err := client.DefaultDaemonLockPath(deps.userHomeDir)
 	if err != nil {
 		return err
-	}
-	if strings.TrimSpace(cfg.pidfile) != "" {
-		requested, err := resolvePath(cfg.pidfile, deps.userHomeDir)
-		if err != nil {
-			return err
-		}
-		if requested != lockPath {
-			return fmt.Errorf("--pidfile must be the daemon lock path %s", lockPath)
-		}
 	}
 	newDaemon := deps.newPairDaemon
 	if newDaemon == nil {

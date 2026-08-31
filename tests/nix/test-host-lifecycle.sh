@@ -16,11 +16,9 @@ export DEARMACHINE_SYSTEMD_USER_DIR=$XDG_CONFIG_HOME/systemd/user
 export DEARMACHINE_UNIT_NAME=dearmachine-test-host-stack.service
 export DEARMACHINE_UNIT_TEMPLATE=$UNIT_TEMPLATE
 export DEARMACHINE_SKIP_NIX_GC_ROOT=1
-export DEARMACHINE_MIGRATION_HELPER=$TEST_ROOT/migration-helper
 export DEARMACHINE_SYSTEMCTL=$TEST_ROOT/systemctl
 export TEST_ACTION_LOG=$TEST_ROOT/actions.log
 export TEST_FAIL_START=$TEST_ROOT/fail-start-once
-export TEST_FAIL_POLL=$TEST_ROOT/fail-poll
 
 mkdir -p "$HOME" "$XDG_CONFIG_HOME/dearmachine"
 cat >"$XDG_CONFIG_HOME/dearmachine/stack.env" <<EOF
@@ -44,12 +42,6 @@ fi
 EOF
 chmod 0700 "$DEARMACHINE_SYSTEMCTL"
 
-printf '#!%s\n' "$BASH" >"$DEARMACHINE_MIGRATION_HELPER"
-cat >>"$DEARMACHINE_MIGRATION_HELPER" <<'EOF'
-printf 'migration %s\n' "$*" >>"$TEST_ACTION_LOG"
-EOF
-chmod 0700 "$DEARMACHINE_MIGRATION_HELPER"
-
 make_runtime() {
   local runtime=$1
   mkdir -p "$runtime/bin"
@@ -68,8 +60,6 @@ case ${1:-} in
       >>"$TEST_ACTION_LOG"
     echo 'DearMachine credential-free Compose test service ready'
     ;;
-  poll-ready) [[ ! -e $TEST_FAIL_POLL ]] ;;
-  wait) exit 0 ;;
 esac
 EOF
   chmod 0700 "$runtime/bin/dearmachine-stack"
@@ -140,25 +130,6 @@ assert_link "$archive_dir/current" "releases/$(basename "$IMAGE_ONE")"
 assert_link "$archive_dir/rollback" "releases/$(basename "$IMAGE_TWO")"
 assert_link "$runtime_dir/current" "$RUNTIME_ONE"
 assert_link "$runtime_dir/rollback" "$RUNTIME_TWO"
-
-DEARMACHINE_CLEAN_POLL_ATTEMPTS=1 DEARMACHINE_CLEAN_POLL_DELAY=0 \
-  run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" migrate --real
-grep -F 'migration --real' "$TEST_ACTION_LOG" >/dev/null
-grep -F 'migration --mark-clean' "$TEST_ACTION_LOG" >/dev/null
-if grep -F 'systemctl stop dearmachine.service' "$TEST_ACTION_LOG" >/dev/null; then
-  echo 'test-unit migration attempted to stop the live legacy unit' >&2
-  exit 1
-fi
-
-touch "$TEST_FAIL_POLL"
-if DEARMACHINE_CLEAN_POLL_ATTEMPTS=1 DEARMACHINE_CLEAN_POLL_DELAY=0 \
-    run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" migrate --real 2>/dev/null; then
-  echo 'migration unexpectedly accepted a missing clean poll' >&2
-  exit 1
-fi
-rm -f "$TEST_FAIL_POLL"
-tail -n 3 "$TEST_ACTION_LOG" | grep -F \
-  'systemctl stop dearmachine-test-host-stack.service' >/dev/null
 
 run_lifecycle "$RUNTIME_ONE" "$IMAGE_ONE" uninstall
 [[ ! -e $unit ]]

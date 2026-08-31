@@ -1,7 +1,7 @@
 # OpenMail Transport Live-Test Runbook
 
 This protocol verifies the selectable OpenMail transport against the live
-OpenMail API without sharing the normal DearMachine inbox, database, PID file,
+OpenMail API without sharing the normal DearMachine home, inbox, pair database,
 project, or Agent Manager state. It exercises constructor configuration,
 inbox resolution, unread-thread polling, thread history, idempotent reply, and
 thread-level read acknowledgement.
@@ -36,8 +36,8 @@ deployment path.
   only at each run-created inbox scope. The sender needs inbound/outbound access
   to the receiver, and the receiver needs inbound/outbound access to the
   sender. Deleting each temporary inbox also removes its scoped policy.
-- Configure the common fail-closed paired-address list with `--allow` or
-  `DEARMACHINE_ALLOW`; provider-prefixed allow variables are not used.
+- Register the temporary sender as the pair email. Pair routing then enforces
+  the exact sender and registered inbox recipient.
 - OpenMail is inspect-only unless both `DEARMACHINE_LIVE_OPENMAIL=1` and
   `DEARMACHINE_LIVE_OPENMAIL_APPLY=1` are present. Leave both unset for the
   first poll.
@@ -63,7 +63,7 @@ refresh described above; it must be recorded separately from run teardown.
 ## Isolated inspect
 
 1. Create a runtime root with `mktemp -d` and require mode `0700`. Put the
-   disposable project, device configuration, database, PID file, binaries,
+   disposable home, project, device configuration, binaries,
    logs, Agent Manager home, and Machtiani project store below it. Unset an
    inherited `MACHTIANI_SESSION_ID`, and disable entry-point maintenance with
    `--entry-point-repo ""`.
@@ -79,15 +79,12 @@ refresh described above; it must be recorded separately from run teardown.
 
    ```bash
    export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
-   export DEARMACHINE_ALLOW='temp-sender@example.test, temporary-inbox@example.test'
-
-   "$TMP/dearmachine" \
+   HOME="$TMP/home" "$TMP/dearmachine" up --create \
+     --email 'temp-sender@example.test' \
+     --inbox '<temporary-receiver-id-or-address>' \
      --transport openmail \
-     --inbox-id '<temporary-receiver-id-or-address>' \
      --once \
      --verbose \
-     --db "$TMP/inspect.db" \
-     --pidfile "$TMP/inspect.pid" \
      --project "$TMP/project" \
      --config "$TMP/dearmachine.toml" \
      --agent-manager "$TMP/agent-manager" \
@@ -107,8 +104,8 @@ inbox, polls the canonical API host, and exits without changing any thread.
    a unique `Idempotency-Key`. Use a short, read-only task scoped to the
    disposable project, such as asking for its current Git status.
 3. Wait until the receiver lists exactly that thread as unread. Then enable
-   both mutation gates and run the same isolated command against a fresh live
-   database:
+   both mutation gates and run `HOME="$TMP/home" "$TMP/dearmachine" up --once`
+   with the same run flags:
 
    ```bash
    export DEARMACHINE_LIVE_OPENMAIL=1

@@ -97,11 +97,8 @@ the wrapper. The lifecycle synchronizes only
 existing `/run/secrets/dearmachine_agentmail_api_key` path and the image entry
 point reads it from there.
 
-## Health and migration limits
+## Health limits
 
 The container healthcheck proves that the supervised dearmachine PID is alive;
-it does not prove a successful AgentMail poll or backend turn. The migration
-lifecycle therefore requires both container health and a new verbose `poll:`
-line before marking a cutover clean. Until migration is explicitly performed,
-the container stack and a legacy host process are separate state domains and
-must not poll the same inbox concurrently.
+it does not prove a successful AgentMail poll or backend turn. Live acceptance
+therefore also requires a successful provider poll and backend reply.

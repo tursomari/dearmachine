@@ -17,14 +17,13 @@ services:
       XDG_STATE_HOME: /home/dearmachine/.local/state
     command:
       - up
+      - --foreground
       - --project
       - /workspace
       - --config
       - /home/dearmachine/.dearmachine/config/dearmachine.toml
       - --agent-bin
       - /opt/dearmachine/bin/machtiani
-      - --pidfile
-      - /home/dearmachine/.dearmachine/run/dearmachine.pid
       - --entry-point-repo
       - ${DEARMACHINE_ENTRY_POINT_REPO:-}
       - --entry-point-prompt

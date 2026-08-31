@@ -45,7 +45,7 @@ session naturally inherits its bus address so rootless Podman networking can
 start. All durable client state remains isolated under `DEARMACHINE_STATE_DIR`
 and the private scratch root.
 
-Confirm `health` prints `healthy`, `exec` prints `Usage of dearmachine`, the
+Confirm `health` prints `healthy`, `exec` prints `Usage: dearmachine <command>`, the
 logs contain `DearMachine credential-free Compose test service ready`, and
 `down` removes the test container. Before removing the exact `runtime_root`,
 verify it is the private directory created above, is owned by the current user,
@@ -141,7 +141,7 @@ test -z "$(systemctl --user list-unit-files "$DEARMACHINE_UNIT_NAME" \
 ```
 
 `health` must print `healthy` from the image's normal PID-file health command,
-`exec` must print `Usage of dearmachine`, logs must contain the ready line, and
+`exec` must print `Usage: dearmachine <command>`, logs must contain the ready line, and
 the final stack status must contain no container. Test mode proves the real
 rootless Podman, Compose, systemd-user, mount, PID-health, and cleanup paths; it
 does not authenticate AgentMail or execute a backend turn. Use a separately
@@ -154,11 +154,6 @@ the complete trial and verifies automatic restoration:
 ```bash
 bash tests/nix/test-host-podman-integration.sh
 ```
-
-That test also migrates a scratch WAL database through the real lifecycle,
-withholds the required poll proof, requires systemd to stop the stack, writes a
-post-migration row, and verifies rollback preserves that row under the legacy
-database name.
 
 Inspect the exact scratch root before deleting it: it must be the
 mode-`0700`, current-user-owned, non-symlink directory created above. If a

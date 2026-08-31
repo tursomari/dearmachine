@@ -67,43 +67,9 @@ INSTALLED=1
 
 [[ $(nix run .#dearmachine-host-lifecycle -- health) == healthy ]]
 nix run .#dearmachine-host-lifecycle -- exec dearmachine --help 2>&1 |
-  grep -F 'Usage of dearmachine'
+  grep -F 'Usage: dearmachine <command>'
 nix run .#dearmachine-host-lifecycle -- logs --tail 100 |
   grep -F 'DearMachine credential-free Compose test service ready'
-
-# Exercise the real lifecycle/migration boundary. Test mode intentionally never
-# emits an AgentMail poll line, so --real must stop the unit and retain rollback.
-legacy_db=$HOME/.dearmachine/state/device-client.db
-target_db=$HOME/.dearmachine/state/dearmachine.db
-sqlite3 "$legacy_db" <<'SQL'
-PRAGMA journal_mode=WAL;
-.dbconfig no_ckpt_on_close on
-CREATE TABLE pending_messages (message_id TEXT PRIMARY KEY);
-CREATE TABLE processed_messages (message_id TEXT PRIMARY KEY);
-CREATE TABLE thread_sessions (thread_id TEXT PRIMARY KEY);
-INSERT INTO pending_messages VALUES ('pending-before-migration');
-INSERT INTO processed_messages VALUES ('processed-before-migration');
-INSERT INTO thread_sessions VALUES ('thread-before-migration');
-SQL
-chmod 0600 "$legacy_db"
-if DEARMACHINE_CLEAN_POLL_ATTEMPTS=1 DEARMACHINE_CLEAN_POLL_DELAY=0 \
-    nix run .#host-migrate -- --real >/dev/null 2>&1; then
-  echo 'migration unexpectedly accepted a missing AgentMail poll' >&2
-  exit 1
-fi
-assert_live_client_unchanged
-systemctl --user is-active --quiet "$UNIT_NAME" && {
-  echo 'migration poll-proof failure left the service active' >&2
-  exit 1
-}
-[[ ! -e $legacy_db && -f $target_db ]]
-sqlite3 "$target_db" \
-  "INSERT INTO processed_messages VALUES ('processed-after-migration');"
-nix run .#host-migrate -- --rollback
-[[ -f $legacy_db && ! -e $target_db ]]
-[[ $(sqlite3 "$legacy_db" 'SELECT COUNT(*) FROM processed_messages') == 2 ]]
-nix run .#dearmachine-host-lifecycle -- start
-[[ $(nix run .#dearmachine-host-lifecycle -- health) == healthy ]]
 
 original_archive=$(readlink "$XDG_DATA_HOME/dearmachine/image-archive/current")
 printf 'not an OCI archive\n' >"$TEST_ROOT/broken-image.tar.gz"

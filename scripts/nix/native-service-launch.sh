@@ -18,7 +18,7 @@ dm_warn() {
 dm_usage() {
   cat <<'EOF'
 Usage:
-  dearmachine-native-service [options] -- <dearmachine> [client options]
+  dearmachine-native-service [options] -- <dearmachine> [run options]
 
 Launch the native DearMachine Client in a transient systemd user service. The
 launcher resolves every backend selected in the device configuration, snapshots
@@ -225,6 +225,6 @@ exec "$dm_systemd_run" --user \
   "${dm_environment_file_property[@]}" \
   --property=UnsetEnvironment=AGENTMAIL_API_KEY \
   --setenv="AGENTMAIL_API_KEY_FILE=$dm_credential_file" \
-  "$dm_client_command" "$@" \
+  "$dm_client_command" up --foreground "$@" \
   --config "$dm_config_path" \
   --agent-manager "$dm_manager"

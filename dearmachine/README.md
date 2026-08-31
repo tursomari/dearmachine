@@ -83,8 +83,7 @@ dearmachine up --create \
   --project ~/.dearmachine/entrypoint/main \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
   --maintenance-min-turns 20 \
-  --magnifica-humanitas \
-  --pidfile ~/.dearmachine/run/dearmachine.pid
+  --magnifica-humanitas
 ```
 
 `AGENTMAIL_API_KEY_FILE` must contain exactly one non-empty line.
@@ -101,8 +100,9 @@ To add a pair, stop the daemon and run `up --create` again. Use `--new-inbox`
 for a new provider inbox, or `--inbox <registered-uuid-or-address>` to
 intentionally share an existing inbox. The version-2 registry stores inboxes
 separately from pairs; there is no active pair, display name, `--new`, or
-`--switch`. DearMachine runs in the foreground and handles `SIGINT` and
-`SIGTERM`; its PID file is an exclusive daemon lock.
+`--switch`. Plain `up` backgrounds the native client and waits until startup is
+ready. Use `status` and `down` to inspect and stop it. Use `up --foreground`
+under systemd or in a test container; the canonical PID lock remains internal.
 
 ### Optional OpenMail transport
 
@@ -139,8 +139,8 @@ attachment IDs are rejected. There is no permissive default.
 
 OpenMail exposes unread state per thread rather than per message. Polling
 therefore returns the newest inbound message in each unread, fully allowed
-thread, and successful processing marks that whole thread read. The main
-command and `inbox skip --current` both accept `--transport openmail`; skip
+thread, and successful processing marks that whole thread read. `inbox skip
+--pair <email-or-uuid> --current` uses the registered pair's transport; skip
 decisions remain local and never change the remote inbox.
 
 For a credentialed test that does not reuse normal runtime state or a normal
@@ -189,8 +189,8 @@ credentialed two-turn continuation test.
 Each pair's SQLite state database is
 `~/.dearmachine/pairs/<pair-uuid>/state/dearmachine.db`. DearMachine Client
 creates its state directory with mode `0700` and creates or tightens the
-database to mode `0600`. `--db` is reserved for explicit direct diagnostics
-and is rejected by `dearmachine up`.
+database to mode `0600`. Database paths come only from the pair registry; an
+arbitrary database override is not part of the public interface.
 
 The daemon runs `machtiani sync` before polling begins and again immediately
 before each `machtiani run`. Runs use `--mode agent-managed` and receive the
@@ -230,25 +230,23 @@ remote inbox, run:
 
 ```bash
 dearmachine inbox skip \
+  --pair you@example.com \
   --current \
-  --transport agentmail \
-  --inbox-id your-inbox-id \
   --project ~/.dearmachine/entrypoint/main \
-  --pidfile ~/.dearmachine/run/dearmachine.pid \
   --reason "stale before restart"
 ```
 
 Pass one or more message IDs instead of `--current` to select individual
 messages. `--current` records only the IDs returned by that read-only snapshot;
-mail arriving afterward remains eligible. Use `--db` when the client uses a
-non-default state database.
+mail arriving afterward remains eligible. The pair email address or UUID
+selects its registry-owned database and inbox transport.
 
 Inspect and reverse local decisions with:
 
 ```bash
 dearmachine inbox skipped
-dearmachine inbox skipped --json
-dearmachine inbox unskip <message-id>
+dearmachine inbox skipped --pair you@example.com --json
+dearmachine inbox unskip --pair you@example.com <message-id>
 ```
 
 These commands never delete messages, change labels or thread state, mark
@@ -267,8 +265,8 @@ To deliberately abandon exactly one already-running follow-up, stop DearMachine 
 
 ```bash
 dearmachine inbox abandon \
+  --pair you@example.com \
   --project ~/.dearmachine/entrypoint/main \
-  --pidfile ~/.dearmachine/run/dearmachine.pid \
   --reason "stalled disposable test" \
   '<message-id>'
 ```
@@ -287,22 +285,17 @@ no `--current` mode, so an operator cannot force-skip unrelated unread mail by
 accident. Use ordinary `inbox skip` for an unread or provisional message that
 has not entered an established session.
 
-Every inbox mutation checks the supplied PID file, or the normal
-`~/.dearmachine/run/dearmachine.pid` by default, and refuses to proceed when
-that PID is alive. This protects the normal installed invocation and isolated
-instances that follow the documented PID-file convention; operators must still
-confirm that no client launched without that PID file is polling the database.
+Every inbox mutation checks the canonical daemon lock and refuses to proceed
+while the client is running.
 
 Long-running mode logs successful startup and graceful-shutdown counts to
 stderr. Pass `--verbose` to also log the unread-message count for every poll;
 idle polls remain silent by default.
 
-Pass `--pidfile /path/to/dearmachine.pid` when a process supervisor needs a
-PID file. DearMachine Client creates missing parent directories after the initial
-`machtiani sync`, writes its current PID before polling, and removes the file
-on controlled exit. Omit the flag for the previous foreground-without-pidfile
-behavior. This flag does not self-daemonize the process; supervisors that
-require a returning start command must provide a background wrapper.
+Plain `dearmachine up` launches the native client in the background and waits
+for readiness. `dearmachine up --foreground` keeps it attached for a process
+supervisor or test container. Both forms use the same internal lock and
+readiness files.
 
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
@@ -325,11 +318,10 @@ operation, point both settings at the initialized entry point:
 dearmachine up \
   --project ~/.dearmachine/entrypoint/main \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
-  --magnifica-humanitas \
-  --pidfile ~/.dearmachine/run/dearmachine.pid
+  --magnifica-humanitas
 ```
 
-Use different paths only for deliberate development, migration, or isolated
+Use different paths only for deliberate development or isolated
 testing arrangements. A disposable test normally supplies its test project
 through `--project` and disables real entry-point maintenance with
 `--entry-point-repo ""`.

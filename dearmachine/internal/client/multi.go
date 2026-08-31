@@ -321,6 +321,11 @@ func (daemon *MultiDaemon) run(ctx context.Context, once bool) (runErr error) {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, appCleanup()) }()
+	readyPath := daemonReadyPath(daemon.lockPath)
+	if err := os.WriteFile(readyPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		return fmt.Errorf("publish daemon readiness: %w", err)
+	}
+	defer func() { runErr = errors.Join(runErr, removeOwnedDaemonFile(readyPath, os.Getpid())) }()
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errorsOut := make(chan error, len(daemon.apps))
@@ -341,6 +346,23 @@ func (daemon *MultiDaemon) run(ctx context.Context, once bool) (runErr error) {
 		}
 	}
 	return first
+}
+
+func removeOwnedDaemonFile(path string, pid int) error {
+	content, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(string(content)) != strconv.Itoa(pid) {
+		return fmt.Errorf("refuse to remove daemon file now owned by PID %s", strings.TrimSpace(string(content)))
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func CreateDaemonLock(path string) (func() error, error) {

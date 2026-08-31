@@ -23,8 +23,8 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 		wants []string
 	}{
 		{args: []string{"--help"}, wants: []string{"dearmachine inbox <command>"}},
-		{args: []string{"help", "skip"}, wants: []string{"dearmachine inbox skip --current", "--agent-bin <path>"}},
-		{args: []string{"skip", "--help"}, wants: []string{"without changing the remote inbox", "--transport <id>", "--agent-bin <path>"}},
+		{args: []string{"help", "skip"}, wants: []string{"dearmachine inbox skip --pair", "--agent-bin <path>"}},
+		{args: []string{"skip", "--help"}, wants: []string{"without changing the remote inbox", "--pair <selector>", "--agent-bin <path>"}},
 		{args: []string{"abandon", "--help"}, wants: []string{"clean pre-run session checkpoint", "--agent-bin <path>"}},
 		{args: []string{"unskip", "--help"}, wants: []string{"dearmachine inbox unskip"}},
 		{args: []string{"skipped", "--help"}, wants: []string{"dearmachine inbox skipped"}},
@@ -44,21 +44,24 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	}
 }
 
-func TestInboxSkipUsesSelectedTransportConstructor(t *testing.T) {
+func TestInboxSkipUsesRegisteredPairTransport(t *testing.T) {
 	home := t.TempDir()
+	state := makeInboxTestPair(t, home, "openmail")
 	want := errors.New("selected OpenMail constructor reached")
 	deps := dependencies{
-		newTransport: func(string) (client.Transport, error) { return nil, want },
-		flagOutput:   io.Discard,
-		userHomeDir:  func() (string, error) { return home, nil },
+		newRawTransport: func(transport, providerID string) (client.Transport, error) {
+			if transport != "openmail" || providerID != state.Inbox.ProviderID {
+				t.Fatalf("raw transport = %q/%q", transport, providerID)
+			}
+			return nil, want
+		},
+		flagOutput:  io.Discard,
+		userHomeDir: func() (string, error) { return home, nil },
 	}
 	err := runInboxSkip(
 		[]string{
 			"--current",
-			"--transport", "openmail",
-			"--inbox-id", "inb-test",
-			"--db", filepath.Join(home, "state.db"),
-			"--pidfile", filepath.Join(home, "missing.pid"),
+			"--pair", state.Pair.UserEmail,
 		},
 		deps,
 	)
@@ -69,8 +72,8 @@ func TestInboxSkipUsesSelectedTransportConstructor(t *testing.T) {
 
 func TestInboxSkipDeletesCanonicalOnDiskSession(t *testing.T) {
 	home := t.TempDir()
-	dbPath := filepath.Join(home, "state", "dearmachine.db")
-	store, err := client.OpenStore(dbPath)
+	state := makeInboxTestPair(t, home, "agentmail")
+	store, err := client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,19 +102,19 @@ func TestInboxSkipDeletesCanonicalOnDiskSession(t *testing.T) {
 	transport := inboxTestTransport{message: client.Message{
 		MessageID: pending.MessageID,
 		ThreadID:  pending.ThreadID,
+		From:      state.Pair.UserEmail,
+		To:        []string{state.Inbox.Address},
 	}}
 	deps := dependencies{
-		newTransport: func(string) (client.Transport, error) { return transport, nil },
-		openStore:    client.OpenStore,
-		stdout:       io.Discard,
-		flagOutput:   io.Discard,
-		userHomeDir:  func() (string, error) { return home, nil },
+		newRawTransport: func(string, string) (client.Transport, error) { return transport, nil },
+		openPairStore:   client.OpenPairStore,
+		stdout:          io.Discard,
+		flagOutput:      io.Discard,
+		userHomeDir:     func() (string, error) { return home, nil },
 	}
 	if err := runInboxSkip(
 		[]string{
-			"--inbox-id", "test-inbox",
-			"--db", dbPath,
-			"--pidfile", filepath.Join(home, "missing.pid"),
+			"--pair", state.Pair.UserEmail,
 			"--project", home,
 			"--agent-bin", fixturePath,
 			pending.MessageID,
@@ -128,8 +131,8 @@ func TestInboxSkipDeletesCanonicalOnDiskSession(t *testing.T) {
 
 func TestInboxAbandonRestoresCheckpointOntoStableCanonicalSession(t *testing.T) {
 	home := t.TempDir()
-	dbPath := filepath.Join(home, "state", "dearmachine.db")
-	store, err := client.OpenStore(dbPath)
+	state := makeInboxTestPair(t, home, "agentmail")
+	store, err := client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +184,7 @@ func TestInboxAbandonRestoresCheckpointOntoStableCanonicalSession(t *testing.T) 
 	}
 	var stdout strings.Builder
 	deps := dependencies{
-		openStore: client.OpenStore,
+		openPairStore: client.OpenPairStore,
 		newRunner: func(string, string, string) (*client.AgentRunner, error) {
 			return runner, nil
 		},
@@ -191,8 +194,7 @@ func TestInboxAbandonRestoresCheckpointOntoStableCanonicalSession(t *testing.T) 
 	}
 	if err := runInboxAbandon(
 		[]string{
-			"--db", dbPath,
-			"--pidfile", filepath.Join(home, "missing.pid"),
+			"--pair", state.Pair.UserEmail,
 			"--project", home,
 			"--reason", "stuck disposable test",
 			second.MessageID,
@@ -216,7 +218,7 @@ func TestInboxAbandonRestoresCheckpointOntoStableCanonicalSession(t *testing.T) 
 	if err != nil || string(destinations) != first.Session.SessionID+"\n" {
 		t.Fatalf("fork destinations = %q, %v", destinations, err)
 	}
-	store, err = client.OpenStore(dbPath)
+	store, err = client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +234,8 @@ func TestInboxAbandonRestoresCheckpointOntoStableCanonicalSession(t *testing.T) 
 
 func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	home := t.TempDir()
-	dbPath := filepath.Join(home, "state", "dearmachine.db")
-	store, err := client.OpenStore(dbPath)
+	state := makeInboxTestPair(t, home, "agentmail")
+	store, err := client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +311,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	}
 	var stdout strings.Builder
 	deps := dependencies{
-		openStore: client.OpenStore,
+		openPairStore: client.OpenPairStore,
 		newRunner: func(string, string, string) (*client.AgentRunner, error) {
 			return runner, nil
 		},
@@ -319,8 +321,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	}
 	if err := runInboxAbandon(
 		[]string{
-			"--db", dbPath,
-			"--pidfile", filepath.Join(home, "missing.pid"),
+			"--pair", state.Pair.UserEmail,
 			"--project", home,
 			"--reason", "stuck disposable test",
 			second.MessageID,
@@ -336,7 +337,7 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 	if err != nil || string(deleted) != first.Session.SessionID+"\n"+testCheckpointSessionID+"\n" {
 		t.Fatalf("deleted sessions = %q, %v", deleted, err)
 	}
-	store, err = client.OpenStore(dbPath)
+	store, err = client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,8 +362,8 @@ func TestInboxAbandonRemovesAttachmentStaging(t *testing.T) {
 
 func TestInboxAbandonRejectsLegacyRunningFollowupWithoutCheckpoint(t *testing.T) {
 	home := t.TempDir()
-	dbPath := filepath.Join(home, "state", "dearmachine.db")
-	store, err := client.OpenStore(dbPath)
+	state := makeInboxTestPair(t, home, "agentmail")
+	store, err := client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,19 +395,19 @@ func TestInboxAbandonRejectsLegacyRunningFollowupWithoutCheckpoint(t *testing.T)
 	}
 
 	deps := dependencies{
-		openStore:   client.OpenStore,
-		stdout:      io.Discard,
-		flagOutput:  io.Discard,
-		userHomeDir: func() (string, error) { return home, nil },
+		openPairStore: client.OpenPairStore,
+		stdout:        io.Discard,
+		flagOutput:    io.Discard,
+		userHomeDir:   func() (string, error) { return home, nil },
 	}
 	err = runInboxAbandon(
-		[]string{"--db", dbPath, "--project", home, second.MessageID},
+		[]string{"--pair", state.Pair.UserEmail, "--project", home, second.MessageID},
 		deps,
 	)
 	if err == nil || !strings.Contains(err.Error(), "no clean pre-run session checkpoint") {
 		t.Fatalf("runInboxAbandon error = %v", err)
 	}
-	store, err = client.OpenStore(dbPath)
+	store, err = client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,8 +427,8 @@ func TestInboxAbandonRejectsLegacyRunningFollowupWithoutCheckpoint(t *testing.T)
 
 func TestInboxSkippedAndUnskipUseOnlyLocalState(t *testing.T) {
 	home := t.TempDir()
-	dbPath := filepath.Join(home, "state", "dearmachine.db")
-	store, err := client.OpenStore(dbPath)
+	state := makeInboxTestPair(t, home, "agentmail")
+	store, err := client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,12 +444,12 @@ func TestInboxSkippedAndUnskipUseOnlyLocalState(t *testing.T) {
 
 	var stdout strings.Builder
 	deps := dependencies{
-		openStore:   client.OpenStore,
-		stdout:      &stdout,
-		flagOutput:  io.Discard,
-		userHomeDir: func() (string, error) { return home, nil },
+		openPairStore: client.OpenPairStore,
+		stdout:        &stdout,
+		flagOutput:    io.Discard,
+		userHomeDir:   func() (string, error) { return home, nil },
 	}
-	if err := runInboxSkipped([]string{"--db", dbPath, "--json"}, deps); err != nil {
+	if err := runInboxSkipped([]string{"--pair", state.Pair.UserEmail, "--json"}, deps); err != nil {
 		t.Fatalf("runInboxSkipped: %v", err)
 	}
 	for _, want := range []string{`"message_id": "message-1"`, `"reason": "stale"`} {
@@ -458,20 +459,20 @@ func TestInboxSkippedAndUnskipUseOnlyLocalState(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := runInboxUnskip([]string{"--db", dbPath, "message-1"}, deps); err != nil {
+	if err := runInboxUnskip([]string{"--pair", state.Pair.UserEmail, "message-1"}, deps); err != nil {
 		t.Fatalf("runInboxUnskip: %v", err)
 	}
 	if got := stdout.String(); got != "Unskipped 1 message(s).\n" {
 		t.Fatalf("unskip output = %q", got)
 	}
 	stdout.Reset()
-	if err := runInboxSkipped([]string{"--db", dbPath, "--json"}, deps); err != nil {
+	if err := runInboxSkipped([]string{"--pair", state.Pair.UserEmail, "--json"}, deps); err != nil {
 		t.Fatalf("runInboxSkipped after unskip: %v", err)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != "[]" {
-		t.Fatalf("empty JSON skip list = %q, want []", got)
+	if got := stdout.String(); !strings.Contains(got, `"messages": []`) {
+		t.Fatalf("empty JSON skip list = %q", got)
 	}
-	store, err = client.OpenStore(dbPath)
+	store, err = client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,12 +484,18 @@ func TestInboxSkippedAndUnskipUseOnlyLocalState(t *testing.T) {
 
 func TestInboxMutationRefusesLiveDeviceClientPID(t *testing.T) {
 	home := t.TempDir()
-	dbPath := filepath.Join(home, "dearmachine.db")
-	pidfile := filepath.Join(home, "dearmachine.pid")
+	state := makeInboxTestPair(t, home, "agentmail")
+	pidfile, err := client.DefaultDaemonLockPath(func() (string, error) { return home, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pidfile), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(pidfile, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := client.OpenStore(dbPath)
+	store, err := client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,19 +510,19 @@ func TestInboxMutationRefusesLiveDeviceClientPID(t *testing.T) {
 	}
 
 	deps := dependencies{
-		openStore:   client.OpenStore,
-		stdout:      io.Discard,
-		flagOutput:  io.Discard,
-		userHomeDir: func() (string, error) { return home, nil },
+		openPairStore: client.OpenPairStore,
+		stdout:        io.Discard,
+		flagOutput:    io.Discard,
+		userHomeDir:   func() (string, error) { return home, nil },
 	}
 	err = runInboxUnskip(
-		[]string{"--db", dbPath, "--pidfile", pidfile, "message-1"},
+		[]string{"--pair", state.Pair.UserEmail, "message-1"},
 		deps,
 	)
 	if err == nil || !strings.Contains(err.Error(), "is still running") {
 		t.Fatalf("runInboxUnskip error = %v", err)
 	}
-	store, err = client.OpenStore(dbPath)
+	store, err = client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +560,6 @@ func TestInboxSkippedUsesOnlyRegisteredPairState(t *testing.T) {
 
 	var output strings.Builder
 	deps := dependencies{
-		openStore:     func(string) (*client.Store, error) { return nil, errors.New("direct store opened") },
 		openPairStore: client.OpenPairStore,
 		stdout:        &output,
 		flagOutput:    io.Discard,
@@ -569,6 +575,26 @@ func TestInboxSkippedUsesOnlyRegisteredPairState(t *testing.T) {
 
 type inboxTestTransport struct {
 	message client.Message
+}
+
+func makeInboxTestPair(t *testing.T, home, transport string) client.PairState {
+	t.Helper()
+	homeDir := func() (string, error) { return home, nil }
+	inbox, err := client.RegisterInbox(homeDir, client.Inbox{
+		Transport: transport, ProviderID: "provider-inbox", Address: "machine@example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := client.CreatePair(homeDir, client.Pair{UserEmail: "user@example.test", InboxID: inbox.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := client.ResolvePairState(homeDir, pair.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state
 }
 
 func (f inboxTestTransport) Poll(context.Context) ([]client.Message, error) {

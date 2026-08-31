@@ -51,9 +51,9 @@ nix run .#dearmachine-container-lifecycle -- health
 nix run .#dearmachine-container-lifecycle -- logs --tail 100
 ```
 
-Reinstall reuses preserved state. If a legacy `device-client.db` still needs
-renaming, do not start two clients or rename it manually; follow
-[`migrate-live-state.md`](./migrate-live-state.md), beginning with dry-run.
+Reinstall reuses the preserved pair registry and pair databases. This release
+has no legacy-state import path; begin with `dearmachine up --create` when
+starting from an older layout.
 
 Permanent reset or deletion is outside the host-lifecycle command. It requires
 a separately authorized, checksum-recorded backup, exact-path review, proof
@@ -72,10 +72,9 @@ exactly one disposition before proceeding:
   authorization after the replacement passes verification.
 
 Before reset or delete, record the source commit, image/runtime links, selected
-project and entry-point identity, tool checksums, database path/mode/integrity,
+project and entry-point identity, tool checksums, pair database paths/modes/integrity,
 SQLite sidecar inventory, row counts, pending session, and backend ticket
-count. Resolve the effective database from the running command/config; never
-assume the default path when a custom `--db` may be active.
+count. Resolve each database from the pair registry rather than guessing paths.
 
 Stop and prove the service, container, PID, and database handles are gone. Then
 checkpoint and back up the exact database set:

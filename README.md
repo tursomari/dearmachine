@@ -14,9 +14,8 @@ No bots. No dashboards. No new messaging app to learn.
 
 ## Current Alpha Quick Start
 
-The open-source alpha runs as a portable foreground process. Nix packages the
-DearMachine Client and Agent Manager together; install `machtiani` and your
-chosen backend separately so they are available on `PATH`.
+Nix packages the DearMachine Client and Agent Manager together. Install
+`machtiani` and your chosen backend separately so they are available on `PATH`.
 
 ### 1. Install the native package
 
@@ -34,58 +33,85 @@ dearmachine setup-agents --backend codex
 The backend command itself—`codex` in this example—is discovered from the host
 `PATH` and uses its normal host credentials.
 
-### 3. Start in the foreground
+### 3. Create the first pair and start
 
-Provide an existing AgentMail inbox and a private one-line credential file:
+Provide a private one-line AgentMail credential file, then create a pair. The
+transport provisions the inbox and authorizes the pair address at this seam.
 
 ```bash
 export AGENTMAIL_API_KEY_FILE="$HOME/.config/dearmachine/agentmail-api-key"
 
-dearmachine \
-  --inbox-id <agentmail-inbox-id> \
-  --project "$HOME/.dearmachine/entrypoint/main" \
-  --entry-point-repo "$HOME/.dearmachine/entrypoint/main" \
-  --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
-  --verbose
+dearmachine up --create \
+  --email you@example.test \
+  --new-inbox \
+  --transport agentmail \
+  --magnifica-humanitas
 ```
 
-To use an existing OpenMail device inbox instead, select it explicitly and
-configure the paired correspondent in both directions:
+`up --create` records one isolated pair database and then starts all registered
+pairs in one background client. Inspect or stop it with:
+
+```bash
+dearmachine status
+dearmachine down
+```
+
+Plain `dearmachine up` starts all registered pairs again. Service managers and
+containers use `dearmachine up --foreground` so they supervise the real client
+process.
+
+### 4. Add another pair
+
+Stop the client, then explicitly choose whether the new pair gets a new inbox
+or shares an existing registered inbox. To share the first inbox:
+
+```bash
+dearmachine down
+dearmachine up --create \
+  --email another@example.test \
+  --inbox '<inbox-address-or-uuid>' \
+  --magnifica-humanitas
+```
+
+The inbox selector is shown by `dearmachine status`. Sharing is never inferred;
+use `--new-inbox --transport agentmail` instead when the pair should have its
+own inbox. Pair email addresses and pair UUIDs are also the selectors accepted
+by `dearmachine up --pair` and `dearmachine inbox ... --pair`.
+
+To adopt an existing OpenMail inbox, select it explicitly. No separate
+DearMachine allow-list variable is used; pair creation is the authorization
+seam.
 
 ```bash
 export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
-export DEARMACHINE_ALLOW='user@example.test, device@example.test'
 
-dearmachine \
-  --transport openmail \
-  --inbox-id '<openmail-inbox-id-or-address>' \
-  --project "$HOME/.dearmachine/entrypoint/main" \
-  --entry-point-repo "$HOME/.dearmachine/entrypoint/main" \
-  --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
-  --verbose
+dearmachine up --create \
+  --email user@example.test \
+  --inbox '<openmail-inbox-id-or-address>' \
+  --transport openmail
 ```
 
-This first command is inspect-only and will not reply or mark a thread read. To
-enable those mutations, explicitly opt in with both live gates:
+OpenMail is inspect-only until both mutation gates are enabled:
 
 ```bash
 export DEARMACHINE_LIVE_OPENMAIL=1
 export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
 ```
 
-OpenMail's provider-side correspondent policy must also permit the pair; the
-the common allow list cannot loosen that policy. See the
+OpenMail's provider-side correspondent policy must also permit the pair. See the
 [OpenMail transport runbook](dearmachine/runbooks/testing/openmail-transport.md)
 for a disposable, fully isolated verification procedure.
 
-Sendmux is also selectable through the same seam. It uses a mailbox-scoped key,
-the common paired-address allow list, and two explicit mutation gates:
+Sendmux is also selectable through the same seam. It uses a mailbox-scoped key
+and two explicit mutation gates:
 
 ```bash
 export SENDMUX_MAILBOX_API_KEY_FILE=/path/to/one-line-key
-export DEARMACHINE_ALLOW='<paired-address-1>,<paired-address-2>'
 
-dearmachine --transport sendmux --inbox-id '<sendmux-mailbox-id-or-address>'
+dearmachine up --create \
+  --email user@example.test \
+  --inbox '<sendmux-mailbox-id-or-address>' \
+  --transport sendmux
 ```
 
 See the
@@ -94,9 +120,8 @@ for the isolated `send, reply, send, reply` continuation proof. Keep real
 participant addresses in a mode-`0600` operator file, never in source or test
 evidence.
 
-DearMachine remains in the foreground and does not assume systemd or another
-service manager. The optional Nix/OCI container deployment and Linux lifecycle
-helper are documented in
+DearMachine runs natively by default and does not require systemd. The optional
+native systemd launcher and Nix/OCI testing/deployment helpers are documented in
 [`dearmachine/runbooks/host-install.md`](dearmachine/runbooks/host-install.md).
 Live integration tests use isolated container deployments by default.
 

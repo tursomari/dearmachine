@@ -1,7 +1,7 @@
 # Sendmux Transport Live-Test Runbook
 
 This protocol verifies the selectable Sendmux adapter without sharing the
-normal Dear Machine database, PID file, project, Agent Manager state, or
+normal Dear Machine home, pair database, project, Agent Manager state, or
 mailbox transport. It proves one complete two-turn conversation:
 
 `external send -> Dear Machine reply -> external reply -> Dear Machine reply`
@@ -22,9 +22,8 @@ path from that shared runbook.
 - The external correspondent may be any specifically authorized mailbox. This
   one-off operational choice must not introduce provider-, organization-, or
   account-specific behavior into Dear Machine or this procedure.
-- Configure the common `DEARMACHINE_ALLOW` paired-address list using only
-  email addresses. A message addressed to, copied to, or sharing a thread with
-  anyone else must remain invisible to the adapter.
+- Register the external correspondent as the pair email. A message from any
+  other sender must remain invisible to the pair router.
 - Sendmux is inspect-only unless both `DEARMACHINE_LIVE_SENDMUX=1` and
   `DEARMACHINE_LIVE_SENDMUX_APPLY=1` are set. Leave both unset during the
   initial credential and poll checks.
@@ -44,18 +43,13 @@ SENDMUX_QSE_INBOX_ADDRESS=<exact-mailbox-address>
 SENDMUX_QSE_CORRESPONDENT=<exact-external-address>
 ```
 
-Load it without echoing its contents, then set the seam allow list:
+Load it without echoing its contents:
 
 ```bash
 set -a
 . /absolute/path/to/sendmux-qse.env
 set +a
-export DEARMACHINE_ALLOW="$SENDMUX_QSE_CORRESPONDENT,$SENDMUX_QSE_INBOX_ADDRESS"
 ```
-
-Never put the `mbx_...` mailbox ID in `DEARMACHINE_ALLOW`. The allow list
-accepts email addresses only; using the ID fails with
-`allow list must be a comma-separated email address list: mail: missing '@' or angle-addr`.
 
 Before continuing, require that the credential file and operator environment
 file are regular files owned by the current user with no group or other bits.
@@ -70,7 +64,7 @@ addresses.
 ## Isolated inspect
 
 1. Create a runtime root with `mktemp -d` and require mode `0700`. Put the
-   disposable Git project, device configuration, SQLite database, PID file,
+   disposable home, Git project, device configuration,
    logs, Agent Manager home, and Machtiani state below it. Disable entry-point
    maintenance with `--entry-point-repo ""`.
 2. Build `dearmachine` and `agent-manager` from the revision under test. Use a
@@ -79,13 +73,12 @@ addresses.
    official mailbox API and run an empty poll:
 
    ```bash
-   "$QSE_ROOT/dearmachine" \
+   HOME="$QSE_ROOT/home" "$QSE_ROOT/dearmachine" up --create \
+     --email "$SENDMUX_QSE_CORRESPONDENT" \
+     --inbox "$SENDMUX_QSE_INBOX_ID" \
      --transport sendmux \
-     --inbox-id "$SENDMUX_QSE_INBOX_ID" \
      --once \
      --verbose \
-     --db "$QSE_ROOT/inspect.db" \
-     --pidfile "$QSE_ROOT/inspect.pid" \
      --project "$QSE_ROOT/project" \
      --config "$QSE_ROOT/dearmachine.toml" \
      --agent-manager "$QSE_ROOT/agent-manager" \
@@ -99,16 +92,13 @@ authentication failure is a credential blocker, not evidence about delivery.
 
 ## Send, reply, send, reply
 
-1. With the client stopped, create the fresh live database by locally skipping
+1. With the client stopped, establish the fresh pair baseline by locally skipping
    the exact current eligible snapshot with a run-specific reason:
 
    ```bash
-   "$QSE_ROOT/dearmachine" inbox skip \
+   HOME="$QSE_ROOT/home" "$QSE_ROOT/dearmachine" inbox skip \
+     --pair "$SENDMUX_QSE_CORRESPONDENT" \
      --current \
-     --transport sendmux \
-     --inbox-id "$SENDMUX_QSE_INBOX_ID" \
-     --db "$QSE_ROOT/live.db" \
-     --pidfile "$QSE_ROOT/live.pid" \
      --project "$QSE_ROOT/project" \
      --agent-bin '<absolute-machtiani-path>' \
      --reason "sendmux-qse-<run-id>-baseline"

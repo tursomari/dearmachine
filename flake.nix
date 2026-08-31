@@ -158,11 +158,15 @@
             set -eu
 
             pidfile="''${DEARMACHINE_PIDFILE:-/home/dearmachine/.dearmachine/run/dearmachine.pid}"
+            readyfile="$(dirname "$pidfile")/dearmachine.ready"
             [ -r "$pidfile" ]
             IFS= read -r pid < "$pidfile"
             case "$pid" in
               *[!0-9]*|"") exit 1 ;;
             esac
+            [ -r "$readyfile" ]
+            IFS= read -r ready_pid < "$readyfile"
+            [ "$ready_pid" = "$pid" ]
             kill -0 "$pid"
             grep -aq dearmachine "/proc/$pid/cmdline"
           '';
@@ -226,10 +230,12 @@
             assert service["restart"] == "unless-stopped"
             assert service["healthcheck"]["test"] == ["CMD", "dearmachine-health"]
             assert service["command"][0] == "up"
+            assert service["command"][1] == "--foreground"
             assert "--magnifica-humanitas" in service["command"]
             assert service["command"].count("--magnifica-humanitas") == 1
             assert "--inbox-id" not in service["command"]
             assert "--db" not in service["command"]
+            assert "--pidfile" not in service["command"]
             assert "--allow" not in service["command"]
             assert "--agent-manager" not in service["command"]
             assert service["environment"]["HOME"] == "/home/dearmachine"
@@ -278,13 +284,6 @@
               ${builtins.readFile ./scripts/nix/stack-runtime.sh}
             '';
           };
-          stateMigration = pkgs.writeShellApplication {
-            name = "dearmachine-state-migrate";
-            runtimeInputs = [ pkgs.python3 ];
-            text = ''
-              exec python3 ${./scripts/nix/migrate-state.py} "$@"
-            '';
-          };
           hostLifecycle = pkgs.writeShellApplication {
             name = "dearmachine-host-lifecycle";
             runtimeInputs = with pkgs; [
@@ -299,7 +298,6 @@
               export DEARMACHINE_RUNTIME_PATH="''${DEARMACHINE_RUNTIME_PATH:-${stackRuntime}}"
               export DEARMACHINE_IMAGE_SOURCE="''${DEARMACHINE_IMAGE_SOURCE:-${dearmachineImage}}"
               export DEARMACHINE_UNIT_TEMPLATE="''${DEARMACHINE_UNIT_TEMPLATE:-${./contrib/systemd/dearmachine-stack.service.in}}"
-              export DEARMACHINE_MIGRATION_HELPER="''${DEARMACHINE_MIGRATION_HELPER:-${stateMigration}/bin/dearmachine-state-migrate}"
               ${builtins.readFile ./scripts/nix/host-lifecycle.sh}
             '';
           };
@@ -314,7 +312,6 @@
           hostUpgrade = lifecycleApp "dearmachine-host-upgrade" "upgrade";
           hostUninstall = lifecycleApp "dearmachine-host-uninstall" "uninstall";
           hostSecrets = lifecycleApp "dearmachine-host-secrets" "secrets";
-          hostMigrate = lifecycleApp "dearmachine-host-migrate" "migrate";
           containerLifecycle = pkgs.writeShellApplication {
             name = "dearmachine-container-lifecycle";
             runtimeInputs = [ hostLifecycle ];
@@ -333,7 +330,6 @@
           containerUpgrade = containerLifecycleApp "dearmachine-container-upgrade" "upgrade";
           containerUninstall = containerLifecycleApp "dearmachine-container-uninstall" "uninstall";
           containerSecrets = containerLifecycleApp "dearmachine-container-secrets" "secrets";
-          containerMigrate = containerLifecycleApp "dearmachine-container-migrate" "migrate";
           unitCheck = pkgs.runCommand "dearmachine-systemd-user-unit-check" {
             nativeBuildInputs = [ pkgs.systemd ];
           } ''
@@ -366,12 +362,6 @@
             PROJECT_ROOT=${./.} bash ${./tests/nix/test-stack-runtime.sh}
             touch $out
           '';
-          stateMigrationCheck = pkgs.runCommand "dearmachine-state-migration-check" {
-            nativeBuildInputs = [ pkgs.bash pkgs.coreutils pkgs.python3 pkgs.sqlite ];
-          } ''
-            PROJECT_ROOT=${./.} bash ${./tests/nix/test-state-migration.sh}
-            touch $out
-          '';
           runbookCheck = pkgs.runCommand "dearmachine-runbook-contract-check" {
             nativeBuildInputs = [ pkgs.bash pkgs.gnugrep ];
           } ''
@@ -397,18 +387,17 @@
               ${./tests/nix/test-native-service-launch.sh} \
               ${./tests/nix/test-host-podman-integration.sh} \
               ${./tests/nix/test-stack-runtime.sh} \
-              ${./tests/nix/test-runbook-contracts.sh} \
-              ${./tests/nix/test-state-migration.sh}
+              ${./tests/nix/test-runbook-contracts.sh}
             touch $out
           '';
         in {
           inherit
             pkgs dearmachine agentManager nativeServiceLauncher codexTool goTests install dearmachineImage composeBundle
-            composeCheck stackRuntime stateMigration hostLifecycle
-            hostInstall hostUpgrade hostUninstall hostSecrets hostMigrate
+            composeCheck stackRuntime hostLifecycle
+            hostInstall hostUpgrade hostUninstall hostSecrets
             containerLifecycle containerInstall containerUpgrade containerUninstall
-            containerSecrets containerMigrate
-            unitCheck hostLifecycleCheck stackRuntimeCheck stateMigrationCheck runbookCheck nativeServiceLauncherCheck shellCheck;
+            containerSecrets
+            unitCheck hostLifecycleCheck stackRuntimeCheck runbookCheck nativeServiceLauncherCheck shellCheck;
         };
     in {
       packages = forAllSystems (system:
@@ -468,10 +457,6 @@
             type = "app";
             program = "${project.hostSecrets}/bin/dearmachine-host-secrets";
           };
-          host-migrate = {
-            type = "app";
-            program = "${project.hostMigrate}/bin/dearmachine-host-migrate";
-          };
           dearmachine-container-lifecycle = {
             type = "app";
             program = "${project.containerLifecycle}/bin/dearmachine-container-lifecycle";
@@ -492,10 +477,6 @@
             type = "app";
             program = "${project.containerSecrets}/bin/dearmachine-container-secrets";
           };
-          container-migrate = {
-            type = "app";
-            program = "${project.containerMigrate}/bin/dearmachine-container-migrate";
-          };
         });
 
       checks = forAllSystems (system:
@@ -509,23 +490,10 @@
             nativeBuildInputs = [ pkgs.gnugrep ];
           } ''
             ${project.dearmachine}/bin/dearmachine --help > $out 2>&1
-            grep -F "Usage of dearmachine" $out
-            printf 'smoke\n' > "$TMPDIR/agentmail-api-key"
-            no_allow=$(AGENTMAIL_API_KEY_FILE="$TMPDIR/agentmail-api-key" \
-              PATH=/missing ${project.dearmachine}/bin/dearmachine \
-              --inbox-id smoke \
-              --db "$TMPDIR/smoke.db" \
-              --config /missing \
-              --once 2>&1 || true)
-            grep -F 'allow list is required' <<<"$no_allow" > /dev/null
-            credential_smoke=$(AGENTMAIL_API_KEY_FILE="$TMPDIR/agentmail-api-key" \
-              DEARMACHINE_ALLOW='smoke@example.com' \
-              PATH=/missing ${project.dearmachine}/bin/dearmachine \
-              --inbox-id smoke \
-              --db "$TMPDIR/smoke.db" \
-              --config /missing \
-              --once 2>&1 || true)
-            grep -F 'read device config' <<<"$credential_smoke" > /dev/null
+            grep -F "Usage: dearmachine <command>" $out
+            legacy=$(${project.dearmachine}/bin/dearmachine \
+              --inbox-id smoke --db "$TMPDIR/smoke.db" --once 2>&1 || true)
+            grep -F 'unknown command "--inbox-id"' <<<"$legacy" > /dev/null
           '';
           install-smoke = pkgs.runCommand "dearmachine-install-smoke" {
             nativeBuildInputs = [ project.install ];
@@ -537,7 +505,7 @@
             for directory in config state run log; do
               test -d "$HOME/.dearmachine/$directory"
             done
-            "$HOME/.local/bin/dearmachine" --help 2>&1 | grep -F "Usage of dearmachine"
+            "$HOME/.local/bin/dearmachine" --help 2>&1 | grep -F "Usage: dearmachine <command>"
             "$HOME/.local/bin/agent-manager" --help 2>&1 | grep -F "agent-manager <command>"
             touch $out
           '';
@@ -547,7 +515,6 @@
           host-lifecycle = project.hostLifecycle;
           host-lifecycle-test = project.hostLifecycleCheck;
           stack-runtime-test = project.stackRuntimeCheck;
-          state-migration-test = project.stateMigrationCheck;
           systemd-user-unit = project.unitCheck;
           runbook-contracts = project.runbookCheck;
           native-service-launcher = project.nativeServiceLauncherCheck;

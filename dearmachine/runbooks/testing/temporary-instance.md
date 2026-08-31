@@ -212,14 +212,12 @@ Compose, mount, secret, or container-health paths.
    command must explicitly provide:
 
    ```text
-   dearmachine
-     --inbox-id <temporary-inbox-id>
+   dearmachine up --foreground
+     --pair <temporary-sender-address>
      --project <protocol-project>
      --config <runtime-root>/dearmachine.toml
      --agent-manager <runtime-root>/agent-manager
      --agent-bin <absolute-machtiani-path>
-     --db <runtime-root>/dearmachine.db
-     --pidfile <runtime-root>/dearmachine.pid
      --entry-point-repo <empty-or-disposable-entry-point>
      --entry-point-prompt <protocol-prompt-when-enabled>
      --poll-interval 10s

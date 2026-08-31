@@ -40,10 +40,6 @@ Usage: dearmachine-host-lifecycle <command> [options]
   secrets sync --file FILE        Create/update the production Podman secret
   secrets rotate --file FILE      Update the secret and restart the stack
   secrets remove                  Remove the production Podman secret
-  migrate --dry-run               Snapshot the live legacy DB read-only and
-                                  exercise migration only beneath /tmp
-  migrate --real                  Stop, migrate, verify, start, and await a poll
-  migrate --rollback              Restore the retained pre-migration database
   uninstall                       Remove service, images, and release archives;
                                   preserve user configuration and state
 EOF
@@ -58,12 +54,10 @@ require_packaged_inputs() {
   : "${DEARMACHINE_RUNTIME_PATH:?DEARMACHINE_RUNTIME_PATH is not set by the Nix package}"
   : "${DEARMACHINE_IMAGE_SOURCE:?DEARMACHINE_IMAGE_SOURCE is not set by the Nix package}"
   : "${DEARMACHINE_UNIT_TEMPLATE:?DEARMACHINE_UNIT_TEMPLATE is not set by the Nix package}"
-  : "${DEARMACHINE_MIGRATION_HELPER:?DEARMACHINE_MIGRATION_HELPER is not set by the Nix package}"
   [[ -x $DEARMACHINE_RUNTIME_PATH/bin/dearmachine-stack ]] || \
     die "missing packaged stack wrapper"
   [[ -f $DEARMACHINE_IMAGE_SOURCE ]] || die "missing packaged OCI archive"
   [[ -f $DEARMACHINE_UNIT_TEMPLATE ]] || die "missing systemd unit template"
-  [[ -x $DEARMACHINE_MIGRATION_HELPER ]] || die "missing migration helper"
 }
 
 validate_service_name() {
@@ -458,94 +452,6 @@ secrets_host() {
   fi
 }
 
-prove_database_closed() {
-  local database=$1 pidfile=$CLIENT_ROOT/run/dearmachine.pid unit legacy_unit
-  local -a units=("$SERVICE_NAME")
-  legacy_unit=${DEARMACHINE_LEGACY_UNIT_NAME:-}
-  if [[ -z $legacy_unit && $SERVICE_NAME == dearmachine-stack.service ]]; then
-    legacy_unit=dearmachine.service
-  fi
-  if [[ -n $legacy_unit && $legacy_unit != "$SERVICE_NAME" ]]; then
-    [[ $legacy_unit =~ ^dearmachine[-A-Za-z0-9_@.]*\.service$ ]] ||
-      die "unsafe legacy systemd user unit name: $legacy_unit"
-    units+=("$legacy_unit")
-  fi
-  for unit in "${units[@]}"; do
-    systemctl_user stop "$unit" >/dev/null 2>&1 || true
-    if systemctl_user is-active --quiet "$unit" >/dev/null 2>&1; then
-      die "service is still active: $unit"
-    fi
-  done
-  if [[ -e $pidfile ]]; then
-    local pid
-    IFS= read -r pid <"$pidfile" || true
-    [[ $pid =~ ^[0-9]+$ ]] || die "refusing migration with an invalid PID file: $pidfile"
-    if kill -0 "$pid" 2>/dev/null; then
-      die "DearMachine PID $pid is still running"
-    fi
-    die "refusing migration with a stale PID file: $pidfile"
-  fi
-  for candidate in "$database" "$database-wal" "$database-shm"; do
-    if [[ -e $candidate ]] && fuser "$candidate" >/dev/null 2>&1; then
-      die "database file is still open: $candidate"
-    fi
-  done
-}
-
-wait_for_clean_poll() {
-  local attempts=${DEARMACHINE_CLEAN_POLL_ATTEMPTS:-120}
-  local delay=${DEARMACHINE_CLEAN_POLL_DELAY:-2}
-  local _
-  run_stack wait
-  for _ in $(seq 1 "$attempts"); do
-    if run_stack poll-ready; then
-      return 0
-    fi
-    sleep "$delay"
-  done
-  return 1
-}
-
-migrate_host() {
-  require_packaged_inputs
-  [[ $# -eq 1 ]] || die "migrate requires exactly one of --dry-run, --real, or --rollback"
-  case $1 in
-    --dry-run)
-      "$DEARMACHINE_MIGRATION_HELPER" --dry-run
-      ;;
-    --real)
-      validate_service_name
-      check_user_manager
-      [[ -f $UNIT_PATH ]] || die "install the host service before real migration"
-      prove_database_closed "${DEARMACHINE_MIGRATION_SOURCE_DB:-$CLIENT_ROOT/state/device-client.db}"
-      DEARMACHINE_MIGRATION_STOP_PROOF=1 \
-        "$DEARMACHINE_MIGRATION_HELPER" --real
-      if ! systemctl_user start "$SERVICE_NAME"; then
-        systemctl_user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-        die "migrated database verified, but the new stack failed to start; stack left stopped and rollback retained"
-      fi
-      if wait_for_clean_poll; then
-        if ! "$DEARMACHINE_MIGRATION_HELPER" --mark-clean; then
-          systemctl_user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-          die "clean poll observed but migration metadata could not be updated; stack left stopped"
-        fi
-        printf 'migration verified by a healthy container and clean AgentMail poll\n'
-      else
-        systemctl_user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-        die "no clean poll was observed; stack left stopped and rollback retained"
-      fi
-      ;;
-    --rollback)
-      validate_service_name
-      check_user_manager
-      prove_database_closed "${DEARMACHINE_MIGRATION_TARGET_DB:-$CLIENT_ROOT/state/dearmachine.db}"
-      DEARMACHINE_MIGRATION_STOP_PROOF=1 \
-        "$DEARMACHINE_MIGRATION_HELPER" --rollback
-      ;;
-    *) die "unknown migrate mode: $1" ;;
-  esac
-}
-
 remove_managed_tree() {
   local path=$1 expected_parent=$2
   [[ ! -e $path ]] && return 0
@@ -587,7 +493,6 @@ main() {
     containers) stack_command containers "$@" ;;
     logs) logs_host "$@" ;;
     secrets) secrets_host "$@" ;;
-    migrate) migrate_host "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; die "unknown command: $command" ;;
   esac

@@ -13,9 +13,6 @@ Go test suite.
   installation, secret-provisioning, upgrade/rollback, and systemd-user path.
 - [`operate-entrypoint-client.md`](./operate-entrypoint-client.md) operates and
   diagnoses the installed `dearmachine-stack.service`.
-- [`migrate-live-state.md`](./migrate-live-state.md) first proves the migration
-  against a read-only online-backup snapshot, then describes the separately
-  authorized production cutover and rollback.
 - [`container-spin-up.md`](./container-spin-up.md) exercises the same packaged
   image, wrapper, and lifecycle in disposable test mode.
 - [`uninstall-reinstall.md`](./uninstall-reinstall.md) removes and reinstalls

@@ -55,7 +55,7 @@ FROM processed_messages
 WHERE processed_at > <counted-through-or-legacy-updated-at>;
 ```
 
-This needs no schema migration and follows technological subsidiarity by deriving the decision
+This needs no schema change and follows technological subsidiarity by deriving the decision
 entirely from client-owned SQLite state. Passing the gate opens one maintenance
 pass that repeats fork, run, delete, and `sync --include-docs` for every
 eligible source in chronological order while holding only the newest session.
@@ -115,13 +115,11 @@ include this effective argument set, with `--concurrency 3` or another recorded
 value of at least two:
 
 ```text
-dearmachine # effective command inside the Compose container
-  --inbox-id <temporary-receiver-id>
+dearmachine up --foreground # effective command inside the Compose container
+  --pair <temporary-sender-address>
   --project <phase-1-disposable-project>
   --config <runtime-root>/dearmachine.toml
   --agent-bin /opt/dearmachine/bin/machtiani
-  --db <mounted-runtime-root>/phase-1-dearmachine.db
-  --pidfile <mounted-runtime-root>/phase-1-dearmachine.pid
   --entry-point-repo ""
   --entry-point-prompt <runtime-root>/phase-1-unused-prompt.md
   --concurrency 3

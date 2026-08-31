@@ -144,6 +144,23 @@ func TestUpCreateAuthorizationFailureDoesNotPublishPair(t *testing.T) {
 	}
 }
 
+func TestUpCreateRejectsDuplicateEmailBeforeProviderMutation(t *testing.T) {
+	deps := testDependencies(t, &fakeApplication{})
+	first := makeUpTestPair(t, deps, "duplicate")
+	deps.isInteractive = func(io.Reader) bool { return false }
+	mutated := false
+	deps.provisionInbox = func(context.Context, string) (client.Inbox, error) {
+		mutated = true
+		return client.Inbox{}, nil
+	}
+	err := run([]string{
+		"up", "--create", "--email", first.UserEmail, "--new-inbox", "--transport", "agentmail", "--once",
+	}, func(string) string { return "" }, deps)
+	if err == nil || !strings.Contains(err.Error(), "already registered") || mutated {
+		t.Fatalf("duplicate creation = %v, provider mutated=%v", err, mutated)
+	}
+}
+
 func TestUpCreateCanAdoptExactProviderInbox(t *testing.T) {
 	deps := testDependencies(t, &fakeApplication{})
 	deps.isInteractive = func(io.Reader) bool { return false }
@@ -222,7 +239,7 @@ func TestUpCreateValidatesRunFlagsBeforeProviderMutation(t *testing.T) {
 	err := run([]string{
 		"up", "--create", "--email", "user@example.test", "--new-inbox", "--transport", "agentmail", "--db", "forbidden.db", "--once",
 	}, func(string) string { return "" }, deps)
-	if err == nil || !strings.Contains(err.Error(), "direct diagnostic") || called {
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -db") || called {
 		t.Fatalf("preflight error = %v, provisioned=%v", err, called)
 	}
 	path, _ := client.DefaultPairRegistryPath(deps.userHomeDir)

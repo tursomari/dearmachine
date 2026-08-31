@@ -105,12 +105,11 @@ The impedance is real and remains visible in the adapter:
 - Attachments are addressed by message ID and filename. The adapter exposes an
   opaque transport attachment ID, limits bytes before returning content, and
   refuses redirects outside the configured OpenMail API origin.
-- Correspondent authorization is enforced at the transport seam. `--allow` or
-  `DEARMACHINE_ALLOW` is required and accepts one comma-separated RFC 5322
-  paired-address set. A message is available only if its sender and every
-  non-empty recipient are members of that set. CC delivery and any thread with
-  another correspondent are ignored; their mail is not surfaced, replied to,
-  fetched, or marked processed.
+- Correspondent authorization is established by `dearmachine up --create` and
+  enforced centrally by the pair router. A message is available only when its
+  canonical sender is the pair email and its recipient is the registered inbox.
+  Other correspondents are not surfaced, replied to, fetched, or marked
+  processed.
 
 #### Dead Simple Email — High
 
@@ -316,10 +315,8 @@ without duplication, find its receipt after restart, and mark work complete.
 Transport selection is implemented as a runtime seam. `--transport` accepts
 `agentmail` (the default) or `openmail` on the main command and `inbox skip`.
 The static `internal/transports` catalog contains metadata only; its separate
-factory dispatches constructors. Authentication remains constructor-local, so
-the AgentMail credential prelude is not run for OpenMail. The existing
-single-argument `dependencies.newTransport` function remains the test injection
-point by binding the selected factory after flags are parsed.
+factory dispatches raw provider constructors. Authentication remains
+constructor-local, so the AgentMail credential prelude is not run for OpenMail.
 
 Selection intentionally does not add a `transport` key to the version-1 device
 TOML or bump its schema. The shipped construction seam proved sufficient
@@ -327,9 +324,8 @@ without mixing provider credentials or options into agent-backend
 configuration.
 
 For OpenMail, set `OPENMAIL_API_KEY` or `OPENMAIL_API_KEY_FILE` (whose optional
-default is `$HOME/.config/dearmachine/openmail-api-key`) and the required
-comma-separated RFC 5322 paired-address set with `--allow` or
-`DEARMACHINE_ALLOW`. The adapter is inspect-only unless both
+default is `$HOME/.config/dearmachine/openmail-api-key`) and register the pair
+with `dearmachine up --create`. The adapter is inspect-only unless both
 `DEARMACHINE_LIVE_OPENMAIL=1` and `DEARMACHINE_LIVE_OPENMAIL_APPLY=1` are set;
 the second gate enables replies and thread-read mutations. The API host is not
 configurable in the production constructor.

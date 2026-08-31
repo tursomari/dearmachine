@@ -1,6 +1,6 @@
 # Install and run DearMachine natively
 
-Native foreground execution is the default DearMachine deployment. Nix builds
+Native execution is the default DearMachine deployment. Nix builds
 and installs the DearMachine Client and its matching Agent Manager together;
 `machtiani` and the backend commands approved in `dearmachine.toml` are
 resolved from the user's `PATH`. Native deployment does not require an OCI
@@ -84,10 +84,10 @@ The file must contain exactly one non-empty line. `AGENTMAIL_API_KEY` remains
 supported when a caller already supplies the credential through its
 environment.
 
-## Run in the foreground
+## Create and run
 
-Initialize the selected entry point if necessary, then start DearMachine as a
-normal foreground process:
+Initialize the selected entry point if necessary, then create the first pair
+and start DearMachine's native background client:
 
 ```bash
 project="$HOME/.dearmachine/entrypoint/main"
@@ -96,28 +96,21 @@ dearmachine init \
   --entry-point-repo "$project" \
   --agent-bin machtiani
 
-# First-time pairing: adopt the exact existing provider inbox. To provision a
-# new AgentMail inbox instead, replace the last line with
-# --new-inbox --transport agentmail.
 dearmachine up --create \
   --email <user-email> \
-  --inbox <inbox-id-or-address> --transport agentmail \
+  --new-inbox --transport agentmail \
   --project "$project" \
   --entry-point-repo "$project" \
-  --magnifica-humanitas \
-  --once
+  --magnifica-humanitas
 
-dearmachine up \
-  --project "$project" \
-  --entry-point-repo "$project" \
-  --magnifica-humanitas \
-  --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
-  --verbose
+dearmachine status
 ```
 
-DearMachine logs to standard error, handles `SIGINT` and `SIGTERM`, and remains
-in the foreground. A user may place that command under a supervisor of their
-choice, but DearMachine does not require or install one for native operation.
+Use `dearmachine down` and `dearmachine up` to stop and restart all registered
+pairs. To adopt an existing inbox, replace `--new-inbox` with
+`--inbox <inbox-id-or-address>`; specifying `--transport agentmail` also allows
+an exact provider inbox to be registered. Use `up --foreground` only when a
+service manager or test container must supervise the process directly.
 
 Do not start a native process and a container deployment against the same
 inbox and database at the same time.
@@ -157,11 +150,10 @@ nix run .#dearmachine-native-service -- \
   --environment-file "$backend_environment_file" \
   --agent-manager "$manager" \
   --working-directory "$project" \
-  -- "$client" up \
+  -- "$client" \
     --project "$project" \
     --entry-point-repo "$project" \
     --magnifica-humanitas \
-    --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
     --verbose
 ```
 

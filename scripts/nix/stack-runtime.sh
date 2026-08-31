@@ -88,8 +88,10 @@ case $mode in
 set -eu
 dearmachine --help
 printf '%s\n' "$$" >"$DEARMACHINE_PIDFILE"
+readyfile=$(dirname "$DEARMACHINE_PIDFILE")/dearmachine.ready
+printf '%s\n' "$$" >"$readyfile"
 echo "DearMachine credential-free Compose test service ready"
-trap 'rm -f "$DEARMACHINE_PIDFILE"; exit 0' TERM INT
+trap 'rm -f "$readyfile" "$DEARMACHINE_PIDFILE"; exit 0' TERM INT
 while :; do
   sleep 60 &
   wait $! || true
@@ -312,7 +314,6 @@ case $action in
       --project /workspace \
       --config /home/dearmachine/.dearmachine/config/dearmachine.toml \
       --agent-bin /opt/dearmachine/bin/machtiani \
-      --pidfile /home/dearmachine/.dearmachine/run/dearmachine.pid \
       --entry-point-repo "${DEARMACHINE_ENTRY_POINT_REPO:-}" \
       --entry-point-prompt "${DEARMACHINE_ENTRY_POINT_PROMPT:-/home/dearmachine/.dearmachine/entrypoint/main/documentation/update-prompt-template.md}" \
       --poll-interval "${DEARMACHINE_POLL_INTERVAL:-60s}" \

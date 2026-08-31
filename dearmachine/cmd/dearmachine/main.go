@@ -11,9 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -34,9 +32,6 @@ func main() {
 }
 
 type config struct {
-	inboxID                string
-	transport              string
-	dbPath                 string
 	projectDir             string
 	model                  string
 	agentBinary            string
@@ -47,10 +42,7 @@ type config struct {
 	concurrency            int
 	maintenanceMinTurns    int
 	maintenanceMinTurnsSet bool
-	allow                  string
-	allowSet               bool
 	pollInterval           time.Duration
-	pidfile                string
 	once                   bool
 	verbose                bool
 	magnificaHumanitas     bool
@@ -62,9 +54,7 @@ type application interface {
 }
 
 type dependencies struct {
-	openStore       func(string) (*client.Store, error)
 	openPairStore   func(string, client.Pair) (*client.Store, error)
-	newTransport    func(string) (client.Transport, error)
 	newRawTransport func(string, string) (client.Transport, error)
 	provisionInbox  func(context.Context, string) (client.Inbox, error)
 	inspectInbox    func(context.Context, string, string) (client.Inbox, error)
@@ -82,20 +72,23 @@ type dependencies struct {
 		string,
 		client.ResponseTier,
 	) (application, error)
-	newPairDaemon func([]application, int, string) (application, error)
-	newLogger     func() *log.Logger
-	notifyContext func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
-	flagOutput    io.Writer
-	stdin         io.Reader
-	stdout        io.Writer
-	lookPath      func(string) (string, error)
-	userHomeDir   func() (string, error)
-	isInteractive func(io.Reader) bool
+	newPairDaemon   func([]application, int, string) (application, error)
+	newLogger       func() *log.Logger
+	notifyContext   func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
+	flagOutput      io.Writer
+	stdin           io.Reader
+	stdout          io.Writer
+	lookPath        func(string) (string, error)
+	userHomeDir     func() (string, error)
+	isInteractive   func(io.Reader) bool
+	startBackground func([]string, string) (int, error)
+	waitDaemonReady func(string, int, time.Duration) error
+	stopDaemon      func(string, time.Duration) error
+	daemonStatus    func(string) (int, bool, error)
 }
 
 func defaultDependencies() dependencies {
 	return dependencies{
-		openStore:       client.OpenStore,
 		openPairStore:   client.OpenPairStore,
 		newRawTransport: transports.NewRaw,
 		provisionInbox:  transports.ProvisionInbox,
@@ -155,6 +148,10 @@ func defaultDependencies() dependencies {
 			info, err := file.Stat()
 			return err == nil && info.Mode()&os.ModeCharDevice != 0
 		},
+		startBackground: startBackground,
+		waitDaemonReady: client.WaitDaemonReady,
+		stopDaemon:      client.StopDaemon,
+		daemonStatus:    client.DaemonStatus,
 	}
 }
 
@@ -169,14 +166,6 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	flags := flag.NewFlagSet("dearmachine", flag.ContinueOnError)
 	flags.SetOutput(output)
 	var cfg config
-	flags.StringVar(&cfg.inboxID, "inbox-id", "", "mail transport inbox ID or address")
-	flags.StringVar(&cfg.transport, "transport", "agentmail", "mail transport ID ("+strings.Join(transports.IDs(), ", ")+")")
-	flags.StringVar(
-		&cfg.dbPath,
-		"db",
-		"",
-		"SQLite state database path (default: ~/.dearmachine/state/dearmachine.db)",
-	)
 	flags.StringVar(
 		&cfg.projectDir,
 		"project",
@@ -231,14 +220,12 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		3,
 		"maximum number of email threads processed concurrently",
 	)
-	flags.StringVar(&cfg.allow, "allow", "", "comma-separated paired RFC 5322 email addresses (required; or DEARMACHINE_ALLOW)")
 	flags.IntVar(
 		&cfg.maintenanceMinTurns,
 		"maintenance-min-turns",
 		20,
 		"completed turns required before entry-point maintenance (0 disables the gate)",
 	)
-	flags.StringVar(&cfg.pidfile, "pidfile", "", "path to write the DearMachine Client process ID")
 	flags.BoolVar(
 		&cfg.magnificaHumanitas,
 		"magnifica-humanitas",
@@ -259,8 +246,6 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		switch setFlag.Name {
 		case "maintenance-min-turns":
 			cfg.maintenanceMinTurnsSet = true
-		case "allow":
-			cfg.allowSet = true
 		}
 	})
 	if flags.NArg() != 0 {
@@ -271,9 +256,6 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	}
 	if cfg.maintenanceMinTurns < 0 {
 		return config{}, fmt.Errorf("--maintenance-min-turns must not be negative")
-	}
-	if cfg.allowSet && strings.TrimSpace(cfg.allow) == "" {
-		return config{}, fmt.Errorf("--allow must not be empty")
 	}
 	return cfg, nil
 }
@@ -291,121 +273,30 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if len(args) > 0 && args[0] == "up" {
 		return runUp(args[1:], getenv, deps)
 	}
-	return runStart(args, getenv, deps)
+	if len(args) > 0 && args[0] == "status" {
+		return runStatus(args[1:], deps)
+	}
+	if len(args) > 0 && args[0] == "down" {
+		return runDown(args[1:], deps)
+	}
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		return globalHelp(deps.stdout)
+	}
+	return fmt.Errorf("unknown command %q", args[0])
 }
 
-// runStart is the deliberately low-level, direct diagnostic path. Normal
-// daemon operation always goes through `dearmachine up` and the pair registry.
-func runStart(args []string, getenv func(string) string, deps dependencies) error {
-	flagOutput := deps.flagOutput
-	if flagOutput == nil {
-		flagOutput = io.Discard
-	}
-	cfg, err := parseConfig(args, flagOutput)
-	if err != nil {
-		return err
-	}
-	if cfg.inboxID == "" {
-		return fmt.Errorf("--inbox-id is required")
-	}
-	if strings.TrimSpace(cfg.dbPath) == "" {
-		return fmt.Errorf("--db is required for direct diagnostic invocation; use `dearmachine up` for registered pairs")
-	}
-	if deps.newTransport == nil {
-		allow, err := resolveAllow(cfg.allow, cfg.allowSet, getenv)
-		if err != nil {
-			return err
-		}
-		selectedTransport := cfg.transport
-		deps.newTransport = func(inboxID string) (client.Transport, error) {
-			return transports.New(selectedTransport, inboxID, allow)
-		}
-	}
-	transport, err := deps.newTransport(cfg.inboxID)
-	if err != nil {
-		return err
-	}
-	backends, managerPath, customBackends, responseTier, err := loadAgentManagedConfig(cfg, deps)
-	if err != nil {
-		return err
-	}
-	dbPath, err := resolvePath(cfg.dbPath, deps.userHomeDir)
-	if err != nil {
-		return err
-	}
-	store, err := deps.openStore(dbPath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
+func globalHelp(output io.Writer) error {
+	output = outputOrDiscard(output)
+	_, err := fmt.Fprintln(output, `Usage: dearmachine <command> [options]
 
-	runner, err := deps.newRunner(cfg.agentBinary, cfg.projectDir, cfg.model)
-	if err != nil {
-		return err
-	}
-	runner.SetMagnificaHumanitas(cfg.magnificaHumanitas)
-	if err := runner.ConfigureAgentManaged(backends, managerPath, customBackends); err != nil {
-		return err
-	}
-	logger := deps.newLogger()
-	orchestrator, err := buildOrchestrator(cfg, deps, logger, backends, managerPath, customBackends)
-	if err != nil {
-		return err
-	}
-	if orchestrator != nil && !cfg.maintenanceMinTurnsSet {
-		environmentValue := strings.TrimSpace(getenv("DEARMACHINE_MAINTENANCE_MIN_TURNS"))
-		if environmentValue != "" {
-			cfg.maintenanceMinTurns, err = strconv.Atoi(environmentValue)
-			if err != nil {
-				return fmt.Errorf("DEARMACHINE_MAINTENANCE_MIN_TURNS must be an integer: %w", err)
-			}
-			if cfg.maintenanceMinTurns < 0 {
-				return fmt.Errorf("--maintenance-min-turns must not be negative")
-			}
-			orchestrator.MaintenanceMinTurns = cfg.maintenanceMinTurns
-		}
-	}
-	if orchestrator != nil && orchestrator.MaintenanceMinTurns > 0 {
-		orchestrator.TurnCounter = store.CountProcessedSince
-	}
-	app, err := deps.newApp(
-		transport,
-		store,
-		runner,
-		orchestrator,
-		cfg.concurrency,
-		cfg.pollInterval,
-		logger,
-		cfg.verbose,
-		cfg.pidfile,
-		responseTier,
-	)
-	if err != nil {
-		return err
-	}
-
-	ctx, stop := deps.notifyContext(
-		context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-	defer stop()
-
-	if cfg.once {
-		return app.RunOnce(ctx)
-	}
-	return app.Run(ctx)
-}
-
-func resolveAllow(value string, explicitlySet bool, getenv func(string) string) (transports.AllowList, error) {
-	if !explicitlySet {
-		value = strings.TrimSpace(getenv("DEARMACHINE_ALLOW"))
-	}
-	allow, err := transports.ParseAllowList(value)
-	if err != nil {
-		return transports.AllowList{}, fmt.Errorf("--allow or DEARMACHINE_ALLOW: %w", err)
-	}
-	return allow, nil
+Commands:
+  up            create pairs or start registered pairs
+  down          stop the background client
+  status        show registered pairs and client state
+  inbox         maintain pair inbox state
+  init          initialize the entry-point repository
+  setup-agents  configure agent backends`)
+	return err
 }
 
 func runInit(args []string, deps dependencies) error {

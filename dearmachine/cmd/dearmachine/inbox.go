@@ -7,14 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/dearmachine/dearmachine/internal/client"
-	"github.com/dearmachine/dearmachine/internal/transports"
 )
 
 func runInbox(args []string, deps dependencies) error {
@@ -67,11 +62,7 @@ func runInboxSkip(args []string, deps dependencies) error {
 	flags := flag.NewFlagSet("inbox skip", flag.ContinueOnError)
 	flags.SetOutput(output)
 	current := flags.Bool("current", false, "skip the exact snapshot of currently unread messages")
-	inboxID := flags.String("inbox-id", "", "mail transport inbox ID or address")
-	transportID := flags.String("transport", "agentmail", "mail transport ID ("+strings.Join(transports.IDs(), ", ")+")")
-	allowValue := flags.String("allow", "", "comma-separated paired RFC 5322 email addresses (required; or DEARMACHINE_ALLOW)")
-	dbPath := flags.String("db", "", "SQLite state database path")
-	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
+	pairSelector := flags.String("pair", "", "registered pair email address or UUID (required)")
 	projectDir := flags.String("project", ".", "machtiani project for abandoned-session cleanup")
 	agentBinary := flags.String("agent-bin", "machtiani", "path to the machtiani executable")
 	reason := flags.String("reason", "operator skipped", "local audit reason")
@@ -86,42 +77,32 @@ func runInboxSkip(args []string, deps dependencies) error {
 				"Run \"dearmachine inbox skip --help\" for usage",
 		)
 	}
-	if strings.TrimSpace(*inboxID) == "" {
+	if strings.TrimSpace(*pairSelector) == "" {
 		return fmt.Errorf(
-			"--inbox-id is required\nRun \"dearmachine inbox skip --help\" for usage",
+			"--pair is required\nRun \"dearmachine inbox skip --help\" for usage",
 		)
 	}
-	allowSet := false
-	flags.Visit(func(setFlag *flag.Flag) {
-		if setFlag.Name == "allow" {
-			allowSet = true
-		}
-	})
-	if allowSet && strings.TrimSpace(*allowValue) == "" {
-		return fmt.Errorf("--allow must not be empty")
-	}
-	if deps.newTransport == nil {
-		if !allowSet {
-			*allowValue = os.Getenv("DEARMACHINE_ALLOW")
-		}
-		allow, err := transports.ParseAllowList(*allowValue)
-		if err != nil {
-			return fmt.Errorf("--allow or DEARMACHINE_ALLOW: %w", err)
-		}
-		selectedTransport := *transportID
-		deps.newTransport = func(inboxID string) (client.Transport, error) {
-			return transports.New(selectedTransport, inboxID, allow)
-		}
-	}
-	resolvedDB, resolvedPID, pair, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
+	state, err := client.ResolvePairState(deps.userHomeDir, *pairSelector)
 	if err != nil {
 		return err
 	}
-	if err := ensureDeviceClientStopped(resolvedPID); err != nil {
+	if err := ensureDeviceClientStopped(deps); err != nil {
 		return err
 	}
 
-	transport, err := deps.newTransport(strings.TrimSpace(*inboxID))
+	newRawTransport := deps.newRawTransport
+	if newRawTransport == nil {
+		return errors.New("raw mail transport constructor is unavailable")
+	}
+	raw, err := newRawTransport(state.Inbox.Transport, state.Inbox.ProviderID)
+	if err != nil {
+		return err
+	}
+	router, err := client.NewInboxRouter(raw, state.Inbox, []client.Pair{state.Pair}, 1)
+	if err != nil {
+		return err
+	}
+	transport, err := router.Endpoint(state.Pair.ID)
 	if err != nil {
 		return err
 	}
@@ -155,7 +136,7 @@ func runInboxSkip(args []string, deps dependencies) error {
 		}
 	}
 
-	store, err := openInboxStore(resolvedDB, pair, deps)
+	store, err := openInboxStore(state, deps)
 	if err != nil {
 		return err
 	}
@@ -209,8 +190,7 @@ func runInboxAbandon(args []string, deps dependencies) error {
 	stdout := outputOrDiscard(deps.stdout)
 	flags := flag.NewFlagSet("inbox abandon", flag.ContinueOnError)
 	flags.SetOutput(output)
-	dbPath := flags.String("db", "", "SQLite state database path")
-	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
+	pairSelector := flags.String("pair", "", "registered pair email address or UUID (required)")
 	projectDir := flags.String("project", ".", "machtiani project containing the session")
 	agentBinary := flags.String("agent-bin", "machtiani", "path to the machtiani executable")
 	reason := flags.String(
@@ -233,11 +213,14 @@ func runInboxAbandon(args []string, deps dependencies) error {
 		return fmt.Errorf("message ID is required")
 	}
 
-	resolvedDB, resolvedPID, pair, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
+	if strings.TrimSpace(*pairSelector) == "" {
+		return errors.New("--pair is required")
+	}
+	state, err := client.ResolvePairState(deps.userHomeDir, *pairSelector)
 	if err != nil {
 		return err
 	}
-	if err := ensureDeviceClientStopped(resolvedPID); err != nil {
+	if err := ensureDeviceClientStopped(deps); err != nil {
 		return err
 	}
 	resolvedProject, err := resolvePath(*projectDir, deps.userHomeDir)
@@ -245,7 +228,7 @@ func runInboxAbandon(args []string, deps dependencies) error {
 		return fmt.Errorf("resolve agent project: %w", err)
 	}
 
-	store, err := openInboxStore(resolvedDB, pair, deps)
+	store, err := openInboxStore(state, deps)
 	if err != nil {
 		return err
 	}
@@ -323,8 +306,7 @@ func runInboxUnskip(args []string, deps dependencies) error {
 	stdout := outputOrDiscard(deps.stdout)
 	flags := flag.NewFlagSet("inbox unskip", flag.ContinueOnError)
 	flags.SetOutput(output)
-	dbPath := flags.String("db", "", "SQLite state database path")
-	pidfile := flags.String("pidfile", "", "DearMachine Client PID file to check")
+	pairSelector := flags.String("pair", "", "registered pair email address or UUID (required)")
 	flags.Usage = func() { _ = inboxUnskipHelp(output) }
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -336,14 +318,17 @@ func runInboxUnskip(args []string, deps dependencies) error {
 				"Run \"dearmachine inbox unskip --help\" for usage",
 		)
 	}
-	resolvedDB, resolvedPID, pair, err := resolveInboxStatePaths(*dbPath, *pidfile, deps)
+	if strings.TrimSpace(*pairSelector) == "" {
+		return errors.New("--pair is required")
+	}
+	state, err := client.ResolvePairState(deps.userHomeDir, *pairSelector)
 	if err != nil {
 		return err
 	}
-	if err := ensureDeviceClientStopped(resolvedPID); err != nil {
+	if err := ensureDeviceClientStopped(deps); err != nil {
 		return err
 	}
-	store, err := openInboxStore(resolvedDB, pair, deps)
+	store, err := openInboxStore(state, deps)
 	if err != nil {
 		return err
 	}
@@ -360,7 +345,7 @@ func runInboxSkipped(args []string, deps dependencies) error {
 	stdout := outputOrDiscard(deps.stdout)
 	flags := flag.NewFlagSet("inbox skipped", flag.ContinueOnError)
 	flags.SetOutput(output)
-	dbPath := flags.String("db", "", "SQLite state database path")
+	pairSelector := flags.String("pair", "", "optional registered pair email address or UUID")
 	jsonOutput := flags.Bool("json", false, "output a JSON array")
 	flags.Usage = func() { _ = inboxSkippedHelp(output) }
 	if err := flags.Parse(args); err != nil {
@@ -372,111 +357,90 @@ func runInboxSkipped(args []string, deps dependencies) error {
 			flags.Args(),
 		)
 	}
-	resolvedDB, _, pair, err := resolveInboxStatePaths(*dbPath, "", deps)
+	var selectors []string
+	if strings.TrimSpace(*pairSelector) != "" {
+		selectors = []string{*pairSelector}
+	}
+	states, err := client.ResolvePairStates(deps.userHomeDir, selectors)
 	if err != nil {
 		return err
 	}
-	store, err := openInboxStore(resolvedDB, pair, deps)
-	if err != nil {
-		return err
+	type pairMessages struct {
+		PairID    string                  `json:"pair_id"`
+		UserEmail string                  `json:"user_email"`
+		Messages  []client.SkippedMessage `json:"messages"`
 	}
-	defer store.Close()
-	messages, err := store.SkippedMessages()
-	if err != nil {
-		return err
+	groups := make([]pairMessages, 0, len(states))
+	total := 0
+	for _, state := range states {
+		store, err := openInboxStore(state, deps)
+		if err != nil {
+			return err
+		}
+		messages, listErr := store.SkippedMessages()
+		closeErr := store.Close()
+		if err := errors.Join(listErr, closeErr); err != nil {
+			return err
+		}
+		total += len(messages)
+		groups = append(groups, pairMessages{PairID: state.Pair.ID, UserEmail: state.Pair.UserEmail, Messages: messages})
 	}
 	if *jsonOutput {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
-		return encoder.Encode(messages)
+		return encoder.Encode(groups)
 	}
-	if len(messages) == 0 {
+	if total == 0 {
 		_, err := fmt.Fprintln(stdout, "No locally skipped messages.")
 		return err
 	}
-	for _, message := range messages {
-		if _, err := fmt.Fprintf(
-			stdout,
-			"%s\t%s\t%s\t%s\n",
-			message.MessageID,
-			message.ThreadID,
-			message.SkippedAt,
-			message.Reason,
-		); err != nil {
-			return err
+	for _, group := range groups {
+		for _, message := range group.Messages {
+			if _, err := fmt.Fprintf(
+				stdout,
+				"%s\t%s\t%s\t%s\t%s\t%s\n",
+				group.PairID,
+				group.UserEmail,
+				message.MessageID,
+				message.ThreadID,
+				message.SkippedAt,
+				message.Reason,
+			); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// resolveInboxStatePaths keeps an explicit --db override for low-level
-// maintenance. Without one, exactly one registered pair must be resolvable.
-func resolveInboxStatePaths(dbPath, pidfile string, deps dependencies) (string, string, *client.Pair, error) {
-	var err error
-	var pair *client.Pair
-	if strings.TrimSpace(dbPath) == "" {
-		state, resolveErr := client.ResolvePairState(deps.userHomeDir, "")
-		if resolveErr != nil {
-			return "", "", nil, resolveErr
-		}
-		dbPath = state.Path
-		selected := state.Pair
-		pair = &selected
-	} else {
-		dbPath, err = resolvePath(dbPath, deps.userHomeDir)
-		if err != nil {
-			return "", "", nil, err
-		}
-	}
-	if strings.TrimSpace(pidfile) == "" {
-		home, err := deps.userHomeDir()
-		if err != nil {
-			return "", "", nil, fmt.Errorf("resolve default PID file: %w", err)
-		}
-		pidfile = filepath.Join(home, ".dearmachine", "run", "dearmachine.pid")
-	} else {
-		pidfile, err = resolvePath(pidfile, deps.userHomeDir)
-		if err != nil {
-			return "", "", nil, err
-		}
-	}
-	return filepath.Clean(dbPath), filepath.Clean(pidfile), pair, nil
-}
-
-func openInboxStore(path string, pair *client.Pair, deps dependencies) (*client.Store, error) {
-	if pair == nil {
-		return deps.openStore(path)
-	}
+func openInboxStore(state client.PairState, deps dependencies) (*client.Store, error) {
 	openPairStore := deps.openPairStore
 	if openPairStore == nil {
 		openPairStore = client.OpenPairStore
 	}
-	return openPairStore(path, *pair)
+	return openPairStore(state.Path, state.Pair)
 }
 
-func ensureDeviceClientStopped(pidfile string) error {
-	content, err := os.ReadFile(pidfile)
-	if os.IsNotExist(err) {
-		return nil
-	}
+func ensureDeviceClientStopped(deps dependencies) error {
+	path, err := client.DefaultDaemonLockPath(deps.userHomeDir)
 	if err != nil {
-		return fmt.Errorf("read DearMachine Client PID file: %w", err)
+		return err
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(content)))
-	if err != nil || pid <= 0 {
-		return fmt.Errorf("invalid DearMachine Client PID file %s", pidfile)
+	status := deps.daemonStatus
+	if status == nil {
+		status = client.DaemonStatus
 	}
-	err = syscall.Kill(pid, 0)
-	if err == nil || errors.Is(err, syscall.EPERM) {
+	pid, running, err := status(path)
+	if err != nil {
+		return err
+	}
+	if running {
 		return fmt.Errorf(
 			"DearMachine Client PID %d is still running; stop it before changing local inbox state",
 			pid,
 		)
 	}
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return fmt.Errorf("check DearMachine Client PID %d: %w", pid, err)
+	return nil
 }
 
 func outputOrDiscard(output io.Writer) io.Writer {
@@ -503,29 +467,26 @@ Use "dearmachine inbox <command> --help" for command help.
 }
 
 func inboxSkipHelp(output io.Writer) error {
-	_, err := fmt.Fprintf(outputOrDiscard(output), `Usage:
-  dearmachine inbox skip --current --inbox-id <id> [flags]
-  dearmachine inbox skip --inbox-id <id> [flags] <message-id>...
+	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
+  dearmachine inbox skip --pair <email-or-uuid> --current [flags]
+  dearmachine inbox skip --pair <email-or-uuid> [flags] <message-id>...
 
 Records an exact local skip decision without changing the remote inbox. The DearMachine Client must be stopped. --current snapshots messages that are eligible now;
 messages arriving later remain eligible.
 
 Flags:
   --current          Select all messages eligible at this instant
-  --transport <id>   Mail transport ID: %s (default: agentmail)
-  --inbox-id <id>    Mail transport inbox ID or address (required)
-  --db <path>        SQLite state database (default: normal DearMachine Client DB)
-  --pidfile <path>   PID file to check (default: normal DearMachine Client PID file)
+  --pair <selector>  Registered pair email address or UUID (required)
   --project <path>   machtiani project for abandoned-session cleanup
   --agent-bin <path> machtiani executable
   --reason <text>    Local audit reason
-`, strings.Join(transports.IDs(), ", "))
+`)
 	return err
 }
 
 func inboxAbandonHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
-  dearmachine inbox abandon [flags] <message-id>
+  dearmachine inbox abandon --pair <email-or-uuid> [flags] <message-id>
 
 Force-skips one running follow-up in an established thread without changing
 the remote inbox. DearMachine Client must be stopped. Every established
@@ -536,8 +497,7 @@ partial source session. Use ordinary inbox skip for messages that have not
 started.
 
 Flags:
-  --db <path>        SQLite state database (default: normal DearMachine Client DB)
-  --pidfile <path>   PID file to check (default: normal DearMachine Client PID file)
+  --pair <selector>  Registered pair email address or UUID (required)
   --project <path>   machtiani project containing the session
   --agent-bin <path> machtiani executable
   --reason <text>    Local audit reason
@@ -547,26 +507,25 @@ Flags:
 
 func inboxUnskipHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
-  dearmachine inbox unskip [--db <path>] [--pidfile <path>] <message-id>...
+  dearmachine inbox unskip --pair <email-or-uuid> <message-id>...
 
 Removes local skip decisions. The remote inbox is not changed.
 
 Flags:
-  --db <path>       SQLite state database (default: normal DearMachine Client DB)
-  --pidfile <path>  PID file to check (default: normal DearMachine Client PID file)
+  --pair <selector>  Registered pair email address or UUID (required)
 `)
 	return err
 }
 
 func inboxSkippedHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
-  dearmachine inbox skipped [--db <path>] [--json]
+  dearmachine inbox skipped [--pair <email-or-uuid>] [--json]
 
 Lists local skip decisions. The remote inbox is not queried or changed.
 
 Flags:
-  --db <path>  SQLite state database (default: normal DearMachine Client DB)
-  --json       Output a JSON array
+  --pair <selector>  Limit output to one registered pair
+  --json             Output a JSON array grouped by pair
 `)
 	return err
 }

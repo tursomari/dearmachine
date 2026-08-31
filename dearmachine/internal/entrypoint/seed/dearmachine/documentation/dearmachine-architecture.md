@@ -39,7 +39,10 @@ secret store into its environment.
 
 Important launch settings include:
 
-- `--inbox-id`: dedicated AgentMail inbox.
+- `up --create --email ...`: register the authorized correspondent.
+- `--new-inbox --transport ...` or `--inbox ...`: deliberately provision or
+  share/adopt an inbox.
+- `--pair`: optionally narrow one invocation by pair email or UUID.
 - `--project`: working directory and machtiani project used for email sessions;
   it defaults to the DearMachine Client launch directory.
 - `--entry-point-repo`: repository used only for entry-point documentation
@@ -48,12 +51,12 @@ Important launch settings include:
 - `--config`: backend configuration file.
 - `--agent-manager`: Agent Manager executable.
 - `--agent-bin`: machtiani executable.
-- `--db` and `--pidfile`: local runtime state.
+- `up --foreground`: remain attached for systemd and container supervision.
 - `--poll-interval`: delay between completed polling cycles.
 
 In a normal installation, both `--project` and `--entry-point-repo` must point
 to this initialized entry-point repository. Different paths are reserved for
-deliberate development, migration, or isolated testing arrangements.
+deliberate development or isolated testing arrangements.
 
 ## Source Pointers
 

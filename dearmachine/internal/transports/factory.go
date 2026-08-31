@@ -75,13 +75,3 @@ func AuthorizePair(ctx context.Context, id, inboxID, email string) error {
 	}
 	return authorizer.AuthorizePair(ctx, email)
 }
-
-// New constructs the selected mail transport. Authentication remains local to
-// the selected adapter.
-func New(id, inboxID string, allow AllowList) (client.Transport, error) {
-	transport, err := NewRaw(id, inboxID)
-	if err != nil {
-		return nil, err
-	}
-	return newAllowlistTransport(transport, allow)
-}

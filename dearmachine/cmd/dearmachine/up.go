@@ -25,7 +25,7 @@ func (values *stringListFlag) add(value string) error {
 
 type upCommand struct {
 	create        bool
-	list          bool
+	foreground    bool
 	help          bool
 	newInbox      bool
 	email         string
@@ -51,9 +51,6 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		return err
 	}
 	output := outputOrDiscard(deps.stdout)
-	if command.list {
-		return printRegistry(output, registry)
-	}
 	if err := validateUpRunArgs(runArgs, deps); err != nil {
 		return err
 	}
@@ -67,6 +64,11 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		}
 		if err := requireDaemonStopped(deps.userHomeDir); err != nil {
 			return fmt.Errorf("create pair: %w", err)
+		}
+		for _, existing := range registry.Pairs {
+			if strings.EqualFold(existing.UserEmail, request.email) {
+				return fmt.Errorf("pair email %s is already registered as %s", request.email, existing.ID)
+			}
 		}
 		inbox, err := resolveCreateInbox(context.Background(), request, registry, deps)
 		if err != nil {
@@ -90,7 +92,46 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
-	return runPairStates(runArgs, getenv, deps, states)
+	cfg, err := parseConfig(runArgs, io.Discard)
+	if err != nil {
+		return err
+	}
+	if command.foreground || cfg.once {
+		return runPairStates(runArgs, getenv, deps, states)
+	}
+	if err := requireDaemonStopped(deps.userHomeDir); err != nil {
+		return err
+	}
+	logPath, err := client.DefaultDaemonLogPath(deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	childArgs := []string{"up", "--foreground"}
+	for _, selector := range command.pairSelectors {
+		childArgs = append(childArgs, "--pair", selector)
+	}
+	childArgs = append(childArgs, runArgs...)
+	starter := deps.startBackground
+	if starter == nil {
+		starter = startBackground
+	}
+	pid, err := starter(childArgs, logPath)
+	if err != nil {
+		return err
+	}
+	lockPath, err := client.DefaultDaemonLockPath(deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	waitReady := deps.waitDaemonReady
+	if waitReady == nil {
+		waitReady = client.WaitDaemonReady
+	}
+	if err := waitReady(lockPath, pid, daemonStartupTimeout); err != nil {
+		return fmt.Errorf("background client did not become ready; inspect %s: %w", logPath, err)
+	}
+	_, err = fmt.Fprintf(output, "Started DearMachine in the background (PID %d). Log: %s\n", pid, logPath)
+	return err
 }
 
 func validateUpRunArgs(args []string, deps dependencies) error {
@@ -98,27 +139,8 @@ func validateUpRunArgs(args []string, deps dependencies) error {
 	if output == nil {
 		output = io.Discard
 	}
-	cfg, err := parseConfig(args, output)
-	if err != nil {
-		return err
-	}
-	if cfg.inboxID != "" || cfg.dbPath != "" || cfg.allowSet {
-		return errors.New("--inbox-id, --db, and --allow are direct diagnostic flags and cannot be used with `dearmachine up`")
-	}
-	if strings.TrimSpace(cfg.pidfile) != "" {
-		lockPath, err := client.DefaultDaemonLockPath(deps.userHomeDir)
-		if err != nil {
-			return err
-		}
-		requested, err := resolvePath(cfg.pidfile, deps.userHomeDir)
-		if err != nil {
-			return err
-		}
-		if requested != lockPath {
-			return fmt.Errorf("--pidfile must be the daemon lock path %s", lockPath)
-		}
-	}
-	return nil
+	_, err := parseConfig(args, output)
+	return err
 }
 
 func parseUpArgs(args []string) (upCommand, []string, error) {
@@ -136,10 +158,12 @@ func parseUpArgs(args []string) (upCommand, []string, error) {
 		switch {
 		case arg == "--create":
 			command.create = true
+		case arg == "--foreground":
+			command.foreground = true
 		case arg == "--new-inbox":
 			command.newInbox = true
 		case arg == "--list":
-			command.list = true
+			return upCommand{}, nil, errors.New("flag provided but not defined: --list; use `dearmachine status`")
 		case arg == "--help" || arg == "-h":
 			command.help = true
 		case arg == "--new" || strings.HasPrefix(arg, "--new="):
@@ -180,9 +204,6 @@ func parseUpArgs(args []string) (upCommand, []string, error) {
 		default:
 			runArgs = append(runArgs, arg)
 		}
-	}
-	if command.list && (command.create || command.newInbox || command.email != "" || command.inbox != "" || command.transport != "" || len(command.pairSelectors) != 0) {
-		return upCommand{}, nil, errors.New("--list cannot be combined with creation or selection flags")
 	}
 	if !command.create && (command.newInbox || command.email != "" || command.inbox != "" || command.transport != "") {
 		return upCommand{}, nil, errors.New("--email, --inbox, --new-inbox, and --transport require --create")
@@ -320,11 +341,11 @@ func upHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
   dearmachine up [--pair <email-or-uuid> ...] [run flags]
   dearmachine up --create --email <address> (--new-inbox --transport <id> | --inbox <selector>) [run flags]
-  dearmachine up --list
 
 Plain "up" starts every registered pair and every referenced inbox in one
-daemon. --pair is repeatable and narrows only this invocation; it never changes
-global state. --create is the sole creation path. Sharing an inbox is always
+background client. --foreground keeps that client attached for service managers
+and containers. --pair is repeatable and narrows only this invocation; it never
+changes global state. --create is the sole creation path. Sharing an inbox is always
 intentional and requires --inbox. Pair creation asks the selected transport to
 authorize the correspondent before publishing local pair state and requires the
 daemon to be down.

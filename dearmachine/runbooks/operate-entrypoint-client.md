@@ -138,8 +138,10 @@ in-progress history.
 4. Run `inbox abandon` against the exact message and host paths:
 
 ```bash
-database="$HOME/.dearmachine/state/dearmachine.db"
-backup="$HOME/.local/state/dearmachine-abandon-backups/$(date -u +%Y%m%dT%H%M%SZ).db"
+pair_id='<exact-pair-uuid>'
+pair_email='<exact-pair-email>'
+database="$HOME/.dearmachine/pairs/$pair_id/state/dearmachine.db"
+backup="$HOME/.local/state/dearmachine-abandon-backups/$pair_id-$(date -u +%Y%m%dT%H%M%SZ).db"
 message_id='<exact-message-id>'
 
 install -d -m 0700 "$(dirname "$backup")"
@@ -148,8 +150,7 @@ sqlite3 "$database" ".backup '$backup'"
 chmod 0600 "$backup"
 
 nix run .#dearmachine -- inbox abandon \
-  --db "$database" \
-  --pidfile "$HOME/.dearmachine/run/dearmachine.pid" \
+  --pair "$pair_email" \
   --project <exact-host-project-path> \
   --agent-bin "$HOME/.local/share/dearmachine/tools/machtiani" \
   --reason 'operator abandoned stuck follow-up' \
@@ -196,5 +197,5 @@ Rotate it through the external Podman secret:
 nix run .#container-secrets -- rotate --file <mode-0600-secret-file>
 ```
 
-Install, upgrade, restart, and migration do not authorize inbox mutation or
-removal of any protected paired address from `DEARMACHINE_ALLOW`.
+Install, upgrade, and restart do not authorize inbox mutation. Pair creation is
+the only seam that changes provider-side correspondent authorization.

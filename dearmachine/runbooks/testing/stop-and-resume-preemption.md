@@ -62,10 +62,9 @@ directories, and its Machtiani stores must remain untouched throughout.
    `MACHTIANI_SESSION_ID` and `MACHTIANI_SESSION_TEMP_ROOT`.
 4. Create a disposable sender and receiver with the selected transport under
    test, verify their exact IDs,
-   and configure the receiver as the client's `--inbox-id`. Configure the
-   transport's allowed reply recipient as the disposable sender address, using
-   the existing transport convention; the reply address must not be a normal
-   inbox. Load credentials only from the authorized local secrets environment.
+   then register the sender/receiver pair with `dearmachine up --create
+   --email <sender> --inbox <receiver> --transport <id> --once`. The reply
+   address must not be a normal inbox. Load credentials only from the authorized local secrets environment.
    Do not put credentials, inbox IDs, addresses, or private message contents in
    this runbook, shell history, logs, or versioned files. Inspect and record
    only the exact allow-list entries created for the pair.
@@ -74,14 +73,12 @@ directories, and its Machtiani stores must remain untouched throughout.
    point maintenance disabled:
 
    ```text
-   $DEARMACHINE_TEST_ROOT/dearmachine
-     --inbox-id <temporary-receiver-id>
+   HOME=$DEARMACHINE_TEST_ROOT/home $DEARMACHINE_TEST_ROOT/dearmachine up --foreground
+     --pair <temporary-sender-address>
      --project $DEARMACHINE_TEST_PROJECT
      --config $DEARMACHINE_TEST_ROOT/dearmachine.toml
      --agent-manager $DEARMACHINE_TEST_ROOT/agent-manager
      --agent-bin <absolute-machtiani-path>
-     --db $DEARMACHINE_TEST_DB
-     --pidfile $DEARMACHINE_TEST_PIDFILE
      --entry-point-repo ""
      --poll-interval 10s
      --concurrency 1

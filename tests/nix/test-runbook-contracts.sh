@@ -4,7 +4,6 @@ set -euo pipefail
 PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 operate=$PROJECT_ROOT/dearmachine/runbooks/operate-entrypoint-client.md
 reinstall=$PROJECT_ROOT/dearmachine/runbooks/uninstall-reinstall.md
-migrate=$PROJECT_ROOT/dearmachine/runbooks/migrate-live-state.md
 spinup=$PROJECT_ROOT/dearmachine/runbooks/container-spin-up.md
 temporary=$PROJECT_ROOT/dearmachine/runbooks/testing/temporary-instance.md
 disposable=$PROJECT_ROOT/dearmachine/runbooks/testing/disposable-instance.md
@@ -24,8 +23,6 @@ grep -F '## Full reset or destructive reinstall' "$reinstall" >/dev/null
 grep -F '**Preserve:**' "$reinstall" >/dev/null
 grep -F '**Reset:**' "$reinstall" >/dev/null
 grep -F '**Delete:**' "$reinstall" >/dev/null
-grep -F 'lifecycle stops the stack' "$migrate" >/dev/null
-grep -F 'post-migration' "$migrate" >/dev/null
 grep -F 'test-host-podman-integration.sh' "$spinup" >/dev/null
 grep -F '### Default containerized production path' "$temporary" >/dev/null
 grep -F 'Live integration protocols use the containerized production path' \
@@ -61,7 +58,10 @@ grep -F -- 'schema version' "$multi_pair" >/dev/null
 grep -F -- 'must equal 2.' "$multi_pair" >/dev/null
 grep -F 'exactly two allowed inbound messages' "$openmail" >/dev/null
 grep -F 'exactly two later outbound replies' "$openmail" >/dev/null
-grep -F 'Native foreground execution is the default' "$native" >/dev/null
+grep -F 'Native execution is the default' "$native" >/dev/null
+grep -F 'dearmachine up --create' "$native" >/dev/null
+grep -F 'dearmachine status' "$native" >/dev/null
+grep -F 'up --foreground' "$native" >/dev/null
 grep -F 'nix profile install .#dearmachine' "$native" >/dev/null
 grep -F 'machtiani` and the backend commands' "$native" >/dev/null
 if grep -F -- '--agent-manager /bin/agent-manager' "$PROJECT_ROOT/dearmachine/runbooks/testing/continuous-intake.md"; then

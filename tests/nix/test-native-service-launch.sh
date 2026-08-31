@@ -75,7 +75,7 @@ DEARMACHINE_SYSTEMD_RUN=$SYSTEMD_RUN \
   --home "$TEST_ROOT/home" \
   --unit dearmachine-native-test \
   --working-directory "$WORKING_DIRECTORY" \
-  -- "$CLIENT_BIN/dearmachine" --inbox-id test-inbox
+  -- "$CLIENT_BIN/dearmachine" --magnifica-humanitas
 
 expected_path_prefix="$NVM_BIN:$CLIENT_BIN:$MANAGER_BIN:"
 assert_contains "$expected_path_prefix" "$MANAGER_LOG"
@@ -85,7 +85,7 @@ assert_contains "--property=EnvironmentFile=$ENVIRONMENT_FILE" "$SYSTEMD_LOG"
 assert_contains "--property=UnsetEnvironment=AGENTMAIL_API_KEY" "$SYSTEMD_LOG"
 assert_contains "--setenv=AGENTMAIL_API_KEY_FILE=$CREDENTIAL" "$SYSTEMD_LOG"
 assert_contains "--working-directory=$WORKING_DIRECTORY" "$SYSTEMD_LOG"
-assert_contains "$CLIENT_BIN/dearmachine --inbox-id test-inbox --config $CONFIG --agent-manager $MANAGER_BIN/agent-manager" "$SYSTEMD_LOG"
+assert_contains "$CLIENT_BIN/dearmachine up --foreground --magnifica-humanitas --config $CONFIG --agent-manager $MANAGER_BIN/agent-manager" "$SYSTEMD_LOG"
 if grep -F -- "$AGENTMAIL_API_KEY" "$SYSTEMD_LOG" >/dev/null; then
   echo 'launcher placed AGENTMAIL_API_KEY in systemd properties' >&2
   exit 1
@@ -101,7 +101,7 @@ if DEARMACHINE_SYSTEMD_RUN=$SYSTEMD_RUN \
   --environment-file "$ENVIRONMENT_FILE" \
   --agent-manager "$MANAGER_BIN/agent-manager" \
   --home "$TEST_ROOT/home" \
-  -- "$CLIENT_BIN/dearmachine" --inbox-id test-inbox 2>/dev/null; then
+  -- "$CLIENT_BIN/dearmachine" --magnifica-humanitas 2>/dev/null; then
   echo 'launcher unexpectedly created a service after backend resolution failed' >&2
   exit 1
 fi
