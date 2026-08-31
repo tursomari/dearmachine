@@ -217,6 +217,21 @@ contains metadata lines including:
 # Close-Path: /absolute/path/to/ticket-close.md
 ```
 
-Your executable must **write its reply to that file**. The agent-manager
-reads `ticket-close.md` to determine the ticket result. If your tool does not
-natively understand this protocol, you need a wrapper like the one above.
+Your executable should return a nonempty final answer through its configured
+stdout format. After a successful exit, Agent Manager atomically publishes
+that native answer to `ticket-close.md` with private permissions and a bounded
+size. A backend may instead write `ticket-close.md` itself; Agent Manager
+preserves that compatibility artifact and never overwrites it.
+
+The completion instructions appear after the delegated request and take
+precedence over request wording such as `read-only`, `reply only`, or `do not
+modify files`. Those constraints still govern the task workspace and every
+other path. The close artifact is mandatory control-plane bookkeeping owned by
+Agent Manager, so a backend that only returns its native final answer does not
+need a Close-Path-aware wrapper.
+
+Terminal ticket states distinguish the outcome: `closed` has a published
+result, `incomplete` is a clean exit without a nonempty result, `failed` is a
+nonzero exit or manager/output failure, `cancelled` is an accepted cancellation,
+and `crashed` is reserved for signal termination. Failure metadata records the
+reason, exit code or signal, and a bounded stderr tail.

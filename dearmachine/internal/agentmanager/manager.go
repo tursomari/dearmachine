@@ -24,10 +24,13 @@ import (
 const (
 	StatusOpen                     = "open"
 	StatusClosed                   = "closed"
+	StatusIncomplete               = "incomplete"
+	StatusFailed                   = "failed"
 	StatusCrashed                  = "crashed"
 	StatusCancelled                = "cancelled"
 	CompletionSourceNativeReply    = "native_reply"
 	CompletionSourceWorkerArtifact = "worker_artifact"
+	maxTicketCloseBytes            = 64 * 1024
 )
 
 type Meta struct {
@@ -398,7 +401,7 @@ func (m *Manager) Send(worker, requestPath, cwd string) (string, error) {
 }
 
 func ticketContent(id, worker, closePath string, request []byte) []byte {
-	return []byte(fmt.Sprintf("# Ticket: %s\n# Worker: %s\n# Close-Path: %s\n#\n# You have been delegated to complete the following work. Do your work\n# in the repository and return a final response describing what you did,\n# what changed, and any issues.\n\n%s", id, worker, closePath, request))
+	return []byte(fmt.Sprintf("# Ticket: %s\n# Worker: %s\n# Close-Path: %s\n#\n# Delegated request\n\n%s\n\n# Completion protocol\n# Return a nonempty final response through your backend's native final-answer\n# channel. The Agent Manager owns ticket-close.md and will atomically persist\n# that response when needed. You may instead write the response directly to\n# the Close-Path above. A ticket-close.md write is mandatory control-plane\n# bookkeeping and is explicitly exempt from any read-only, no-changes,\n# reply-only, or do-not-modify-files constraint in the delegated request.\n# Those constraints apply to the task workspace and every other path.\n", id, worker, closePath, request))
 }
 
 func newTicketID(now time.Time) (string, error) {
@@ -471,9 +474,9 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	if err := m.writeMeta(meta); err != nil {
 		_ = command.Process.Kill()
 		_, stdoutErr := io.Copy(io.Discard, stdout)
-		waitErr := command.Wait()
 		<-stderrDone
-		return errors.Join(err, stdoutErr, waitErr, m.failAfterExit(meta, "metadata_write_failed", stderrCapture.content, waitErr))
+		waitErr := command.Wait()
+		return errors.Join(err, stdoutErr, waitErr, m.failAfterExit(meta, StatusFailed, "metadata_write_failed", stderrCapture.content, waitErr))
 	}
 	observation, consumeErr := adapter.ConsumeStdout(stdout, func(nativeSession string) {
 		latest, err := m.readMeta(id)
@@ -485,44 +488,52 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	})
 	_, drainErr := io.Copy(io.Discard, stdout)
 	stdoutErr := errors.Join(consumeErr, drainErr)
-	waitErr := command.Wait()
 	<-stderrDone
+	waitErr := command.Wait()
 	latest, readErr := m.readMeta(id)
 	if readErr == nil && latest.Status == StatusCancelled {
-		return waitErr
+		latest.FailureReason = "cancelled"
+		latest.StderrTail = string(stderrCapture.content)
+		recordProcessFailure(&latest, waitErr)
+		return errors.Join(waitErr, m.writeMeta(latest))
 	}
 	if readErr == nil {
 		meta = latest
 	}
+	if ctx.Err() != nil {
+		return errors.Join(ctx.Err(), m.failAfterExit(meta, StatusCancelled, "context_cancelled", stderrCapture.content, waitErr))
+	}
 	if waitErr != nil {
 		reason := "worker_exit"
+		status := StatusFailed
 		if processWasSignaled(waitErr) {
 			reason = "worker_signal"
+			status = StatusCrashed
 		}
-		return errors.Join(waitErr, stdoutErr, m.failAfterExit(meta, reason, stderrCapture.content, waitErr))
+		return errors.Join(waitErr, stdoutErr, m.failAfterExit(meta, status, reason, stderrCapture.content, waitErr))
 	}
 	if stdoutErr != nil {
-		return errors.Join(stdoutErr, m.failAfterExit(meta, "output_failed", stderrCapture.content, nil))
+		return errors.Join(stdoutErr, m.failAfterExit(meta, StatusFailed, "output_failed", stderrCapture.content, nil))
 	}
 	closePath := filepath.Join(m.TicketDir(id), "ticket-close.md")
 	if err := readableFile(closePath); err == nil {
 		meta.CompletionSource = CompletionSourceWorkerArtifact
 		return m.finish(meta, StatusClosed)
 	} else if !os.IsNotExist(err) {
-		return errors.Join(err, m.failAfterExit(meta, "close_artifact_unreadable", stderrCapture.content, nil))
+		return errors.Join(err, m.failAfterExit(meta, StatusFailed, "close_artifact_unreadable", stderrCapture.content, nil))
 	}
 	if strings.TrimSpace(observation.Reply) == "" {
-		return m.failAfterExit(meta, "empty_reply", stderrCapture.content, nil)
+		return m.failAfterExit(meta, StatusIncomplete, "empty_reply", stderrCapture.content, nil)
 	}
 	if err := publishReply(m.TicketDir(id), observation.Reply); err != nil {
 		if errors.Is(err, os.ErrExist) && readableFile(closePath) == nil {
 			meta.CompletionSource = CompletionSourceWorkerArtifact
 			return m.finish(meta, StatusClosed)
 		}
-		return errors.Join(err, m.failAfterExit(meta, "publish_failed", stderrCapture.content, nil))
+		return errors.Join(err, m.failAfterExit(meta, StatusFailed, "publish_failed", stderrCapture.content, nil))
 	}
 	if err := readableFile(closePath); err != nil {
-		return errors.Join(err, m.failAfterExit(meta, "publish_failed", stderrCapture.content, nil))
+		return errors.Join(err, m.failAfterExit(meta, StatusFailed, "publish_failed", stderrCapture.content, nil))
 	}
 	meta.CompletionSource = CompletionSourceNativeReply
 	return m.finish(meta, StatusClosed)
@@ -545,6 +556,11 @@ func readableFile(path string) error {
 }
 
 func publishReply(ticketDir, reply string) error {
+	reply = strings.TrimSpace(reply)
+	content := []byte(reply)
+	if len(content) > maxTicketCloseBytes {
+		content = content[:maxTicketCloseBytes]
+	}
 	temporary, err := os.CreateTemp(ticketDir, ".ticket-close-*.tmp")
 	if err != nil {
 		return err
@@ -555,7 +571,11 @@ func publishReply(ticketDir, reply string) error {
 		_ = temporary.Close()
 		return err
 	}
-	if _, err := io.WriteString(temporary, reply); err != nil {
+	if _, err := temporary.Write(content); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
 		return err
 	}
@@ -685,8 +705,8 @@ func (m *Manager) BackendHealth(ctx context.Context, backend, cwd string) (Healt
 		close(stderrDone)
 	}()
 	observation, stdoutErr := adapter.ConsumeStdout(stdout, func(string) {})
-	waitErr := command.Wait()
 	<-stderrDone
+	waitErr := command.Wait()
 	result.Reply = strings.TrimSpace(observation.Reply)
 	if ctx.Err() != nil {
 		result.Reason = "cancelled"
@@ -783,10 +803,10 @@ func (m *Manager) fail(meta Meta, reason string, stderr []byte, processErr error
 	meta.ExitCode = nil
 	meta.Signal = ""
 	recordProcessFailure(&meta, processErr)
-	return m.finish(meta, StatusCrashed)
+	return m.finish(meta, StatusFailed)
 }
 
-func (m *Manager) failAfterExit(meta Meta, reason string, stderr []byte, processErr error) error {
+func (m *Manager) failAfterExit(meta Meta, status, reason string, stderr []byte, processErr error) error {
 	if processErr == nil {
 		exitCode := 0
 		meta.ExitCode = &exitCode
@@ -798,7 +818,7 @@ func (m *Manager) failAfterExit(meta Meta, reason string, stderr []byte, process
 		meta.ExitCode = nil
 		recordProcessFailure(&meta, processErr)
 	}
-	return m.finish(meta, StatusCrashed)
+	return m.finish(meta, status)
 }
 
 func processWasSignaled(err error) bool {

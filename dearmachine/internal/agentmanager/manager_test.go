@@ -274,33 +274,39 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"n
 	}
 }
 
-func TestTicketContentDoesNotInstructWorkerToWriteClosePath(t *testing.T) {
-	content := string(ticketContent("ticket-1", "codex", "/tickets/ticket-1/ticket-close.md", []byte("do work\n")))
+func TestTicketContentPlacesCompletionProtocolAfterConflictingRequest(t *testing.T) {
+	request := "Reply only. This is read-only; do not modify files anywhere.\n"
+	content := string(ticketContent("ticket-1", "codex", "/tickets/ticket-1/ticket-close.md", []byte(request)))
 	if !strings.Contains(content, "# Close-Path: /tickets/ticket-1/ticket-close.md") {
 		t.Fatalf("ticket envelope lost Close-Path compatibility header: %s", content)
 	}
-	for _, forbidden := range []string{"write your response", "Close-Path above", "save your response to that path"} {
-		if strings.Contains(content, forbidden) {
-			t.Errorf("ticket content still contains %q: %s", forbidden, content)
+	requestAt := strings.Index(content, request)
+	protocolAt := strings.Index(content, "# Completion protocol")
+	if requestAt < 0 || protocolAt < requestAt {
+		t.Fatalf("completion protocol does not follow delegated request: %s", content)
+	}
+	for _, required := range []string{"mandatory control-plane", "explicitly exempt", "read-only", "reply-only", "do-not-modify-files"} {
+		if !strings.Contains(content[protocolAt:], required) {
+			t.Errorf("completion protocol missing %q: %s", required, content)
 		}
 	}
 }
 
-func TestTicketCrash(t *testing.T) {
+func TestTicketNonzeroExitFails(t *testing.T) {
 	manager := testManager(t, `printf '%s\n' '{"type":"thread.started","thread_id":"native-crash"}'; exit 2`)
 	request := writeRequest(t)
 	id, err := manager.Send("codex", request, t.TempDir())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	meta := waitForStatus(t, manager, id, StatusCrashed)
+	meta := waitForStatus(t, manager, id, StatusFailed)
 	if meta.NativeSession != "native-crash" {
 		t.Fatalf("metadata = %+v", meta)
 	}
 }
 
 func TestTicketCancelAndCancelAll(t *testing.T) {
-	manager := testManager(t, `printf '%s\n' '{"type":"thread.started","thread_id":"native-long"}'; sleep 30`)
+	manager := testManager(t, `printf '%s\n' '{"type":"thread.started","thread_id":"native-long"}'; exec sleep 30`)
 	first, err := manager.Send("codex", writeRequest(t), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -323,6 +329,8 @@ func TestTicketCancelAndCancelAll(t *testing.T) {
 	if got, _ := manager.Status(second); got.Status != StatusCancelled {
 		t.Fatalf("second status = %s", got.Status)
 	}
+	waitForCancellationSettled(t, manager, first)
+	waitForCancellationSettled(t, manager, second)
 }
 
 func TestForgeTicketLifecycleDrainsLargeOutput(t *testing.T) {
@@ -349,13 +357,13 @@ printf '%s\n' 'forge worker complete' > "$close_path"
 	}
 }
 
-func TestForgeTicketCrash(t *testing.T) {
+func TestForgeTicketNonzeroExitFails(t *testing.T) {
 	manager := testForgeManager(t, `cat >/dev/null; printf '%s' 'ordinary forge output'; exit 2`)
 	id, err := manager.Send("forge", writeRequest(t), t.TempDir())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	meta := waitForStatus(t, manager, id, StatusCrashed)
+	meta := waitForStatus(t, manager, id, StatusFailed)
 	if meta.NativeSession != "029a3702-f8fa-470f-8a28-190c0f53410e" {
 		t.Fatalf("metadata = %+v", meta)
 	}
@@ -374,6 +382,7 @@ func TestForgeTicketCancel(t *testing.T) {
 	if got, _ := manager.Status(id); got.Status != StatusCancelled {
 		t.Fatalf("status = %s", got.Status)
 	}
+	waitForCancellationSettled(t, manager, id)
 }
 
 func TestBackendHealthFileProbe(t *testing.T) {
@@ -532,5 +541,20 @@ func waitForStatus(t *testing.T, manager *Manager, id, status string) Meta {
 	}
 	meta, err := manager.Status(id)
 	t.Fatalf("ticket %s status = %+v, %v; want %s", id, meta, err, status)
+	return Meta{}
+}
+
+func waitForCancellationSettled(t *testing.T, manager *Manager, id string) Meta {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		meta, err := manager.Status(id)
+		if err == nil && meta.Status == StatusCancelled && meta.FailureReason == "cancelled" {
+			return meta
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	meta, err := manager.Status(id)
+	t.Fatalf("ticket %s cancellation did not settle: %+v, %v", id, meta, err)
 	return Meta{}
 }

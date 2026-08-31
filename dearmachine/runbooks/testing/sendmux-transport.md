@@ -184,17 +184,19 @@ so the provided tests pass. Require delegation so the coordinator cannot answer
 the task directly.
 
 Assert that exactly one Agent Manager ticket is created; its ticket envelope
-contains no close-file instruction; and it reaches `closed` with a nonempty,
-regular-file, mode-`0600` `ticket-close.md`. The close-file content must equal
-the backend's native final reply, and `completion_source == native_reply`.
-Confirm that only the expected project file changed and that the project tests
-pass.
+places the completion protocol after the delegated request and explicitly
+exempts control-plane bookkeeping from conflicting read-only language; and it
+reaches `closed` with a nonempty, regular-file, mode-`0600`
+`ticket-close.md`. The close-file content must equal the backend's native final
+reply, and `completion_source == native_reply`. Confirm that only the expected
+project file changed and that the project tests pass.
 
-Cover the crashed/diagnostics path in a separate deterministic Agent Manager
-probe. Use a controlled backend that writes a stderr sentinel and exits
-nonzero, then assert the recorded failure reason, exit code or signal, and
-bounded stderr tail. Do not induce real-provider failures through the live
-mailbox to test diagnostics.
+Cover failure diagnostics in separate deterministic Agent Manager probes. Use
+a controlled backend that writes a stderr sentinel and exits nonzero, then
+assert `failed`, the recorded failure reason and exit code, and a bounded
+stderr tail. Use a signal-terminated worker to assert `crashed` and the signal;
+do not induce real-provider failures through the live mailbox to test these
+paths.
 
 ## Teardown
 

@@ -81,6 +81,72 @@ func TestPublishedReplyHasPrivateMode(t *testing.T) {
 	}
 }
 
+func TestCodexYoloPublishesNativeFinalAnswerDespiteConflictingRequest(t *testing.T) {
+	manager := testCodexYoloManager(t, `
+cat >/dev/null
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"codex-yolo final answer"}}'
+printf '%s\n' '{"type":"task_complete"}'
+`)
+	request := filepath.Join(t.TempDir(), "request.md")
+	if err := os.WriteFile(request, []byte("Reply only. Work read-only and do not modify files anywhere.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cwd := t.TempDir()
+	id, err := manager.Send("codex-yolo", request, cwd)
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForStatus(t, manager, id, StatusClosed)
+	meta := readCompletionMeta(t, manager, id)
+	if meta.CompletionSource != CompletionSourceNativeReply {
+		t.Fatalf("completion source = %q", meta.CompletionSource)
+	}
+	content, err := os.ReadFile(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
+	if err != nil || string(content) != "codex-yolo final answer" {
+		t.Fatalf("close artifact = %q, %v", content, err)
+	}
+	entries, err := os.ReadDir(cwd)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("read-only task workspace changed: %v, %v", entries, err)
+	}
+}
+
+func TestForgePublishesNativeFinalAnswer(t *testing.T) {
+	manager := testForgeManager(t, `cat >/dev/null; printf '%s\n' 'TASK COMPLETED: forge final answer'`)
+	id, err := manager.Send("forge", writeRequest(t), t.TempDir())
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForStatus(t, manager, id, StatusClosed)
+	meta := readCompletionMeta(t, manager, id)
+	if meta.CompletionSource != CompletionSourceNativeReply {
+		t.Fatalf("completion source = %q", meta.CompletionSource)
+	}
+	content, err := os.ReadFile(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
+	if err != nil || string(content) != "TASK COMPLETED: forge final answer" {
+		t.Fatalf("close artifact = %q, %v", content, err)
+	}
+}
+
+func TestPublishedReplyIsAtomicPrivateAndSizeBounded(t *testing.T) {
+	ticketDir := t.TempDir()
+	if err := publishReply(ticketDir, strings.Repeat("x", maxTicketCloseBytes+1024)); err != nil {
+		t.Fatalf("publishReply: %v", err)
+	}
+	closePath := filepath.Join(ticketDir, "ticket-close.md")
+	info, err := os.Stat(closePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != maxTicketCloseBytes || info.Mode().Perm() != 0o600 {
+		t.Fatalf("close artifact size/mode = %d/%o", info.Size(), info.Mode().Perm())
+	}
+	temporary, err := filepath.Glob(filepath.Join(ticketDir, ".ticket-close-*.tmp"))
+	if err != nil || len(temporary) != 0 {
+		t.Fatalf("temporary artifacts = %v, %v", temporary, err)
+	}
+}
+
 func TestNonzeroExitNeverClosesTicketWithArtifact(t *testing.T) {
 	manager := testManager(t, `
 request=$(cat)
@@ -93,7 +159,7 @@ exit 7
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	waitForStatus(t, manager, id, StatusCrashed)
+	waitForStatus(t, manager, id, StatusFailed)
 	meta := readCompletionMeta(t, manager, id)
 	if meta.CompletionSource != "" {
 		t.Fatalf("completion source = %q, want empty", meta.CompletionSource)
@@ -126,13 +192,13 @@ func TestSignalExitNeverClosesTicket(t *testing.T) {
 	}
 }
 
-func TestWhitespaceOnlyReplyFailsWithoutCloseArtifact(t *testing.T) {
+func TestWhitespaceOnlyReplyIsIncompleteWithoutCloseArtifact(t *testing.T) {
 	manager := testManager(t, `cat >/dev/null; printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":" \n\t "}}'`)
 	id, err := manager.Send("codex", writeRequest(t), t.TempDir())
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	waitForStatus(t, manager, id, StatusCrashed)
+	waitForStatus(t, manager, id, StatusIncomplete)
 	meta := readCompletionMeta(t, manager, id)
 	if meta.FailureReason != "empty_reply" || meta.ExitCode == nil || *meta.ExitCode != 0 || meta.Signal != "" {
 		t.Fatalf("failure metadata = %+v", meta)
@@ -154,7 +220,7 @@ func TestSupervisorDrainsStdoutAfterParserFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	waitForStatus(t, manager, id, StatusCrashed)
+	waitForStatus(t, manager, id, StatusFailed)
 	if meta := readCompletionMeta(t, manager, id); meta.FailureReason != "output_failed" || meta.ExitCode == nil || *meta.ExitCode != 0 {
 		t.Fatalf("failure metadata = %+v", meta)
 	}
@@ -257,7 +323,7 @@ func TestSupervisorPersistsEarlyFailureReasons(t *testing.T) {
 				t.Fatal("Supervise unexpectedly succeeded")
 			}
 			meta := readCompletionMeta(t, manager, id)
-			if meta.Status != StatusCrashed || meta.FailureReason != test.reason {
+			if meta.Status != StatusFailed || meta.FailureReason != test.reason {
 				t.Fatalf("failure metadata = %+v", meta)
 			}
 		})
@@ -265,15 +331,25 @@ func TestSupervisorPersistsEarlyFailureReasons(t *testing.T) {
 }
 
 func TestSupervisorBoundsPersistedStderrTail(t *testing.T) {
-	manager := testManager(t, `cat >/dev/null; head -c 131072 /dev/zero | tr '\000' x >&2; printf tail-marker >&2; exit 9`)
-	id, err := manager.Send("codex", writeRequest(t), t.TempDir())
+	manager := testManager(t, `cat >/dev/null; head -c 131072 /dev/zero | tr '\000' x > stderr.bin; printf tail-marker >> stderr.bin; cat stderr.bin >&2; exit 9`)
+	cwd := t.TempDir()
+	id, err := manager.Send("codex", writeRequest(t), cwd)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	waitForStatus(t, manager, id, StatusCrashed)
+	waitForStatus(t, manager, id, StatusFailed)
 	meta := readCompletionMeta(t, manager, id)
 	if len(meta.StderrTail) != 64*1024 || !strings.HasSuffix(meta.StderrTail, "tail-marker") {
-		t.Fatalf("stderr tail length = %d, suffix present = %v", len(meta.StderrTail), strings.HasSuffix(meta.StderrTail, "tail-marker"))
+		tail := meta.StderrTail
+		if len(tail) > 32 {
+			tail = tail[len(tail)-32:]
+		}
+		source, sourceErr := os.ReadFile(filepath.Join(cwd, "stderr.bin"))
+		sourceTail := source
+		if len(sourceTail) > 32 {
+			sourceTail = sourceTail[len(sourceTail)-32:]
+		}
+		t.Fatalf("stderr tail length = %d, suffix = %q; source suffix = %q, %v", len(meta.StderrTail), tail, sourceTail, sourceErr)
 	}
 }
 
@@ -294,7 +370,7 @@ func TestSupervisorPersistsInitialMetadataWriteFailure(t *testing.T) {
 		t.Fatal("Supervise unexpectedly succeeded")
 	}
 	meta := readCompletionMeta(t, manager, id)
-	if meta.Status != StatusCrashed || meta.FailureReason != "metadata_write_failed" || meta.Signal == "" {
+	if meta.Status != StatusFailed || meta.FailureReason != "metadata_write_failed" || meta.Signal == "" {
 		t.Fatalf("failure metadata = %+v", meta)
 	}
 }
@@ -316,10 +392,25 @@ func TestAcceptedCancellationWinsAndIsIdempotent(t *testing.T) {
 	if err := manager.Cancel(id); err != nil {
 		t.Fatalf("second Cancel: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
-	second, err := manager.Status(id)
-	if err != nil || second.Status != StatusCancelled || second.FinishedAt != first.FinishedAt {
-		t.Fatalf("status after repeated cancellation = %+v, %v; first = %+v", second, err, first)
+	second := waitForCancellationSettled(t, manager, id)
+	if second.Status != StatusCancelled || second.FinishedAt != first.FinishedAt {
+		t.Fatalf("status after repeated cancellation = %+v; first = %+v", second, first)
+	}
+}
+
+func TestContextCancellationIsNotClassifiedAsCrash(t *testing.T) {
+	manager, id := superviseFixture(t)
+	manager.Adapters["codex"] = prepareAdapter{prepare: func(ctx context.Context) (Launch, error) {
+		return commandLaunch(ctx, `exec sleep 30`), nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := manager.Supervise(ctx, id); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Supervise error = %v", err)
+	}
+	meta := readCompletionMeta(t, manager, id)
+	if meta.Status != StatusCancelled || meta.FailureReason != "context_cancelled" || meta.Signal == "" {
+		t.Fatalf("cancellation metadata = %+v", meta)
 	}
 }
 
@@ -359,4 +450,23 @@ func superviseFixture(t *testing.T) (*Manager, string) {
 		t.Fatal(err)
 	}
 	return manager, id
+}
+
+func testCodexYoloManager(t *testing.T, script string) *Manager {
+	t.Helper()
+	bin := t.TempDir()
+	executable := filepath.Join(bin, "codex")
+	content := []byte("#!/bin/sh\nset -eu\n" + script + "\n")
+	if err := os.WriteFile(executable, content, 0o700); err != nil {
+		t.Fatalf("write fake codex: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	manager := New(filepath.Join(t.TempDir(), "agent-manager"))
+	manager.Adapters = map[string]Adapter{"codex-yolo": CodexYoloAdapter{}}
+	manager.ApprovedBackends = []string{"codex-yolo"}
+	manager.LaunchSupervisor = func(id string) error {
+		go func() { _ = manager.Supervise(context.Background(), id) }()
+		return nil
+	}
+	return manager
 }
