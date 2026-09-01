@@ -13,9 +13,11 @@ path from that shared runbook.
 
 ## Safety boundaries
 
-- Use a mailbox-scoped Sendmux key. Keep it in a user-owned mode-`0600` file;
-  never print it, put it in a command argument, or retain authorization headers
-  in evidence.
+- Use a root Sendmux management key for provisioning. Keep it in a user-owned
+  mode-`0600` file; never print it, put it in a command argument, or retain
+  authorization headers in evidence. DearMachine stores the one-time
+  mailbox-scoped credential beneath the disposable home and uses that scoped
+  key for runtime.
 - Keep the Sendmux mailbox and external correspondent addresses in a separate
   mode-`0600` operator environment file. Do not commit them, add them to test
   fixtures, or quote them in test reports.
@@ -24,9 +26,9 @@ path from that shared runbook.
   account-specific behavior into Dear Machine or this procedure.
 - Register the external correspondent as the pair email. A message from any
   other sender must remain invisible to the pair router.
-- Sendmux is inspect-only unless both `DEARMACHINE_LIVE_SENDMUX=1` and
-  `DEARMACHINE_LIVE_SENDMUX_APPLY=1` are set. Leave both unset during the
-  initial credential and poll checks.
+- Production Sendmux operation needs no DearMachine-specific mutation gate.
+  The disposable home, run-created mailbox, and bounded cleanup are the
+  live-test safety boundary.
 - Do not stop, reconfigure, or point this test at the normal Dear Machine
   service. Use a unique runtime root and database.
 
@@ -36,10 +38,8 @@ Create an untracked file outside the repository, owned by the operator and
 mode `0600`, with values appropriate to this run:
 
 ```bash
-SENDMUX_MAILBOX_API_KEY_FILE=/absolute/path/to/sendmux-api-key
+SENDMUX_API_KEY_FILE=/absolute/path/to/sendmux-root-api-key
 SENDMUX_SEND_API_KEY_FILE=/absolute/path/to/sendmux-send-api-key
-SENDMUX_QSE_INBOX_ID=<mbx-mailbox-id>
-SENDMUX_QSE_INBOX_ADDRESS=<exact-mailbox-address>
 SENDMUX_QSE_CORRESPONDENT=<exact-external-address>
 ```
 
@@ -54,14 +54,11 @@ set +a
 Before continuing, require that the credential file and operator environment
 file are regular files owned by the current user with no group or other bits.
 
-The operator environment file remains the canonical source for
-`SENDMUX_QSE_INBOX_ID` and `SENDMUX_QSE_INBOX_ADDRESS`. Before the first poll,
-cross-check both values through the mailbox-scoped key's self endpoint using
-the Go mailbox SDK's `MailboxGetMe`: the granted mailbox ID and email must
-agree with the configured pair. Do this without printing the key or any
-addresses.
+Before the first poll, inventory mailbox IDs privately. The run must create a
+new mailbox and later delete exactly that ID; it must not adopt or mutate an
+existing mailbox.
 
-## Isolated inspect
+## Isolated creation and empty poll
 
 1. Create a runtime root with `mktemp -d` and require mode `0700`. Put the
    disposable home, Git project, device configuration,
@@ -69,13 +66,12 @@ addresses.
    maintenance with `--entry-point-repo ""`.
 2. Build `dearmachine` and `agent-manager` from the revision under test. Use a
    dedicated trivial Git project and an isolated Machtiani session root.
-3. With both mutation gates unset, verify the mailbox credential through the
-   official mailbox API and run an empty poll:
+3. Run one creation and empty poll through the official APIs:
 
    ```bash
    HOME="$QSE_ROOT/home" "$QSE_ROOT/dearmachine" up --create \
      --email "$SENDMUX_QSE_CORRESPONDENT" \
-     --inbox "$SENDMUX_QSE_INBOX_ID" \
+     --new-inbox \
      --transport sendmux \
      --once \
      --verbose \
@@ -86,9 +82,10 @@ addresses.
      --entry-point-repo ""
    ```
 
-The inspect step passes only if the key resolves the intended active mailbox,
-the adapter polls successfully, and no provider state changes. An
-authentication failure is a credential blocker, not evidence about delivery.
+The step passes only if the root key creates one active mailbox, DearMachine
+stores its one-time scoped credential privately, pair policy contains the
+exact correspondent, and the scoped key polls successfully. An authentication
+failure is a credential blocker, not evidence about delivery.
 
 ## Send, reply, send, reply
 
@@ -115,13 +112,8 @@ authentication failure is a credential blocker, not evidence about delivery.
    containing only the two authorized participants.
 4. Immediately before every client start in this procedure, re-poll through
    the mailbox API. Abort if any eligible unread message ID is neither a
-   recorded baseline ID nor a message created by this run. Then enable both
-   mutation gates and run the isolated client against the live database:
-
-   ```bash
-   export DEARMACHINE_LIVE_SENDMUX=1
-   export DEARMACHINE_LIVE_SENDMUX_APPLY=1
-   ```
+   recorded baseline ID nor a message created by this run. Then run the
+   isolated client against the live database.
 
 5. Wait for the first Dear Machine response. Reply to that response in the
    existing conversation and make the follow-up meaningfully depend on the
@@ -190,10 +182,9 @@ paths.
 
 ## Teardown
 
-Stop only the isolated client and confirm its PID file is gone. Preserve the
-minimum redacted evidence needed for the result, then remove the exact temporary
-runtime root using the shared runbook's teardown procedure. Do not delete the
-Sendmux mailbox or alter an external correspondent unless those resources were
-created by this run and deletion was separately authorized. Confirm the normal
-Dear Machine service still has its original command, transport, database, and
-PID file.
+Stop only the isolated client and confirm its PID file is gone. Delete exactly
+the mailbox ID created by this run with the management API and verify it no
+longer resolves. Preserve the minimum redacted evidence needed for the result,
+then remove the exact temporary runtime root using the shared runbook's
+teardown procedure. Confirm the normal Dear Machine service still has its
+original command, transport, database, and PID file.

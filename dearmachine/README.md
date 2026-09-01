@@ -74,30 +74,41 @@ tests actual tool execution rather than only checking `PATH`. If every approved
 backend fails its probe, the coordinator reports the failure and asks for
 direction; it never falls back to modifying project files directly.
 
+Choose a transport and provide its credential as a one-line private file:
+
+| Transport | Credential file variable |
+| --- | --- |
+| AgentMail | `AGENTMAIL_API_KEY_FILE` |
+| OpenMail | `OPENMAIL_API_KEY_FILE` |
+| Sendmux | `SENDMUX_API_KEY_FILE` |
+
+Then use the same creation command for every transport:
+
 ```bash
-export AGENTMAIL_API_KEY_FILE="$HOME/.config/dearmachine/agentmail-api-key"
+export OPENMAIL_API_KEY_FILE="$HOME/.config/dearmachine/openmail-api-key"
 
 dearmachine up --create \
   --email you@example.com \
-  --new-inbox --transport agentmail \
+  --new-inbox --transport openmail \
   --project ~/.dearmachine/entrypoint/main \
   --entry-point-repo ~/.dearmachine/entrypoint/main \
   --maintenance-min-turns 20 \
   --magnifica-humanitas
 ```
 
-`AGENTMAIL_API_KEY_FILE` must contain exactly one non-empty line.
-`AGENTMAIL_API_KEY` remains supported as an environment-based alternative.
+Replace `openmail` and its credential variable with `agentmail` or `sendmux`
+to use either drop-in adapter. The corresponding direct environment variables
+(`AGENTMAIL_API_KEY`, `OPENMAIL_API_KEY`, or `SENDMUX_API_KEY`) are also
+supported. Credential files must contain exactly one non-empty line.
 Creation first initializes the selected entry-point repository when it is
 absent. With no override, that is the default repository at
 `~/.dearmachine/entrypoint/main`. It then provisions and registers the inbox,
 asks the selected transport to authorize the exact correspondent, creates the
-pair's UUID-path SQLite database, and starts the daemon. AgentMail pairing
-idempotently ensures
-inbox-scoped receive, reply, and send allow entries before the local pair is
-published. Later, plain `dearmachine up` starts every registered pair. Repeat
-`--pair <email-or-uuid>` to run only a specific subset for that invocation.
-Selection never changes registry state.
+pair's UUID-path SQLite database, and starts the daemon. Pair authorization is
+owned by the transport adapter and happens before the local pair is published.
+Later, plain `dearmachine up` starts every registered pair. Repeat `--pair
+<email-or-uuid>` to run only a specific subset for that invocation. Selection
+never changes registry state.
 
 To add a pair, stop the daemon and run `up --create` again. Use `--new-inbox`
 for a new provider inbox, or `--inbox <registered-uuid-or-address>` to
@@ -107,87 +118,15 @@ separately from pairs; there is no active pair, display name, `--new`, or
 ready. Use `status` and `down` to inspect and stop it. Use `up --foreground`
 under systemd or in a test container; the canonical PID lock remains internal.
 
-### Optional OpenMail transport
-
-To adopt a dedicated OpenMail inbox as the first pair, provide its exact inbox
-ID or full address and transport during creation:
-
-```bash
-export OPENMAIL_API_KEY_FILE="$HOME/.config/dearmachine/openmail-api-key"
-# Or point OPENMAIL_API_KEY_FILE at another operator-managed one-line key file.
-dearmachine up --create --email 'user@example.test' \
-  --inbox '<openmail-inbox-id-or-address>' --transport openmail --once
-```
-
-`OPENMAIL_API_KEY` is the direct environment alternative. OpenMail credentials
-are loaded only by the OpenMail constructor; selecting OpenMail never invokes
-the AgentMail credential loader. If neither credential variable is set, the
-constructor optionally checks
-`$HOME/.config/dearmachine/openmail-api-key`. That generic path is not created
-or written by DearMachine.
-
-The production adapter uses only the documented
-`https://api.openmail.sh/v1` API. Its default mode is read-only inspection. To
-let the running client reply and mark processed threads read, explicitly enable
-both live gates:
-
-```bash
-export DEARMACHINE_LIVE_OPENMAIL=1
-export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
-```
-
-The central inbox router authorizes the exact canonical pair sender and inbox
-recipient before work is created. Mutations are reauthorized and unknown
-attachment IDs are rejected. There is no permissive default.
-
-OpenMail exposes unread state per thread rather than per message. Polling
-therefore returns the newest inbound message in each unread, fully allowed
-thread, and successful processing marks that whole thread read. `inbox skip
---pair <email-or-uuid> --current` uses the registered pair's transport; skip
-decisions remain local and never change the remote inbox.
-
-For a credentialed test that does not reuse normal runtime state or a normal
-inbox, follow the
-[OpenMail transport runbook](runbooks/testing/openmail-transport.md).
-
-### Optional Sendmux transport
-
-Adopt Sendmux with an exact mailbox ID or full address. The mailbox key may be
-provided directly or through an operator-owned one-line file; when neither is set, the adapter optionally checks
-`$HOME/.config/dearmachine/sendmux-api-key`.
-
-```bash
-export SENDMUX_MAILBOX_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-api-key"
-# Optional: use Sendmux's separate email.send credential for outbound replies.
-export SENDMUX_SEND_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-send-api-key"
-dearmachine up --create --email '<paired-address>' \
-  --inbox '<sendmux-mailbox-id-or-address>' --transport sendmux --once
-```
-
-`SENDMUX_MAILBOX_API_KEY` and `SENDMUX_SEND_API_KEY` are the direct
-environment alternatives. The optional send credential is used only for
-outbound replies; receiving and marking messages processed continue to use the
-mailbox credential. Inbound mail must come from the pair's exact canonical
-sender and be addressed to the registered mailbox. Other correspondents fail
-closed without creating pair work.
-
-Sendmux is inspect-only unless both live gates are explicitly enabled:
-
-```bash
-export DEARMACHINE_LIVE_SENDMUX=1
-export DEARMACHINE_LIVE_SENDMUX_APPLY=1
-```
-
-The adapter uses Sendmux's native idempotency key. Sendmux's HTTP send API
-accepts X-headers but not caller-supplied RFC `In-Reply-To` or `References`
-headers, and exposes no reply endpoint. An outbound answer may therefore begin
-a new provider-local thread; the stable Dear Machine footer associates the
-human's next reply with the existing session. Presigned attachment URLs are
-fetched without the mailbox credential and remain subject to Dear Machine's
-byte limit. SDK retries are disabled pending a separate operational retry
-policy. Follow the isolated
-[Sendmux transport runbook](runbooks/testing/sendmux-transport.md) for a
-credentialed two-turn continuation test.
+All three adapters support `--new-inbox`. To adopt an existing inbox instead,
+replace it with `--inbox '<inbox-id-or-address>' --transport <transport>`.
+Sendmux creation uses the account's root management key once, stores the
+returned mailbox-scoped credential under `~/.dearmachine/credentials`, and
+uses only that scoped credential for normal inbox processing. The transport
+runbooks document isolated live-test procedures for
+[OpenMail](runbooks/testing/openmail-transport.md) and
+[Sendmux](runbooks/testing/sendmux-transport.md); these are testing protocols,
+not extra production setup steps.
 
 Each pair's SQLite state database is
 `~/.dearmachine/pairs/<pair-uuid>/state/dearmachine.db`. DearMachine Client

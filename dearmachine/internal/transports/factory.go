@@ -41,8 +41,10 @@ func ProvisionInbox(ctx context.Context, id string) (client.Inbox, error) {
 	switch id {
 	case "agentmail":
 		return client.ProvisionAgentMailInbox(ctx)
-	case "openmail", "sendmux":
-		return client.Inbox{}, fmt.Errorf("transport %q does not support inbox provisioning", id)
+	case "openmail":
+		return client.ProvisionOpenMailInbox(ctx)
+	case "sendmux":
+		return client.ProvisionSendmuxInbox(ctx)
 	default:
 		return client.Inbox{}, fmt.Errorf("unknown transport %q", id)
 	}
@@ -65,6 +67,9 @@ func InspectInbox(ctx context.Context, id, selection string) (client.Inbox, erro
 // correspondent policy required for a local pair. Providers without such a
 // policy rely on the central inbox router's fail-closed authorization.
 func AuthorizePair(ctx context.Context, id, inboxID, email string) error {
+	if id == "sendmux" {
+		return client.AuthorizeSendmuxPair(ctx, inboxID, email)
+	}
 	transport, err := NewRaw(id, inboxID)
 	if err != nil {
 		return err

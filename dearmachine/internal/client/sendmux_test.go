@@ -198,7 +198,7 @@ func TestSendmuxTransportContract(t *testing.T) {
 	}
 }
 
-func TestSendmuxAllowListAndMutationGatesFailClosed(t *testing.T) {
+func TestSendmuxMutationsHonorInjectedReadOnlyConfiguration(t *testing.T) {
 	fake := newFakeSendmuxAPI("")
 	transport, err := newSendmuxTransport(sendmuxTransportConfig{
 		API: fake, Inbox: "mbx-test", AllowMutation: false,
@@ -213,10 +213,10 @@ func TestSendmuxAllowListAndMutationGatesFailClosed(t *testing.T) {
 	if _, err := transport.Message(context.Background(), "message-ignored"); err != nil {
 		t.Fatalf("Message: %v", err)
 	}
-	if _, err := transport.Reply(context.Background(), "message-new", ReplyPayload{Text: "blocked"}, "key"); err == nil || !strings.Contains(err.Error(), "DEARMACHINE_LIVE_SENDMUX_APPLY") {
+	if _, err := transport.Reply(context.Background(), "message-new", ReplyPayload{Text: "blocked"}, "key"); err == nil || !strings.Contains(err.Error(), "disabled by adapter configuration") {
 		t.Fatalf("Reply gate = %v", err)
 	}
-	if err := transport.MarkProcessed(context.Background(), "message-new"); err == nil || !strings.Contains(err.Error(), "inspect-only") {
+	if err := transport.MarkProcessed(context.Background(), "message-new"); err == nil || !strings.Contains(err.Error(), "disabled by adapter configuration") {
 		t.Fatalf("MarkProcessed gate = %v", err)
 	}
 	fake.mu.Lock()
@@ -257,14 +257,12 @@ func TestNewSendmuxTransportLoadsCredentialFile(t *testing.T) {
 	}
 	t.Setenv("SENDMUX_MAILBOX_API_KEY", "")
 	t.Setenv("SENDMUX_MAILBOX_API_KEY_FILE", credentialPath)
-	t.Setenv("DEARMACHINE_LIVE_SENDMUX", "1")
-	t.Setenv("DEARMACHINE_LIVE_SENDMUX_APPLY", "1")
 	transport, err := NewSendmuxTransport("mbx-test")
 	if err != nil {
 		t.Fatalf("NewSendmuxTransport: %v", err)
 	}
 	if !transport.allowMutation {
-		t.Fatal("constructor did not enable explicitly opted-in mutations")
+		t.Fatal("constructor did not enable normal runtime mutations")
 	}
 }
 

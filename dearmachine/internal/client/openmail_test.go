@@ -350,7 +350,7 @@ func TestOpenMailAllowListIgnoresWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestOpenMailMutationsRequireBothLiveGates(t *testing.T) {
+func TestOpenMailMutationsHonorInjectedReadOnlyConfiguration(t *testing.T) {
 	fake := newFakeOpenMailAPI(t)
 	transport := fake.transport(t, "inb-test", false)
 	if _, err := transport.Reply(
@@ -358,11 +358,11 @@ func TestOpenMailMutationsRequireBothLiveGates(t *testing.T) {
 		"message-new",
 		ReplyPayload{Text: "blocked"},
 		"blocked-key",
-	); err == nil || !strings.Contains(err.Error(), "DEARMACHINE_LIVE_OPENMAIL_APPLY") {
+	); err == nil || !strings.Contains(err.Error(), "disabled by adapter configuration") {
 		t.Fatalf("Reply gate error = %v", err)
 	}
 	if err := transport.MarkProcessed(context.Background(), "message-new"); err == nil ||
-		!strings.Contains(err.Error(), "inspect-only") {
+		!strings.Contains(err.Error(), "disabled by adapter configuration") {
 		t.Fatalf("MarkProcessed gate error = %v", err)
 	}
 	fake.mu.Lock()
@@ -379,8 +379,6 @@ func TestNewOpenMailTransportLoadsOneLineCredentialFile(t *testing.T) {
 	}
 	t.Setenv("OPENMAIL_API_KEY", "")
 	t.Setenv("OPENMAIL_API_KEY_FILE", credentialPath)
-	t.Setenv("DEARMACHINE_LIVE_OPENMAIL", "1")
-	t.Setenv("DEARMACHINE_LIVE_OPENMAIL_APPLY", "1")
 	transport, err := NewOpenMailTransport("inb-test")
 	if err != nil {
 		t.Fatalf("NewOpenMailTransport: %v", err)

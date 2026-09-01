@@ -113,7 +113,7 @@ type sendmuxSendRequest struct {
 }
 
 func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
-	apiKey, err := loadSendmuxCredential()
+	apiKey, err := loadSendmuxCredential(inboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -122,9 +122,7 @@ func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
 		return nil, fmt.Errorf("create Sendmux mailbox client: %w", err)
 	}
 	config := sendmuxTransportConfig{
-		API: api, Inbox: inboxID, HTTPClient: http.DefaultClient,
-		AllowMutation: os.Getenv("DEARMACHINE_LIVE_SENDMUX") == "1" &&
-			os.Getenv("DEARMACHINE_LIVE_SENDMUX_APPLY") == "1",
+		API: api, Inbox: inboxID, HTTPClient: http.DefaultClient, AllowMutation: true,
 	}
 	if sendAPIKey, configured, err := loadSendmuxSendCredential(); err != nil {
 		return nil, err
@@ -167,7 +165,21 @@ func newSendmuxTransport(config sendmuxTransportConfig) (*SendmuxTransport, erro
 	}, nil
 }
 
-func loadSendmuxCredential() (string, error) {
+func loadSendmuxCredential(inboxID string) (string, error) {
+	if strings.TrimSpace(inboxID) != "" {
+		credentialPath, err := sendmuxStoredCredentialPath(os.UserHomeDir, inboxID)
+		if err == nil {
+			if contents, readErr := os.ReadFile(credentialPath); readErr == nil {
+				credential := strings.TrimRight(string(contents), "\r\n")
+				if strings.TrimSpace(credential) == "" || strings.ContainsAny(credential, "\r\n") {
+					return "", fmt.Errorf("stored Sendmux mailbox credential must contain exactly one non-empty line")
+				}
+				return credential, nil
+			} else if !errors.Is(readErr, os.ErrNotExist) {
+				return "", fmt.Errorf("read stored Sendmux mailbox credential: %w", readErr)
+			}
+		}
+	}
 	if credential := strings.TrimSpace(os.Getenv("SENDMUX_MAILBOX_API_KEY")); credential != "" {
 		return credential, nil
 	}
@@ -493,7 +505,7 @@ func (transport *SendmuxTransport) requireMutationOptIn(operation string) error 
 	if transport.allowMutation {
 		return nil
 	}
-	return fmt.Errorf("Sendmux %s is inspect-only; set both DEARMACHINE_LIVE_SENDMUX=1 and DEARMACHINE_LIVE_SENDMUX_APPLY=1 to allow live mutations", operation)
+	return fmt.Errorf("Sendmux %s is disabled by adapter configuration", operation)
 }
 
 func (transport *SendmuxTransport) mailbox(ctx context.Context) (sendmuxMailboxInfo, error) {

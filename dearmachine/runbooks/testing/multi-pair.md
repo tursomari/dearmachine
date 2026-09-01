@@ -15,13 +15,12 @@ There is no active pair, display name, `--new`, or `--switch`.
 
 Create pairs only with `dearmachine up --create` while the daemon is stopped:
 
-- `--new-inbox --transport agentmail` provisions a real randomized AgentMail
-  inbox and registers it.
+- `--new-inbox --transport <id>` provisions and registers a real randomized
+  inbox through AgentMail, OpenMail, or Sendmux.
 - `--inbox <registered-uuid-or-address>` intentionally shares an inbox.
 - `--inbox <exact-provider-id-or-address> --transport <id>` adopts an existing
   provider inbox after exact API inspection.
 
-OpenMail and Sendmux support exact adoption but not provider provisioning.
 Incomplete non-interactive creation must fail before any provider mutation.
 First-pair creation initializes the missing selected entry-point repository
 before provider mutation. Existing Git repositories remain untouched. Unsafe
@@ -48,14 +47,14 @@ interval and an outer timeout for every command.
 2. Prove `up --new` and `up --switch` are unknown flags.
 3. Prove incomplete non-interactive `up --create` fails without creating an
    inbox, registry, or database.
-4. Create pair A with a new AgentMail inbox and its authorized correspondent.
+4. Create pair A with a new provider inbox and its authorized correspondent.
    Prove the same command initialized the previously absent default entry point
    before calling the provider:
 
    ```bash
    dearmachine up --create \
      --email '<pair-a-user-address>' \
-     --new-inbox --transport agentmail \
+     --new-inbox --transport '<agentmail|openmail|sendmux>' \
      --once --magnifica-humanitas <isolated-run-flags>
    ```
 

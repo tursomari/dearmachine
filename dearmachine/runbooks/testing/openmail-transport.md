@@ -38,17 +38,16 @@ deployment path.
   sender. Deleting each temporary inbox also removes its scoped policy.
 - Register the temporary sender as the pair email. Pair routing then enforces
   the exact sender and registered inbox recipient.
-- OpenMail is inspect-only unless both `DEARMACHINE_LIVE_OPENMAIL=1` and
-  `DEARMACHINE_LIVE_OPENMAIL_APPLY=1` are present. Leave both unset for the
-  first poll.
+- Production OpenMail operation needs no DearMachine-specific mutation gate.
+  Use the isolated home, disposable inbox, and exact-address provider policy
+  in this runbook as the live-test safety boundary.
 
 ## API contract to verify
 
 Check these operations in the current official OpenAPI document:
 
-- `GET /v1/pods` discovers the account pod used for new inboxes;
-- `GET /v1/inboxes` lists inboxes, and `POST /v1/inboxes` creates one with
-  that pod's `podId`;
+- `GET /v1/inboxes` lists inboxes, and `POST /v1/inboxes` with an empty object
+  creates one using the account defaults;
 - `GET /v1/inboxes/{id}` verifies an inbox ID;
 - `POST /v1/inboxes/{id}/send` sends with `Idempotency-Key`;
 - `GET /v1/inboxes/{id}/threads?is_read=false` lists unread threads;
@@ -60,7 +59,7 @@ used during teardown only for exact IDs created by the current run. The sole
 pre-provisioning exception is the explicitly authorized test-only capacity
 refresh described above; it must be recorded separately from run teardown.
 
-## Isolated inspect
+## Isolated creation and empty poll
 
 1. Create a runtime root with `mktemp -d` and require mode `0700`. Put the
    disposable home, project, device configuration, binaries,
@@ -70,18 +69,17 @@ refresh described above; it must be recorded separately from run teardown.
 2. Build `dearmachine` and `agent-manager` from the revision under test. Create
    a temporary Git project and initialize it with Machtiani using isolated
    home and session-temp roots.
-3. Discover the account pod with `GET /v1/pods` without printing the
-   credential. List inboxes, then create and verify a temporary receiver if no
-   suitable run-created receiver exists, passing the discovered `podId` on
-   each `POST /v1/inboxes` request. Prefer a second temporary inbox as the
+3. List the account inboxes without printing the credential. Record the exact
+   baseline privately, then let the CLI create the temporary receiver and its
+   pair policy with one empty poll. Prefer a second temporary inbox as the
    sender.
-4. Leave both mutation gates unset and run one empty poll:
+4. Run:
 
    ```bash
    export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
    HOME="$TMP/home" "$TMP/dearmachine" up --create \
      --email 'temp-sender@example.test' \
-     --inbox '<temporary-receiver-id-or-address>' \
+     --new-inbox \
      --transport openmail \
      --once \
      --verbose \
@@ -92,8 +90,9 @@ refresh described above; it must be recorded separately from run teardown.
      --entry-point-repo ""
    ```
 
-The inspect step passes when the constructor reads the key file, resolves the
-inbox, polls the canonical API host, and exits without changing any thread.
+The step passes when the constructor reads the key file, creates and registers
+one inbox, establishes exact pair policy, polls the canonical API host, and
+exits without changing any pre-existing thread.
 
 ## Poll, reply, continue, and acknowledge
 
@@ -103,14 +102,8 @@ inbox, polls the canonical API host, and exits without changing any thread.
 2. From the temporary sender, send one new-thread message to the receiver with
    a unique `Idempotency-Key`. Use a short, read-only task scoped to the
    disposable project, such as asking for its current Git status.
-3. Wait until the receiver lists exactly that thread as unread. Then enable
-   both mutation gates and run `HOME="$TMP/home" "$TMP/dearmachine" up --once`
-   with the same run flags:
-
-   ```bash
-   export DEARMACHINE_LIVE_OPENMAIL=1
-   export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
-   ```
+3. Wait until the receiver lists exactly that thread as unread. Then run
+   `HOME="$TMP/home" "$TMP/dearmachine" up --once` with the same run flags.
 
 4. Wait for the first Dear Machine response. Record its stable conversation
    reference privately, then reply to it from the temporary sender's existing

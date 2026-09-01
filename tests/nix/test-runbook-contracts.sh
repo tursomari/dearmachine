@@ -51,7 +51,10 @@ done
 grep -F -- 'starts every pair. A repeatable' "$multi_pair" >/dev/null
 grep -F -- 'email-or-uuid' "$multi_pair" >/dev/null
 grep -F -- 'narrows only that invocation and never changes the registry' "$multi_pair" >/dev/null
-grep -F -- 'provisions a real randomized AgentMail' "$multi_pair" >/dev/null
+grep -F -- 'provisions and registers a real randomized' "$multi_pair" >/dev/null
+for transport in AgentMail OpenMail Sendmux; do
+  grep -F -- "$transport" "$multi_pair" >/dev/null
+done
 grep -F -- 'intentionally shares an inbox' "$multi_pair" >/dev/null
 grep -F -- 'are unknown flags.' "$multi_pair" >/dev/null
 grep -F -- 'on every daemon launch.' "$multi_pair" >/dev/null

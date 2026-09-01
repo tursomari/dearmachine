@@ -28,11 +28,12 @@ Go test suite.
 - [`testing/disposable-instance.md`](./testing/disposable-instance.md) tests
   the ordinary email lifecycle and local skip/unskip behavior.
 - [`testing/openmail-transport.md`](./testing/openmail-transport.md) tests the
-  OpenMail constructor, inspect-only default, and isolated poll/reply/ack
-  lifecycle with temporary inboxes.
+  OpenMail constructor, inbox provisioning, pair policy, and isolated
+  poll/reply/ack lifecycle with temporary inboxes.
 - [`testing/sendmux-transport.md`](./testing/sendmux-transport.md) tests the
-  Sendmux constructor, fail-closed boundaries, and a two-turn continuation
-  lifecycle using a separately authorized external correspondent.
+  Sendmux provisioning, scoped credential handoff, fail-closed boundaries, and
+  a two-turn continuation lifecycle using a separately authorized external
+  correspondent.
 - [`testing/concurrent-sessions.md`](./testing/concurrent-sessions.md) compares
   sequential and three-worker processing across simultaneous email threads.
 - [`testing/queued-grace-preemption.md`](./testing/queued-grace-preemption.md)

@@ -60,13 +60,40 @@ func NewOpenMailTransport(inboxID string) (*OpenMailTransport, error) {
 		return nil, err
 	}
 	return newOpenMailTransport(openMailTransportConfig{
-		BaseURL:    openMailAPIBaseURL,
-		APIKey:     apiKey,
-		Inbox:      inboxID,
-		HTTPClient: http.DefaultClient,
-		AllowMutation: os.Getenv("DEARMACHINE_LIVE_OPENMAIL") == "1" &&
-			os.Getenv("DEARMACHINE_LIVE_OPENMAIL_APPLY") == "1",
+		BaseURL:       openMailAPIBaseURL,
+		APIKey:        apiKey,
+		Inbox:         inboxID,
+		HTTPClient:    http.DefaultClient,
+		AllowMutation: true,
 	})
+}
+
+// ProvisionOpenMailInbox creates an inbox using OpenMail's account API.
+func ProvisionOpenMailInbox(ctx context.Context) (Inbox, error) {
+	apiKey, err := loadOpenMailCredential()
+	if err != nil {
+		return Inbox{}, err
+	}
+	return provisionOpenMailInbox(ctx, openMailTransportConfig{
+		BaseURL: openMailAPIBaseURL, APIKey: apiKey, HTTPClient: http.DefaultClient,
+	})
+}
+
+func provisionOpenMailInbox(ctx context.Context, config openMailTransportConfig) (Inbox, error) {
+	config.Inbox = "provisioning"
+	transport, err := newOpenMailTransport(config)
+	if err != nil {
+		return Inbox{}, err
+	}
+	var inbox openMailInbox
+	if err := transport.mutateJSON(ctx, http.MethodPost, "/v1/inboxes", struct{}{}, &inbox); err != nil {
+		return Inbox{}, fmt.Errorf("create OpenMail inbox: %w", err)
+	}
+	address, valid := canonicalOpenMailAddress(inbox.Address)
+	if strings.TrimSpace(inbox.ID) == "" || !valid {
+		return Inbox{}, fmt.Errorf("create OpenMail inbox: provider returned incomplete inbox metadata")
+	}
+	return Inbox{Transport: "openmail", ProviderID: strings.TrimSpace(inbox.ID), Address: address}, nil
 }
 
 func InspectOpenMailInbox(ctx context.Context, selection string) (Inbox, error) {
@@ -138,6 +165,17 @@ func loadOpenMailCredential() (string, error) {
 type openMailInbox struct {
 	ID      string `json:"id"`
 	Address string `json:"address"`
+}
+
+type openMailPolicyRule struct {
+	Type      string `json:"type"`
+	Value     string `json:"value"`
+	Direction string `json:"direction"`
+}
+
+type openMailPolicyMode struct {
+	Mode      string `json:"mode"`
+	Direction string `json:"direction"`
 }
 
 type openMailThread struct {
@@ -647,7 +685,7 @@ func (transport *OpenMailTransport) requireMutationOptIn(operation string) error
 	if transport.allowMutation {
 		return nil
 	}
-	return fmt.Errorf("OpenMail %s is inspect-only; set both DEARMACHINE_LIVE_OPENMAIL=1 and DEARMACHINE_LIVE_OPENMAIL_APPLY=1 to allow live mutations", operation)
+	return fmt.Errorf("OpenMail %s is disabled by adapter configuration", operation)
 }
 
 func (transport *OpenMailTransport) inboxID(ctx context.Context) (string, error) {
@@ -710,6 +748,50 @@ func (transport *OpenMailTransport) getJSON(ctx context.Context, path string, ta
 	return transport.doJSON(request, target)
 }
 
+// AuthorizePair applies the same exact-address allowlist policy for every
+// OpenMail pair. The local router remains a second fail-closed boundary.
+func (transport *OpenMailTransport) AuthorizePair(ctx context.Context, email string) error {
+	address, err := canonicalMessageAddress(email)
+	if err != nil {
+		return fmt.Errorf("authorize OpenMail pair: %w", err)
+	}
+	inboxID, err := transport.inboxID(ctx)
+	if err != nil {
+		return err
+	}
+	path := "/v1/policy/rules?inboxId=" + url.QueryEscape(inboxID)
+	for _, direction := range []string{"inbound", "outbound"} {
+		rule := openMailPolicyRule{Type: "allow", Value: address, Direction: direction}
+		if err := transport.mutateJSON(ctx, http.MethodPost, path, rule, &struct{}{}); err != nil {
+			var statusErr *openMailAPIError
+			if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusConflict || statusErr.Code != "rule_exists" {
+				return fmt.Errorf("authorize OpenMail %s policy: %w", direction, err)
+			}
+		}
+	}
+	path = "/v1/policy/mode?inboxId=" + url.QueryEscape(inboxID)
+	for _, direction := range []string{"inbound", "outbound"} {
+		mode := openMailPolicyMode{Mode: "allowlist", Direction: direction}
+		if err := transport.mutateJSON(ctx, http.MethodPut, path, mode, &struct{}{}); err != nil {
+			return fmt.Errorf("enable OpenMail %s allowlist: %w", direction, err)
+		}
+	}
+	return nil
+}
+
+func (transport *OpenMailTransport) mutateJSON(ctx context.Context, method, path string, body, target any) error {
+	var encoded bytes.Buffer
+	if err := json.NewEncoder(&encoded).Encode(body); err != nil {
+		return err
+	}
+	request, err := transport.request(ctx, method, path, &encoded)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	return transport.doJSON(request, target)
+}
+
 func (transport *OpenMailTransport) request(
 	ctx context.Context,
 	method, path string,
@@ -750,23 +832,37 @@ func (transport *OpenMailTransport) doJSON(request *http.Request, target any) er
 	return nil
 }
 
-func openMailStatusError(response *http.Response) error {
-	var apiError struct {
-		Code    string `json:"error"`
-		Message string `json:"message"`
-	}
-	_ = json.NewDecoder(io.LimitReader(response.Body, 32<<10)).Decode(&apiError)
-	detail := strings.TrimSpace(apiError.Code)
-	if message := strings.TrimSpace(apiError.Message); message != "" {
+type openMailAPIError struct {
+	StatusCode int
+	Status     string
+	Code       string
+	Message    string
+}
+
+func (err *openMailAPIError) Error() string {
+	detail := strings.TrimSpace(err.Code)
+	if message := strings.TrimSpace(err.Message); message != "" {
 		if detail != "" {
 			detail += ": "
 		}
 		detail += message
 	}
 	if detail == "" {
-		return fmt.Errorf("OpenMail API returned %s", response.Status)
+		return fmt.Sprintf("OpenMail API returned %s", err.Status)
 	}
-	return fmt.Errorf("OpenMail API returned %s (%s)", response.Status, detail)
+	return fmt.Sprintf("OpenMail API returned %s (%s)", err.Status, detail)
+}
+
+func openMailStatusError(response *http.Response) error {
+	var apiError struct {
+		Code    string `json:"error"`
+		Message string `json:"message"`
+	}
+	_ = json.NewDecoder(io.LimitReader(response.Body, 32<<10)).Decode(&apiError)
+	return &openMailAPIError{
+		StatusCode: response.StatusCode, Status: response.Status,
+		Code: strings.TrimSpace(apiError.Code), Message: strings.TrimSpace(apiError.Message),
+	}
 }
 
 func encodeOpenMailAttachmentID(messageID, filename string) string {
