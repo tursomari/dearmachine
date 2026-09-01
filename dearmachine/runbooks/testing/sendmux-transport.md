@@ -13,7 +13,7 @@ path from that shared runbook.
 
 ## Safety boundaries
 
-- Use a root Sendmux management key for provisioning. Keep it in a user-owned
+- Use a Sendmux Infrastructure key for provisioning. Keep it in a user-owned
   mode-`0600` file; never print it, put it in a command argument, or retain
   authorization headers in evidence. DearMachine stores the one-time
   mailbox-scoped credential beneath the disposable home and uses that scoped
@@ -38,8 +38,7 @@ Create an untracked file outside the repository, owned by the operator and
 mode `0600`, with values appropriate to this run:
 
 ```bash
-SENDMUX_API_KEY_FILE=/absolute/path/to/sendmux-root-api-key
-SENDMUX_SEND_API_KEY_FILE=/absolute/path/to/sendmux-send-api-key
+SENDMUX_API_KEY_FILE=/absolute/path/to/sendmux-infrastructure-api-key
 SENDMUX_QSE_CORRESPONDENT=<exact-external-address>
 ```
 
@@ -82,10 +81,10 @@ existing mailbox.
      --entry-point-repo ""
    ```
 
-The step passes only if the root key creates one active mailbox, DearMachine
-stores its one-time scoped credential privately, pair policy contains the
-exact correspondent, and the scoped key polls successfully. An authentication
-failure is a credential blocker, not evidence about delivery.
+The step passes only if the Infrastructure key creates one active mailbox,
+DearMachine stores its one-time scoped credential privately, pair policy
+contains the exact correspondent, and the scoped key polls successfully. An
+authentication failure is a credential blocker, not evidence about delivery.
 
 ## Send, reply, send, reply
 
@@ -183,8 +182,10 @@ paths.
 ## Teardown
 
 Stop only the isolated client and confirm its PID file is gone. Delete exactly
-the mailbox ID created by this run with the management API and verify it no
-longer resolves. Preserve the minimum redacted evidence needed for the result,
-then remove the exact temporary runtime root using the shared runbook's
-teardown procedure. Confirm the normal Dear Machine service still has its
-original command, transport, database, and PID file.
+the mailbox ID created by this run with the management API. Verify an exact-ID
+lookup either reports `not_found` or returns that same mailbox with status
+`deleted`; Sendmux retains soft-deleted mailbox metadata. Preserve the minimum
+redacted evidence needed for the result, then remove the exact temporary
+runtime root using the shared runbook's teardown procedure. Confirm the normal
+Dear Machine service still has its original command, transport, database, and
+PID file.

@@ -120,9 +120,10 @@ under systemd or in a test container; the canonical PID lock remains internal.
 
 All three adapters support `--new-inbox`. To adopt an existing inbox instead,
 replace it with `--inbox '<inbox-id-or-address>' --transport <transport>`.
-Sendmux creation uses the account's root management key once, stores the
+Sendmux creation uses the account's Infrastructure key once, stores the
 returned mailbox-scoped credential under `~/.dearmachine/credentials`, and
-uses only that scoped credential for normal inbox processing. The transport
+uses that scoped credential for receiving and replying. A separate Sending key
+is not part of the normal DearMachine setup. The transport
 runbooks document isolated live-test procedures for
 [OpenMail](runbooks/testing/openmail-transport.md) and
 [Sendmux](runbooks/testing/sendmux-transport.md); these are testing protocols,

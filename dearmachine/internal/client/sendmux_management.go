@@ -53,7 +53,7 @@ type sendmuxSDKManagementAPI struct {
 	client *management.Client
 }
 
-// ProvisionSendmuxInbox creates a mailbox with a root management key, then
+// ProvisionSendmuxInbox creates a mailbox with an Infrastructure key, then
 // stores only the one-time mailbox credential for normal DearMachine runtime.
 func ProvisionSendmuxInbox(ctx context.Context) (Inbox, error) {
 	credential, configured, err := loadSendmuxManagementCredential()
@@ -160,7 +160,7 @@ func loadSendmuxManagementCredential() (credential string, configured bool, err 
 		if homeErr != nil {
 			return "", false, nil
 		}
-		credentialPath = filepath.Join(home, ".config", "dearmachine", "sendmux-root-api-key")
+		credentialPath = filepath.Join(home, ".config", "dearmachine", "sendmux-infrastructure-api-key")
 		if _, statErr := os.Stat(credentialPath); errors.Is(statErr, os.ErrNotExist) {
 			return "", false, nil
 		}
@@ -237,11 +237,40 @@ func (api *sendmuxSDKManagementAPI) CreateMailbox(ctx context.Context, email str
 	mailbox := data.GetMailbox()
 	credential, ok := data.GetCredential().Get()
 	if !ok {
-		return sendmuxProvisionedMailbox{ID: mailbox.GetID(), Email: mailbox.GetEmail(), Status: mailbox.GetStatus()}, nil
+		keyResponse, keyErr := api.client.ManagementCreateMailboxKey(ctx,
+			management.NewOptManagementCreateMailboxKeyReq(management.ManagementCreateMailboxKeyReq{AppName: "DearMachine"}),
+			management.ManagementCreateMailboxKeyParams{PublicID: mailbox.GetID()},
+		)
+		if keyErr != nil {
+			return api.rollbackCreatedMailbox(ctx, mailbox.GetID(), fmt.Errorf("mint Sendmux mailbox credential: %w", keyErr))
+		}
+		keySuccess, keyOK := keyResponse.(*management.MailboxAppPasswordResultResponseHeaders)
+		if !keyOK {
+			return api.rollbackCreatedMailbox(ctx, mailbox.GetID(), sendmuxUnexpectedResponse("mint mailbox credential", keyResponse))
+		}
+		keyResponseBody := keySuccess.GetResponse()
+		keyData := keyResponseBody.GetData()
+		keyCredential, credentialOK := keyData.GetCredential().Get()
+		if !credentialOK {
+			return api.rollbackCreatedMailbox(ctx, mailbox.GetID(), fmt.Errorf("mint Sendmux mailbox credential: provider returned no credential"))
+		}
+		return sendmuxProvisionedMailbox{
+			ID: mailbox.GetID(), Email: mailbox.GetEmail(), Status: mailbox.GetStatus(), Credential: keyCredential.GetSecret(),
+		}, nil
 	}
 	return sendmuxProvisionedMailbox{
 		ID: mailbox.GetID(), Email: mailbox.GetEmail(), Status: mailbox.GetStatus(), Credential: credential.GetSecret(),
 	}, nil
+}
+
+func (api *sendmuxSDKManagementAPI) rollbackCreatedMailbox(ctx context.Context, inboxID string, cause error) (sendmuxProvisionedMailbox, error) {
+	if strings.TrimSpace(inboxID) == "" {
+		return sendmuxProvisionedMailbox{}, cause
+	}
+	if err := api.DeleteMailbox(ctx, inboxID); err != nil {
+		return sendmuxProvisionedMailbox{}, errors.Join(cause, fmt.Errorf("rollback Sendmux mailbox: %w", err))
+	}
+	return sendmuxProvisionedMailbox{}, cause
 }
 
 func (api *sendmuxSDKManagementAPI) DeleteMailbox(ctx context.Context, inboxID string) error {

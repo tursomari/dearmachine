@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"sendmux.ai/go/management"
 )
 
 func TestProvisionOpenMailInboxAndAuthorizePair(t *testing.T) {
@@ -214,6 +216,95 @@ func TestSendmuxManagementCredentialIsDistinctFromMailboxCredential(t *testing.T
 	t.Setenv("SENDMUX_API_KEY_FILE", "")
 	if _, configured, err := loadSendmuxManagementCredential(); err != nil || configured {
 		t.Fatalf("optional management credential = %v/%v", configured, err)
+	}
+}
+
+func TestSendmuxManagementCredentialUsesInfrastructureKeyDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("SENDMUX_API_KEY", "")
+	t.Setenv("SENDMUX_API_KEY_FILE", "")
+	credentialPath := filepath.Join(home, ".config", "dearmachine", "sendmux-infrastructure-api-key")
+	if err := os.MkdirAll(filepath.Dir(credentialPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentialPath, []byte("smx_root_offline\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	credential, configured, err := loadSendmuxManagementCredential()
+	if err != nil || !configured || credential != "smx_root_offline" {
+		t.Fatalf("default infrastructure credential = %q/%v/%v", credential, configured, err)
+	}
+}
+
+func TestSendmuxCreateMailboxMintsCredentialWhenInitialCredentialIsUnavailable(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.Method+" "+request.URL.Path)
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/mailboxes":
+			writer.WriteHeader(http.StatusCreated)
+			_, _ = writer.Write([]byte(`{"meta":{"request_id":"req-create"},"ok":true,"data":{"mailbox":{"created_at":"2026-08-31T00:00:00Z","display_name":null,"email":"dearmachine-fixed@myagent.mx","id":"mbx-created","quota_bytes":null,"send_scope":null,"status":"active"},"credential":null,"warning":"initial credential unavailable"}}`))
+		case "/mailboxes/mbx-created/keys":
+			var body management.ManagementCreateMailboxKeyReq
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil || body.GetAppName() != "DearMachine" {
+				t.Fatalf("credential request = %+v, %v", body, err)
+			}
+			writer.WriteHeader(http.StatusCreated)
+			_, _ = writer.Write([]byte(`{"meta":{"request_id":"req-key"},"ok":true,"data":{"credential":{"imap_port":993,"key_prefix":"smx_mbx_","key_suffix":"last","public_id":"key-created","secret":"smx_mbx_offline-created-credential","server":"mail.sendmux.test","smtp_port":465,"username":"dearmachine-fixed@myagent.mx"}}}`))
+		default:
+			t.Fatalf("unexpected Sendmux request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	sdk, err := management.New("smx_root_offline", management.WithBaseURL(server.URL), management.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := (&sendmuxSDKManagementAPI{client: sdk}).CreateMailbox(context.Background(), "dearmachine-fixed@myagent.mx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != "mbx-created" || created.Email != "dearmachine-fixed@myagent.mx" || created.Status != "active" || created.Credential != "smx_mbx_offline-created-credential" {
+		t.Fatalf("created mailbox = %+v", created)
+	}
+	if !slices.Equal(requests, []string{"POST /mailboxes", "POST /mailboxes/mbx-created/keys"}) {
+		t.Fatalf("requests = %v", requests)
+	}
+}
+
+func TestSendmuxCreateMailboxRollsBackWhenCredentialMintFails(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.Method+" "+request.URL.Path)
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "POST /mailboxes":
+			writer.WriteHeader(http.StatusCreated)
+			_, _ = writer.Write([]byte(`{"meta":{"request_id":"req-create"},"ok":true,"data":{"mailbox":{"created_at":"2026-08-31T00:00:00Z","display_name":null,"email":"dearmachine-fixed@myagent.mx","id":"mbx-created","quota_bytes":null,"send_scope":null,"status":"active"},"credential":null,"warning":"initial credential unavailable"}}`))
+		case "POST /mailboxes/mbx-created/keys":
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte(`{"meta":{"request_id":"req-key"},"ok":false,"error":{"code":"service_unavailable","message":"try later"}}`))
+		case "DELETE /mailboxes/mbx-created":
+			_, _ = writer.Write([]byte(`{"meta":{"request_id":"req-delete"},"ok":true,"data":{"deleted":true}}`))
+		default:
+			t.Fatalf("unexpected Sendmux request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	sdk, err := management.New("smx_root_offline", management.WithBaseURL(server.URL), management.WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = (&sendmuxSDKManagementAPI{client: sdk}).CreateMailbox(context.Background(), "dearmachine-fixed@myagent.mx")
+	if err == nil {
+		t.Fatal("CreateMailbox succeeded after credential mint failed")
+	}
+	if !slices.Equal(requests, []string{"POST /mailboxes", "POST /mailboxes/mbx-created/keys", "DELETE /mailboxes/mbx-created"}) {
+		t.Fatalf("requests = %v", requests)
 	}
 }
 
