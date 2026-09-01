@@ -33,10 +33,15 @@ dearmachine setup-agents --backend codex
 The backend command itself—`codex` in this example—is discovered from the host
 `PATH` and uses its normal host credentials.
 
-### 3. Create the first pair and start
+### 3. Choose an email transport and start
 
-Provide a private one-line AgentMail credential file, then create a pair. The
-transport provisions the inbox and authorizes the pair address at this seam.
+DearMachine uses the same pair-and-reply workflow with AgentMail, OpenMail, or
+Sendmux. The `--transport` flag chooses the adapter, and each adapter reads only
+its own credential. There is no DearMachine-specific allow-list setting: pair
+creation registers the exact `--email` address locally and asks the selected
+adapter to apply any provider-side correspondent policy it supports.
+
+AgentMail can provision a new inbox as part of pair creation:
 
 ```bash
 export AGENTMAIL_API_KEY_FILE="$HOME/.config/dearmachine/agentmail-api-key"
@@ -47,6 +52,30 @@ dearmachine up --create \
   --transport agentmail \
   --magnifica-humanitas
 ```
+
+OpenMail and Sendmux currently adopt an inbox that already exists at the
+provider. The rest of the command is the same:
+
+```bash
+# OpenMail
+export OPENMAIL_API_KEY_FILE="$HOME/.config/dearmachine/openmail-api-key"
+dearmachine up --create \
+  --email you@example.test \
+  --inbox '<openmail-inbox-id-or-address>' \
+  --transport openmail \
+  --magnifica-humanitas
+
+# Sendmux
+export SENDMUX_MAILBOX_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-mailbox-api-key"
+dearmachine up --create \
+  --email you@example.test \
+  --inbox '<sendmux-mailbox-id-or-address>' \
+  --transport sendmux \
+  --magnifica-humanitas
+```
+
+Provider-specific credential and inbox details are documented in the
+[transport reference](docs/email-transport-alternatives.md).
 
 On the first run, `up --create` also initializes the selected entry-point
 repository if it is absent. With no flag, that is the default repository at
@@ -79,48 +108,6 @@ The inbox selector is shown by `dearmachine status`. Sharing is never inferred;
 use `--new-inbox --transport agentmail` instead when the pair should have its
 own inbox. Pair email addresses and pair UUIDs are also the selectors accepted
 by `dearmachine up --pair` and `dearmachine inbox ... --pair`.
-
-To adopt an existing OpenMail inbox, select it explicitly. No separate
-DearMachine allow-list variable is used; pair creation is the authorization
-seam.
-
-```bash
-export OPENMAIL_API_KEY_FILE=/path/to/one-line-key
-
-dearmachine up --create \
-  --email user@example.test \
-  --inbox '<openmail-inbox-id-or-address>' \
-  --transport openmail
-```
-
-OpenMail is inspect-only until both mutation gates are enabled:
-
-```bash
-export DEARMACHINE_LIVE_OPENMAIL=1
-export DEARMACHINE_LIVE_OPENMAIL_APPLY=1
-```
-
-OpenMail's provider-side correspondent policy must also permit the pair. See the
-[OpenMail transport runbook](dearmachine/runbooks/testing/openmail-transport.md)
-for a disposable, fully isolated verification procedure.
-
-Sendmux is also selectable through the same seam. It uses a mailbox-scoped key
-and two explicit mutation gates:
-
-```bash
-export SENDMUX_MAILBOX_API_KEY_FILE=/path/to/one-line-key
-
-dearmachine up --create \
-  --email user@example.test \
-  --inbox '<sendmux-mailbox-id-or-address>' \
-  --transport sendmux
-```
-
-See the
-[Sendmux transport runbook](dearmachine/runbooks/testing/sendmux-transport.md)
-for the isolated `send, reply, send, reply` continuation proof. Keep real
-participant addresses in a mode-`0600` operator file, never in source or test
-evidence.
 
 DearMachine runs natively by default and does not require systemd. The optional
 native systemd launcher and Nix/OCI testing/deployment helpers are documented in

@@ -10,6 +10,7 @@ disposable=$PROJECT_ROOT/dearmachine/runbooks/testing/disposable-instance.md
 multi_pair=$PROJECT_ROOT/dearmachine/runbooks/testing/multi-pair.md
 openmail=$PROJECT_ROOT/dearmachine/runbooks/testing/openmail-transport.md
 native=$PROJECT_ROOT/dearmachine/runbooks/native-install.md
+readme=$PROJECT_ROOT/README.md
 
 for contract in \
   '## Monitor active email sessions' \
@@ -64,6 +65,14 @@ grep -F 'dearmachine status' "$native" >/dev/null
 grep -F 'up --foreground' "$native" >/dev/null
 grep -F 'nix profile install .#dearmachine' "$native" >/dev/null
 grep -F 'machtiani` and the backend commands' "$native" >/dev/null
+grep -F '### 3. Choose an email transport and start' "$readme" >/dev/null
+for transport in agentmail openmail sendmux; do
+  grep -F -- "--transport $transport" "$readme" >/dev/null
+done
+if grep -F 'DEARMACHINE_LIVE_' "$readme"; then
+  echo 'public README must not expose live-test mutation gates' >&2
+  exit 1
+fi
 if grep -F -- '--agent-manager /bin/agent-manager' "$PROJECT_ROOT/dearmachine/runbooks/testing/continuous-intake.md"; then
   echo 'container protocol must use packaged Agent Manager through the client PATH' >&2
   exit 1
