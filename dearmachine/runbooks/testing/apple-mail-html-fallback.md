@@ -1,4 +1,4 @@
-# Apple Mail HTML-only fallback live QSE
+# Apple Mail HTML-only fallback LSE
 
 Use this protocol to prove the regression fix for PM issue `b8992b7`: an
 HTML-only Apple Mail message whose AgentMail plain-text fields are empty must
@@ -11,7 +11,7 @@ evidence, and teardown requirement in
 
 Run this protocol with the **Default containerized production path** in
 `temporary-instance.md`. The native diagnostic exception and development-mode
-Compose overlay are not permitted because this QSE claims coverage of the
+Compose overlay are not permitted because this LSE claims coverage of the
 Nix-built OCI image, production secret boundary, rootless Podman Compose stack,
 packaged Agent Manager, mounted Machtiani/backend tools, and DearMachine client.
 
@@ -28,7 +28,7 @@ the first message is sent. Install trap-guarded teardown before provisioning.
 
 1. Record the DearMachine and Machtiani revisions, complete source status, the
    normal client's PID/start time/inbox, normal database metadata, and existing
-   Podman containers for the unique QSE project.
+   Podman containers for the unique LSE project.
 2. Create a private evidence directory under the source repository's ignored
    `.scratch/apple-mail-html-fallback/<UTC-timestamp>/` path. Store no secret
    values there. Write the live inbox/allow-list resource journal there before
@@ -64,10 +64,10 @@ identifying Apple Mail or iPhone Mail. The HTML must contain:
     <script>document.write("must-not-appear")</script>
   </head>
   <body>
-    <p>Apple Mail QSE body.</p>
+    <p>Apple Mail LSE body.</p>
     <p>Second line &amp; more.</p>
     <ul><li>item one</li><li>item two</li></ul>
-    <p><a href="https://example.com/apple-mail-qse">verification link</a></p>
+    <p><a href="https://example.com/apple-mail-lse">verification link</a></p>
   </body>
 </html>
 ```
@@ -83,7 +83,7 @@ stop and report the reproduction as blocked; do not claim the fallback passed.
 Send this plain-text body without depending on HTML:
 
 ```text
-Plain-text Apple Mail QSE control. Preserve this sentence unchanged.
+Plain-text Apple Mail LSE control. Preserve this sentence unchanged.
 ```
 
 Read it back through AgentMail and confirm the `text` field contains that exact
@@ -98,12 +98,12 @@ persisted in the session conversation. Capture Agent Manager ticket files when
 that backend path retains them; the persisted conversation remains the required
 body evidence.
 
-The QSE passes only if all of these assertions hold:
+The LSE passes only if all of these assertions hold:
 
 1. The HTML-only live trigger signature is present in the AgentMail response.
-2. The persisted agent-visible user message contains `Apple Mail QSE body.`,
+2. The persisted agent-visible user message contains `Apple Mail LSE body.`,
    `Second line & more.`, `item one`, `item two`, and
-   `verification link (https://example.com/apple-mail-qse)`.
+   `verification link (https://example.com/apple-mail-lse)`.
 3. That user message contains no HTML tags, `document.write`,
    `must-not-appear`, or CSS content.
 4. The plain-text control sentence appears unchanged in its persisted

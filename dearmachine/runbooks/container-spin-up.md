@@ -51,10 +51,10 @@ logs contain `DearMachine credential-free Compose test service ready`, and
 verify it is the private directory created above, is owned by the current user,
 and is not a symlink. Never point these variables at `~/.dearmachine`.
 
-## Live credentialed QSEs
+## Credentialed Live Scenario Evaluations (LSEs)
 
 This runbook owns the Podman mechanics, not live-mail protocol setup. Run every
-live credentialed QSE through the canonical containerized production path in
+credentialed LSE through the canonical containerized production path in
 [`testing/temporary-instance.md`](testing/temporary-instance.md). That path
 defines the scratch HOME/XDG roots, unique Compose project, external Podman
 secret, mounted tools and credentials, observation requirements, and exact
@@ -62,7 +62,7 @@ cleanup boundary. Do not substitute development mode or the native diagnostic
 exception for a protocol that claims container or deployment-path coverage.
 
 Use the stack wrapper—not the installed-service lifecycle helper—to observe an
-ephemeral QSE. Run these commands from the same shell with the QSE's complete
+ephemeral LSE. Run these commands from the same shell with the LSE's complete
 isolated environment still exported:
 
 ```bash
@@ -73,7 +73,7 @@ nix run .#dearmachine-stack -- containers --format '{{.ID}}'
 ```
 
 `nix run .#dearmachine-container-lifecycle -- status` inspects the separately
-installed `dearmachine-stack.service`; it does not report an ephemeral QSE.
+installed `dearmachine-stack.service`; it does not report an ephemeral LSE.
 Rebuild the current isolated stack with `nix run .#dearmachine-stack --
 rebuild`, and confirm its selected image with `nix run .#dearmachine-stack --
 image`.

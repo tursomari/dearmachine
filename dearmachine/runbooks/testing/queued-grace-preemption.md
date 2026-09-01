@@ -1,4 +1,4 @@
-# Queued Grace Preemption QSE
+# Queued Grace Preemption LSE
 
 This document is a prompt for a capable local testing agent, not an executable
 test script. It proves that DearMachine dispatches every durable same-thread
@@ -6,14 +6,14 @@ email to one machtiani session while using one inbox poll interval as a grace
 period before stopping a turn that has a newer queued successor.
 
 Use [`temporary-instance.md`](./temporary-instance.md) for provisioning,
-isolation, evidence, and teardown. This QSE is a native diagnostic of intake,
+isolation, evidence, and teardown. This LSE is a native diagnostic of intake,
 dispatch, and graceful session continuation; it does not claim container or
 deployment coverage. Do not change product code, tests, documentation, or
 prompts in response to the exercise. Report observations and failures.
 
 ## Prompt to give the testing agent
 
-Conduct one isolated QSE named `queued-grace-preemption`. Use a freshly built
+Conduct one isolated LSE named `queued-grace-preemption`. Use a freshly built
 DearMachine Client and Agent Manager, an authorized live transport, one
 disposable receiver, a disposable project and runtime root, and one explicitly
 selected real backend. Never use or stop the normal DearMachine Client, its
@@ -70,7 +70,7 @@ inbox, database, entry point, Agent Manager home, or machtiani project store.
    Ordinarily they have one receiver thread ID. A provider may report different
    thread IDs only when the quoted footer is present and the client's durable
    alias/session state proves canonical continuity. If neither condition is
-   available, retain the provider evidence and classify the QSE `INCONCLUSIVE`;
+   available, retain the provider evidence and classify the LSE `INCONCLUSIVE`;
    do not substitute an unrelated fresh thread while claiming a same-session
    result.
 
@@ -78,7 +78,7 @@ inbox, database, entry point, Agent Manager home, or machtiani project store.
 
 1. Launch the temporary client with every path explicit. Confirm its PID,
    descendant processes, database, inbox, project, Agent Manager home, backend
-   configuration, and first poll all belong to the QSE. Confirm no second
+   configuration, and first poll all belong to the LSE. Confirm no second
    process polls the disposable receiver.
 2. Sample safe verbose logs, read-only SQLite state, recursive descendants, and
    `machtiani session list --json` about once per second during the expected

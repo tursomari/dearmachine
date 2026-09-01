@@ -4,7 +4,8 @@ This document contains the shared provisioning, isolation, observation, and
 teardown procedure for live Dear Machine, test protocols. It is a reference for
 a capable local testing agent, not a standalone test and not an executable
 script. The protocol using it supplies the messages, assertions, and pass
-criteria.
+criteria. Each isolated execution of one of these protocols is a
+Live Scenario Evaluation (LSE).
 
 Current protocols include:
 
@@ -334,7 +335,7 @@ All stack commands for this run must execute from the same shell while the
 complete isolated environment above remains exported. `status`, `health`,
 `logs`, `exec`, `containers`, `down`, and `secrets remove` otherwise select a
 different default state or Compose project. Do not use
-`dearmachine-container-lifecycle` for an ephemeral QSE; that helper operates
+`dearmachine-container-lifecycle` for an ephemeral LSE; that helper operates
 the separately installed systemd-user stack.
 
 Send protocol messages only after health succeeds. Success requires—not merely

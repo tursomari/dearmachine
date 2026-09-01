@@ -39,14 +39,14 @@ mode `0600`, with values appropriate to this run:
 
 ```bash
 SENDMUX_API_KEY_FILE=/absolute/path/to/sendmux-infrastructure-api-key
-SENDMUX_QSE_CORRESPONDENT=<exact-external-address>
+SENDMUX_LSE_CORRESPONDENT=<exact-external-address>
 ```
 
 Load it without echoing its contents:
 
 ```bash
 set -a
-. /absolute/path/to/sendmux-qse.env
+. /absolute/path/to/sendmux-lse.env
 set +a
 ```
 
@@ -68,15 +68,15 @@ existing mailbox.
 3. Run one creation and empty poll through the official APIs:
 
    ```bash
-   HOME="$QSE_ROOT/home" "$QSE_ROOT/dearmachine" up --create \
-     --email "$SENDMUX_QSE_CORRESPONDENT" \
+   HOME="$LSE_ROOT/home" "$LSE_ROOT/dearmachine" up --create \
+     --email "$SENDMUX_LSE_CORRESPONDENT" \
      --new-inbox \
      --transport sendmux \
      --once \
      --verbose \
-     --project "$QSE_ROOT/project" \
-     --config "$QSE_ROOT/dearmachine.toml" \
-     --agent-manager "$QSE_ROOT/agent-manager" \
+     --project "$LSE_ROOT/project" \
+     --config "$LSE_ROOT/dearmachine.toml" \
+     --agent-manager "$LSE_ROOT/agent-manager" \
      --agent-bin '<absolute-machtiani-path>' \
      --entry-point-repo ""
    ```
@@ -92,12 +92,12 @@ authentication failure is a credential blocker, not evidence about delivery.
    the exact current eligible snapshot with a run-specific reason:
 
    ```bash
-   HOME="$QSE_ROOT/home" "$QSE_ROOT/dearmachine" inbox skip \
-     --pair "$SENDMUX_QSE_CORRESPONDENT" \
+   HOME="$LSE_ROOT/home" "$LSE_ROOT/dearmachine" inbox skip \
+     --pair "$SENDMUX_LSE_CORRESPONDENT" \
      --current \
-     --project "$QSE_ROOT/project" \
+     --project "$LSE_ROOT/project" \
      --agent-bin '<absolute-machtiani-path>' \
-     --reason "sendmux-qse-<run-id>-baseline"
+     --reason "sendmux-lse-<run-id>-baseline"
    ```
 
    Record the skipped message IDs privately as the baseline. Do not reuse an

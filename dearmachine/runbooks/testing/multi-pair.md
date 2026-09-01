@@ -1,4 +1,4 @@
-# Multi-pair live QSE
+# Multi-pair LSE
 
 This is a prompt for a capable local testing agent. It exercises the real
 provider and backend without touching normal DearMachine state. Follow
@@ -114,7 +114,7 @@ remains serialized while a different pair can use the other worker slot.
 ## Teardown and report
 
 Stop the daemon gracefully and prove the PID lock is gone. Delete only the
-temporary provider inboxes created by this QSE, remove only the isolated
+temporary provider inboxes created by this LSE, remove only the isolated
 project store and runtime root, and verify normal service, registry, inboxes,
 and databases are unchanged.
 

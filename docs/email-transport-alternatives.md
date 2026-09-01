@@ -153,7 +153,7 @@ The adapter keeps these provider deltas explicit:
   over HTTPS without forwarding the mailbox credential and with the shared
   byte limit enforced.
 
-The remaining live proof is the isolated two-turn QSE. It requires a valid
+The remaining live proof is the isolated two-turn LSE. It requires a valid
 mailbox credential and a separately authorized external correspondent; neither
 participant address belongs in code, fixtures, documentation, or evidence.
 

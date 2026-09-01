@@ -31,6 +31,7 @@ grep -F 'Live integration protocols use the containerized production path' \
 grep -F 'without requiring systemd' "$temporary" >/dev/null
 grep -F 'nix run .#dearmachine-stack -- up' "$temporary" >/dev/null
 grep -F '### Native diagnostic exception' "$temporary" >/dev/null
+grep -F 'Live Scenario Evaluation (LSE)' "$temporary" >/dev/null
 grep -F 'operator_secrets=<mode-0600-operator-secrets-file>' "$temporary" >/dev/null
 # shellcheck disable=SC2016 # The contract requires the literal variable reference.
 grep -F 'literal reference `${DEEPSEEK_API_KEY}`' "$temporary" >/dev/null
@@ -85,6 +86,12 @@ if grep -F 'currently adopt an inbox that already exists' "$readme"; then
 fi
 if grep -F 'DEARMACHINE_LIVE_' "$readme"; then
   echo 'public README must not expose live-test mutation gates' >&2
+  exit 1
+fi
+if grep -Rin -- 'qse' \
+  "$PROJECT_ROOT/docs" \
+  "$PROJECT_ROOT/dearmachine/runbooks"; then
+  echo 'live-scenario documentation must use LSE terminology, not QSE' >&2
   exit 1
 fi
 if grep -F -- '--agent-manager /bin/agent-manager' "$PROJECT_ROOT/dearmachine/runbooks/testing/continuous-intake.md"; then

@@ -16,7 +16,7 @@ prompts, documentation, or tests in response to the exercise.
 
 ## Prompt to give the testing agent
 
-Conduct one isolated QSE/live evaluation named `stop-and-resume-preemption`.
+Conduct one isolated LSE named `stop-and-resume-preemption`.
 Use observed state transitions and bounded deadlines, not fixed long sleeps.
 The normal native DearMachine Client, its inbox, its database, its runtime
 directories, and its Machtiani stores must remain untouched throughout.
