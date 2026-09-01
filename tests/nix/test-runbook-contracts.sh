@@ -72,6 +72,17 @@ grep -F '### 3. Choose an email transport and start' "$readme" >/dev/null
 for transport in agentmail openmail sendmux; do
   grep -F -- "--transport $transport" "$readme" >/dev/null
 done
+# shellcheck disable=SC2016 # These README contracts require literal backticks.
+for contract in \
+  '| AgentMail | `AGENTMAIL_API_KEY_FILE` | `--new-inbox --transport agentmail` |' \
+  '| OpenMail | `OPENMAIL_API_KEY_FILE` | `--new-inbox --transport openmail` |' \
+  '| Sendmux | `SENDMUX_API_KEY_FILE` | `--new-inbox --transport sendmux` |'; do
+  grep -F -- "$contract" "$readme" >/dev/null
+done
+if grep -F 'currently adopt an inbox that already exists' "$readme"; then
+  echo 'public README must present new-inbox provisioning for every transport' >&2
+  exit 1
+fi
 if grep -F 'DEARMACHINE_LIVE_' "$readme"; then
   echo 'public README must not expose live-test mutation gates' >&2
   exit 1

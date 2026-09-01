@@ -41,7 +41,8 @@ its own credential. There is no DearMachine-specific allow-list setting: pair
 creation registers the exact `--email` address locally and asks the selected
 adapter to apply any provider-side correspondent policy it supports.
 
-AgentMail can provision a new inbox as part of pair creation:
+Every adapter can provision a new inbox as part of pair creation. This example
+uses AgentMail:
 
 ```bash
 export AGENTMAIL_API_KEY_FILE="$HOME/.config/dearmachine/agentmail-api-key"
@@ -53,26 +54,20 @@ dearmachine up --create \
   --magnifica-humanitas
 ```
 
-OpenMail and Sendmux currently adopt an inbox that already exists at the
-provider. The rest of the command is the same:
+OpenMail and Sendmux are drop-in replacements. Change only the credential and
+transport value:
 
-```bash
-# OpenMail
-export OPENMAIL_API_KEY_FILE="$HOME/.config/dearmachine/openmail-api-key"
-dearmachine up --create \
-  --email you@example.test \
-  --inbox '<openmail-inbox-id-or-address>' \
-  --transport openmail \
-  --magnifica-humanitas
+| Adapter | Credential file variable | New-inbox selection |
+| --- | --- | --- |
+| AgentMail | `AGENTMAIL_API_KEY_FILE` | `--new-inbox --transport agentmail` |
+| OpenMail | `OPENMAIL_API_KEY_FILE` | `--new-inbox --transport openmail` |
+| Sendmux | `SENDMUX_API_KEY_FILE` | `--new-inbox --transport sendmux` |
 
-# Sendmux
-export SENDMUX_MAILBOX_API_KEY_FILE="$HOME/.config/dearmachine/sendmux-mailbox-api-key"
-dearmachine up --create \
-  --email you@example.test \
-  --inbox '<sendmux-mailbox-id-or-address>' \
-  --transport sendmux \
-  --magnifica-humanitas
-```
+To share or adopt an existing inbox with any adapter, replace `--new-inbox`
+with `--inbox '<exact-inbox-id-or-address>'`. Sendmux uses its Infrastructure
+key for creation and pair policy, then stores the returned mailbox-scoped
+credential privately for receiving and replying. A separate Sending key is not
+required.
 
 Provider-specific credential and inbox details are documented in the
 [transport reference](docs/email-transport-alternatives.md).
@@ -105,7 +100,7 @@ dearmachine up --create \
 ```
 
 The inbox selector is shown by `dearmachine status`. Sharing is never inferred;
-use `--new-inbox --transport agentmail` instead when the pair should have its
+use `--new-inbox --transport <transport>` instead when the pair should have its
 own inbox. Pair email addresses and pair UUIDs are also the selectors accepted
 by `dearmachine up --pair` and `dearmachine inbox ... --pair`.
 
