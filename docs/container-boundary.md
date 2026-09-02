@@ -36,7 +36,7 @@ The `dearmachine` Compose service has these host mounts:
 | `DEARMACHINE_CLIENT_AGENT_MANAGER_DIR` | `/home/dearmachine/.dearmachine/agent-manager` | read/write | Canonical Agent Manager tickets and worker state, preserved across container replacement and host rollback. |
 | `DEARMACHINE_MACHTIANI_DIR` | `/home/dearmachine/.machtiani` | read/write | machtiani session/project stores. |
 | `DEARMACHINE_PROJECT_DIR` | `/workspace` | read/write | The single coding repository in which machtiani and backend workers operate. |
-| `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `machtiani`, `codex`, `forge`, and custom-backend executables or symlinks. Agent Manager is packaged in the image. |
+| `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `machtiani`, `codex`, `forge`, `omp`, and custom-backend executables or symlinks. Agent Manager is packaged in the image. |
 | `/nix/store` | `/nix/store` | read-only | Resolves Nix-store interpreters, libraries, and targets used by mounted Nix-installed tools. |
 
 The explicit client directories default beneath the private client home, while

@@ -190,18 +190,19 @@ func TestSetupAgentsConfirmsDetectedDefaultOrder(t *testing.T) {
 		&output,
 		path,
 		nil,
-		fakeBackendLookup("forge", "codex", "pi"),
+		fakeBackendLookup("forge", "codex", "omp", "pi"),
 	)
 	if err != nil {
 		t.Fatalf("SetupAgents: %v", err)
 	}
-	want := []string{"codex", "forge"}
+	want := []string{"codex", "forge", "omp"}
 	if !reflect.DeepEqual(config.Backends, want) {
 		t.Fatalf("configured backends = %v, want %v", config.Backends, want)
 	}
 	for _, text := range []string{
 		"found   forge",
-		"Default priority order: codex, forge",
+		"found   omp",
+		"Default priority order: codex, forge, omp",
 		"Saved approved backend order",
 	} {
 		if !strings.Contains(output.String(), text) {

@@ -31,7 +31,9 @@ dearmachine setup-agents --backend codex
 ```
 
 The backend command itself—`codex` in this example—is discovered from the host
-`PATH` and uses its normal host credentials.
+`PATH` and uses its normal host credentials. Codex, Forge, and OMP are built
+in; replace `codex` with `forge` or `omp`, or repeat `--backend` to set a
+fallback order.
 
 ### 3. Choose an email transport and start
 

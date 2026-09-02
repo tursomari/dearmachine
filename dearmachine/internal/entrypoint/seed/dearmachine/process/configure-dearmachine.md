@@ -15,12 +15,12 @@ use the resulting configuration.
 ## Steps
 
 1. Read `~/.dearmachine/config/dearmachine.toml`.
-2. Check the desired executables, such as `codex` and `forge`, on `PATH`.
+2. Check the desired executables, such as `codex`, `forge`, and `omp`, on `PATH`.
 3. Set `backends` in the intended priority order:
 
    ```toml
    version = 1
-   backends = ["codex", "forge"]
+   backends = ["codex", "forge", "omp"]
    ```
 
 4. Stop the running DearMachine Client gracefully.

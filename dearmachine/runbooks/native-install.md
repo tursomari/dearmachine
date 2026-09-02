@@ -14,7 +14,7 @@ will launch DearMachine:
 
 ```bash
 command -v machtiani
-command -v codex # or another configured backend
+command -v codex # or forge or omp
 ```
 
 The `--agent-bin` flag defaults to `machtiani`; pass an explicit path when the
@@ -68,6 +68,10 @@ DearMachine resolves `agent-manager` from the installed package. Agent Manager
 reads this configuration and resolves each selected backend from the inherited
 `PATH`. Changing backend installation or authentication does not require
 rebuilding DearMachine.
+
+The built-in OMP adapter uses OMP's noninteractive text mode for each managed
+ticket. Configure its provider, model, reasoning, and credentials with OMP's
+normal configuration; DearMachine does not duplicate or override them.
 
 ## Provide the AgentMail credential
 

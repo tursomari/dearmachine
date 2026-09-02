@@ -18,11 +18,12 @@ inbox and fresh runtime state.
 ## Prompt to give the testing agent
 
 You are conducting a live, human-guided integration test of the DearMachine Client's
-ordered backend selection. Run the three tests below in order:
+ordered backend selection. Run the four tests below in order:
 
 1. Forge as the only approved backend.
 2. Codex as the only approved backend.
-3. Forge first and Codex second, with Forge deliberately logged out, so the
+3. OMP as the only approved backend.
+4. Forge first and Codex second, with Forge deliberately logged out, so the
    live task must fall back to Codex.
 
 Treat each test as an independent end-to-end exercise. Do not change product
@@ -38,7 +39,8 @@ Before acting, identify or ask the tester for:
 - the AgentMail inbox ID and API credential location;
 - an email account authorized to send to that inbox;
 - the Forge provider used on this machine; and
-- permission to send the three live test emails and any strictly necessary
+- a working OMP provider/model configuration and its credential location; and
+- permission to send the four live test emails and any strictly necessary
   same-thread continuation.
 
 Never print or copy credential contents into the transcript, logs, requests, or
@@ -61,7 +63,7 @@ Before the first test:
 4. Check whether another DearMachine Client is polling the target inbox. Do not run
    competing pollers. If one is active and you cannot safely conduct the test
    through it, stop and ask the tester how to proceed.
-5. Confirm that `forge`, `codex`, and `machtiani` are present. Do not pre-run the
+5. Confirm that `forge`, `codex`, `omp`, and `machtiani` are present. Do not pre-run the
    functional backend probes: each managed email trajectory must perform and
    record the health check for the backend under test. A binary merely being
    present on `PATH` is not evidence that its test passed.
@@ -132,14 +134,32 @@ trajectory and closed-ticket metadata must prove which backend was selected.
    the original email thread.
 6. Stop the isolated DearMachine Client cleanly.
 
-### Test 3: Forge-to-Codex fallback
+### Test 3: OMP only
+
+1. Write an isolated DearMachine Client configuration with:
+
+   ```toml
+   version = 1
+   backends = ["omp"]
+   ```
+
+2. Start the isolated DearMachine Client again with fresh runtime state and
+   OMP's normal private configuration available to the backend process.
+3. Send a different meaningful read-only task in a new email thread.
+4. Observe the entire lifecycle through the email reply.
+5. Pass only if OMP's functional health check succeeds, the ticket worker is
+   `omp`, the ticket closes from OMP's native text reply, and a substantive
+   reply arrives in the original email thread.
+6. Stop the isolated DearMachine Client cleanly.
+
+### Test 4: Forge-to-Codex fallback
 
 This test has a mandatory human gate. Do not log the tester out yourself.
 
-Before configuring or starting Test 3, stop and send this request to the tester,
+Before configuring or starting Test 4, stop and send this request to the tester,
 substituting the actual provider name:
 
-> Test 3 is ready. Please make Forge unavailable by running
+> Test 4 is ready. Please make Forge unavailable by running
 > `forge provider logout <provider>`, then tell me when it is complete. I will
 > wait for your confirmation before continuing.
 
@@ -165,7 +185,7 @@ Wait for explicit confirmation. Then:
    - a substantive reply arrives in the original email thread.
 6. Stop the isolated DearMachine Client cleanly.
 
-Whether Test 3 passes, fails, or is interrupted after logout, remind the tester
+Whether Test 4 passes, fails, or is interrupted after logout, remind the tester
 to restore Forge authentication. Once the test has stopped, send:
 
 > The fallback exercise has stopped. Please restore Forge authentication by
@@ -177,7 +197,7 @@ another email exercise.
 
 ### Final report and cleanup
 
-After all three tests:
+After all four tests:
 
 1. Ensure no isolated DearMachine Client process remains running.
 2. Confirm no health-check probe file remains in the project.
@@ -187,7 +207,7 @@ After all three tests:
 5. Report each test separately as pass, fail, or inconclusive. Include the
    configured order, observed health-check order and outcomes, selected worker,
    ticket result, email-reply result, and supporting session/ticket identifiers.
-6. Clearly distinguish expected fallback from a silent substitution. In Test 3,
+6. Clearly distinguish expected fallback from a silent substitution. In Test 4,
    Codex use is a pass only when Forge was visibly attempted first and
    failed its functional probe.
 7. Mention whether the tester confirmed that Forge login was restored.

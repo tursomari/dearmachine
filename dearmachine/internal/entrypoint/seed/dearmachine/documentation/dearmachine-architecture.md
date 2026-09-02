@@ -26,7 +26,7 @@ The normal configuration is `~/.dearmachine/config/dearmachine.toml`:
 
 ```toml
 version = 1
-backends = ["codex", "forge"]
+backends = ["codex", "forge", "omp"]
 ```
 
 Backend order is priority order. At least one supported backend is required.

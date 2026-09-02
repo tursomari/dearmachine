@@ -138,7 +138,7 @@ For the equivalent Sendmux inspect and two-turn continuation check, use
 provider credentials and real participant addresses in mode-`0600` operator
 files and never requires a second Sendmux mailbox.
 
-For a live test of Forge, Codex, and ordered fallback through the complete
+For a live test of Forge, Codex, OMP, and ordered fallback through the complete
 email lifecycle, give
 [`runbooks/testing/live-backends.md`](./runbooks/testing/live-backends.md) to a capable local
 agent. It is a human-guided agent prompt, not an executable test script, and it

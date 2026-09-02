@@ -41,7 +41,8 @@ than one backend and set their priority order:
 cd dearmachine
 go run ./cmd/dearmachine setup-agents \
   --backend codex \
-  --backend forge
+  --backend forge \
+  --backend omp
 ```
 
 The setup command verifies that each requested backend is currently on `PATH`,
@@ -49,18 +50,20 @@ asks for confirmation, and writes:
 
 ```toml
 version = 1
-backends = ["codex","forge"]
+backends = ["codex","forge","omp"]
 ```
 
 `backends` is an approved list in priority order. DearMachine Client validates and
 loads the complete list at startup, then passes that immutable snapshot to each
 managed machtiani run. Restart DearMachine Client after changing the configuration.
-Agent Manager includes `codex`, `codex-yolo`, and `forge`. The ordinary
+Agent Manager includes `codex`, `codex-yolo`, `forge`, and `omp`. The ordinary
 `codex` adapter uses Codex's `workspace-write` sandbox. `codex-yolo` is an
 explicit opt-in adapter that passes
 `--dangerously-bypass-approvals-and-sandbox`, giving an email-dispatched
 worker every host permission available to the DearMachine user. Do not select
-it unless that unrestricted trust boundary is intentional. A version-1 config using
+it unless that unrestricted trust boundary is intentional. The OMP adapter
+uses OMP's noninteractive text mode while leaving provider, model, reasoning,
+skills, and rules in the user's normal OMP configuration. A version-1 config using
 the former `forgecode` identifier is accepted and normalized to `forge` in
 memory; rerun `setup-agents` to rewrite it canonically. A config naming any
 other unsupported backend is rejected with instructions to rerun setup.
@@ -144,10 +147,14 @@ approved order in `DEARMACHINE_BACKENDS` plus the absolute `AGENT_MANAGER_PATH`.
 Pass `--model your-model-alias` to override the project's configured default
 model; when omitted, no model flag is forwarded.
 
-For each inbound email, DearMachine Client passes the sender/thread metadata and the
-newly authored text reported by the selected transport. Follow-ups resume the mapped
-`machtiani` session with `--resume`; that persisted session owns prior
-conversation context, so DearMachine Client does not replay the email thread.
+For each inbound email, DearMachine Client passes the sender/thread metadata and
+only the newly authored text. It uses the selected transport's extracted reply
+when available and conservatively removes recognized Gmail-style attributions,
+Outlook header blocks, and original-message separators when a transport returns
+the whole message. It does not discard ordinary block quotes or forwarded mail.
+Follow-ups resume the mapped `machtiani` session with `--resume`; that persisted
+session owns prior conversation context, so DearMachine Client does not replay
+the email thread.
 
 Every outbound answer and AskUser response ends with a stable, opaque Dear
 Machine conversation reference. The reference maps to local SQLite state and
