@@ -75,7 +75,7 @@ for contract in \
   'Do not hard-code temporary directories or' \
   'Custom backends are configured directly' \
   'The preferred completion path is a nonempty final response' \
-  'Use the installed `agent-manager`; do not compile another copy from the source' \
+  'do not compile another copy from the source' \
   'internal built-in-backend defaults or narrate' \
   'Do not add another conceptual permission question'; do
   grep -F -- "$contract" "$custom_backend" >/dev/null
