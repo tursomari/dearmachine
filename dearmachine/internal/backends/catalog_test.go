@@ -8,20 +8,25 @@ import (
 
 func TestCatalogAndEnvironmentRoundTrip(t *testing.T) {
 	registered := All()
-	if len(registered) != 3 || registered[0].ID != "codex" ||
-		registered[1].ID != "codex-yolo" || registered[2].ID != "forge" {
+	if len(registered) != 4 || registered[0].ID != "codex" ||
+		registered[1].ID != "codex-yolo" || registered[2].ID != "forge" ||
+		registered[3].ID != "omp" {
 		t.Fatalf("catalog = %+v", registered)
 	}
 	yolo, ok := Lookup("codex-yolo")
 	if !ok || yolo.Executable != "codex" || !yolo.ExplicitOptIn {
 		t.Fatalf("codex-yolo backend = %+v, found = %v", yolo, ok)
 	}
-	encoded, err := Encode([]string{"codex-yolo", "forge", "codex"})
-	if err != nil || encoded != `["codex-yolo","forge","codex"]` {
+	omp, ok := Lookup("omp")
+	if !ok || omp.Executable != "omp" || omp.ExplicitOptIn {
+		t.Fatalf("omp backend = %+v, found = %v", omp, ok)
+	}
+	encoded, err := Encode([]string{"codex-yolo", "forge", "omp", "codex"})
+	if err != nil || encoded != `["codex-yolo","forge","omp","codex"]` {
 		t.Fatalf("Encode = %q, %v", encoded, err)
 	}
 	decoded, err := Decode(encoded)
-	if err != nil || !reflect.DeepEqual(decoded, []string{"codex-yolo", "forge", "codex"}) {
+	if err != nil || !reflect.DeepEqual(decoded, []string{"codex-yolo", "forge", "omp", "codex"}) {
 		t.Fatalf("Decode = %v, %v", decoded, err)
 	}
 }

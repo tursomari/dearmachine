@@ -60,6 +60,9 @@ type Adapter interface {
 type Launch struct {
 	Command       *exec.Cmd
 	NativeSession string
+	// PromptArgument asks Agent Manager to append the complete request as one
+	// positional argument instead of writing it to standard input.
+	PromptArgument bool
 }
 
 type Observation struct {
@@ -176,6 +179,33 @@ func (ForgeAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) (Observation
 	return Observation{Reply: string(captured.content)}, err
 }
 
+// OMPAdapter runs OMP in its documented noninteractive text mode. Provider,
+// model, and reasoning choices remain in OMP's own configuration.
+type OMPAdapter struct{}
+
+func (OMPAdapter) Name() string       { return "omp" }
+func (OMPAdapter) Executable() string { return "omp" }
+func (OMPAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
+	command := exec.CommandContext(
+		ctx,
+		"omp",
+		"--print",
+		"--mode",
+		"text",
+		"--no-session",
+		"--no-pty",
+		"--auto-approve",
+	)
+	command.Dir = cwd
+	return Launch{Command: command, PromptArgument: true}, nil
+}
+
+func (OMPAdapter) ConsumeStdout(stdout io.Reader, _ func(string)) (Observation, error) {
+	captured := &tailWriter{limit: 64 * 1024}
+	_, err := io.Copy(captured, stdout)
+	return Observation{Reply: string(captured.content)}, err
+}
+
 type tailWriter struct {
 	limit   int
 	content []byte
@@ -245,6 +275,7 @@ func New(root string) *Manager {
 			"codex":      CodexAdapter{},
 			"codex-yolo": CodexYoloAdapter{},
 			"forge":      ForgeAdapter{},
+			"omp":        OMPAdapter{},
 		},
 		ExecutablePath: os.Executable,
 		Now:            time.Now,
@@ -450,7 +481,7 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 		err := errors.New("adapter returned a nil command")
 		return errors.Join(err, m.fail(meta, "prepare_failed", nil, nil))
 	}
-	command.Stdin = strings.NewReader(string(request))
+	configureLaunchInput(&launch, request)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return errors.Join(err, m.fail(meta, "stdout_pipe_failed", nil, nil))
@@ -537,6 +568,14 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	}
 	meta.CompletionSource = CompletionSourceNativeReply
 	return m.finish(meta, StatusClosed)
+}
+
+func configureLaunchInput(launch *Launch, request []byte) {
+	if launch.PromptArgument {
+		launch.Command.Args = append(launch.Command.Args, string(request))
+		return
+	}
+	launch.Command.Stdin = strings.NewReader(string(request))
 }
 
 func secureCloseArtifact(path string) error {
@@ -698,7 +737,7 @@ func (m *Manager) BackendHealth(ctx context.Context, backend, cwd string) (Healt
 		return result, err
 	}
 	command := launch.Command
-	command.Stdin = strings.NewReader(result.Probe)
+	configureLaunchInput(&launch, []byte(result.Probe))
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		result.Reason = "stdout-pipe"

@@ -159,6 +159,23 @@ func TestForgePublishesNativeFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestOMPPublishesNativeFinalAnswer(t *testing.T) {
+	manager := testOMPManager(t, `printf '%s' 'TASK COMPLETED: OMP final answer'`)
+	id, err := manager.Send("omp", writeRequest(t), t.TempDir())
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForStatus(t, manager, id, StatusClosed)
+	meta := readCompletionMeta(t, manager, id)
+	if meta.CompletionSource != CompletionSourceNativeReply {
+		t.Fatalf("completion source = %q", meta.CompletionSource)
+	}
+	content, err := os.ReadFile(filepath.Join(manager.TicketDir(id), "ticket-close.md"))
+	if err != nil || string(content) != "TASK COMPLETED: OMP final answer" {
+		t.Fatalf("close artifact = %q, %v", content, err)
+	}
+}
+
 func TestPublishedReplyIsAtomicPrivateAndSizeBounded(t *testing.T) {
 	ticketDir := t.TempDir()
 	if err := publishReply(ticketDir, strings.Repeat("x", maxTicketCloseBytes+1024)); err != nil {
@@ -495,6 +512,25 @@ func testCodexYoloManager(t *testing.T, script string) *Manager {
 	manager := New(filepath.Join(t.TempDir(), "agent-manager"))
 	manager.Adapters = map[string]Adapter{"codex-yolo": CodexYoloAdapter{}}
 	manager.ApprovedBackends = []string{"codex-yolo"}
+	manager.LaunchSupervisor = func(id string) error {
+		go func() { _ = manager.Supervise(context.Background(), id) }()
+		return nil
+	}
+	return manager
+}
+
+func testOMPManager(t *testing.T, script string) *Manager {
+	t.Helper()
+	bin := t.TempDir()
+	executable := filepath.Join(bin, "omp")
+	content := []byte("#!/bin/sh\nset -eu\n" + script + "\n")
+	if err := os.WriteFile(executable, content, 0o700); err != nil {
+		t.Fatalf("write fake OMP: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	manager := New(filepath.Join(t.TempDir(), "agent-manager"))
+	manager.Adapters = map[string]Adapter{"omp": OMPAdapter{}}
+	manager.ApprovedBackends = []string{"omp"}
 	manager.LaunchSupervisor = func(id string) error {
 		go func() { _ = manager.Supervise(context.Background(), id) }()
 		return nil

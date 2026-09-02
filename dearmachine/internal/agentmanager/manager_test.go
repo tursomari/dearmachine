@@ -114,11 +114,30 @@ func TestForgeAdapterInvokesForgeDirectly(t *testing.T) {
 	}
 }
 
-func TestNewRegistersForgeAdapter(t *testing.T) {
+func TestOMPAdapterInvokesConfiguredOMPNoninteractively(t *testing.T) {
+	launch, err := (OMPAdapter{}).Prepare(context.Background(), "/project", "/tickets/ticket-1")
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if launch.Command.Dir != "/project" {
+		t.Fatalf("command directory = %q", launch.Command.Dir)
+	}
+	want := []string{"omp", "--print", "--mode", "text", "--no-session", "--no-pty", "--auto-approve"}
+	if !slices.Equal(launch.Command.Args, want) {
+		t.Fatalf("command args = %v, want %v", launch.Command.Args, want)
+	}
+	if !launch.PromptArgument {
+		t.Fatal("OMP launch does not request its prompt as a positional argument")
+	}
+}
+
+func TestNewRegistersBuiltInPlainTextAdapters(t *testing.T) {
 	manager := New(t.TempDir())
-	adapter, ok := manager.Adapters["forge"]
-	if !ok || adapter.Name() != "forge" || adapter.Executable() != "forge" {
-		t.Fatalf("forge adapter = %#v, found = %v", adapter, ok)
+	for _, id := range []string{"forge", "omp"} {
+		adapter, ok := manager.Adapters[id]
+		if !ok || adapter.Name() != id || adapter.Executable() != id {
+			t.Fatalf("%s adapter = %#v, found = %v", id, adapter, ok)
+		}
 	}
 }
 
@@ -386,26 +405,35 @@ func TestForgeTicketCancel(t *testing.T) {
 }
 
 func TestBackendHealthFileProbe(t *testing.T) {
-	for _, backend := range []string{"codex", "codex-yolo", "forge"} {
+	for _, backend := range []string{"codex", "codex-yolo", "forge", "omp"} {
 		t.Run(backend, func(t *testing.T) {
 			bin := t.TempDir()
 			executableName := map[string]string{
-				"codex": "codex", "codex-yolo": "codex", "forge": "forge",
+				"codex": "codex", "codex-yolo": "codex", "forge": "forge", "omp": "omp",
 			}[backend]
 			executable := filepath.Join(bin, executableName)
 			script := `#!/bin/sh
 set -eu
-prompt=$(cat)
+`
+			if backend == "omp" {
+				script += `prompt=
+for prompt in "$@"; do :; done
+`
+			} else {
+				script += `prompt=$(cat)
+`
+			}
+			script += `
 path=${prompt#*exactly }
 path=${path%% containing exactly*}
 printf '%s\n' 'Dear Machine, backend health probe.' > "$path"
 `
-			if backend != "forge" {
+			if backend == "codex" || backend == "codex-yolo" {
 				script += `printf '%s\n' '{"type":"thread.started","thread_id":"health-session"}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"probe complete"}}'
 `
 			} else {
-				script += `printf '%s\n' 'forge probe complete'
+				script += `printf '%s\n' '` + backend + ` probe complete'
 `
 			}
 			if err := os.WriteFile(executable, []byte(script), 0o700); err != nil {

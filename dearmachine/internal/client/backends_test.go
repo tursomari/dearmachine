@@ -16,10 +16,10 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		ids = append(ids, backend.ID)
 		executables = append(executables, backend.Executable)
 	}
-	if !reflect.DeepEqual(ids, []string{"codex", "codex-yolo", "forge"}) {
+	if !reflect.DeepEqual(ids, []string{"codex", "codex-yolo", "forge", "omp"}) {
 		t.Fatalf("backend IDs = %v", ids)
 	}
-	if !reflect.DeepEqual(executables, []string{"codex", "codex", "forge"}) {
+	if !reflect.DeepEqual(executables, []string{"codex", "codex", "forge", "omp"}) {
 		t.Fatalf("backend executables = %v", executables)
 	}
 
@@ -29,8 +29,8 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		}
 		return "", os.ErrNotExist
 	})
-	if len(detections) != 3 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
-		!detections[1].Found || detections[1].Path != "/test/bin/codex" || detections[2].Found {
+	if len(detections) != 4 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
+		!detections[1].Found || detections[1].Path != "/test/bin/codex" || detections[2].Found || detections[3].Found {
 		t.Fatalf("detections = %+v", detections)
 	}
 }
@@ -323,7 +323,7 @@ func TestSetupAgentsOffersInstallHelpWhenNoneDetected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no supported coding agents") {
 		t.Fatalf("SetupAgents no agents error = %v", err)
 	}
-	for _, want := range []string{"Install help:", "Forge:", "Codex CLI:"} {
+	for _, want := range []string{"Install help:", "Forge:", "Codex CLI:", "OMP:"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("install help missing %q:\n%s", want, output.String())
 		}

@@ -38,6 +38,12 @@ var catalog = []Backend{
 		Executable:  "forge",
 		InstallHelp: "Install Forge, then ensure forge is on PATH.",
 	},
+	{
+		ID:          "omp",
+		DisplayName: "OMP",
+		Executable:  "omp",
+		InstallHelp: "Install OMP, then ensure omp is on PATH.",
+	},
 }
 
 func All() []Backend {
