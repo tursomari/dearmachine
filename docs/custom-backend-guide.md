@@ -1,239 +1,173 @@
-# Register Your Own Backend Agent in the DearMachine Client
+# Connect a custom backend agent
 
-The DearMachine Client supports custom backend agents—you can bring any program that speaks stdin/stdout and have it handle work tickets just like the built-in `codex`, explicit-opt-in `codex-yolo`, and `forge` backends. You don't need to edit Go source or recompile anything; you just write a short TOML snippet and approve the backend's ID. Here's how, step by step.
+Dear Machine can use an agent that is not in its built-in catalogue when the
+agent has a predictable, noninteractive command-line mode. The connection is
+described in `~/.dearmachine/config/custom-backends.toml`; no Dear Machine
+source change or local Agent Manager build is required.
 
-## 1. Create the custom-backends configuration file
+## Check the agent before configuring it
 
-Create or edit `~/.dearmachine/config/custom-backends.toml`.  
-Each backend gets its own `[id]` section.  Here's the minimal entry for a backend called `"deepcode"`:
+Start with the agent's installed executable and official help or documentation.
+Identify the exact invocation that:
 
-```toml
-[deepcode]
-executable = "deepcode-backend"
-output_format = "plain"
-```
+- runs without a terminal interface or interactive questions;
+- accepts the delegated request on standard input;
+- exits after completing one request; and
+- writes either plain final text or Codex-style JSON Lines to standard output.
 
-**What the fields mean:**
+Run a small, time-bounded, non-mutating prompt in a disposable directory before
+writing configuration. Do not guess automation flags or launch the interactive
+interface to discover them. Authentication should use the agent's normal
+private credential or login mechanism; never put a secret in a command line,
+tracked file, or installation transcript.
 
-| Field | Required? | Description |
-|-------|-----------|-------------|
-| `executable` | yes | Absolute path (or a name on `$PATH`) to your backend program. |
-| `output_format` | yes | `"json-stream"` (for tools that emit JSON Lines, like Codex) or `"plain"` (for tools that write plain text). |
-| `name` | no | A human-friendly display name; defaults to the section ID. |
-| `arguments` | no | Extra command-line arguments. The special token `$WRITABLE_DIR` is replaced with the actual sandbox directory at runtime. |
-| `environment` | no | A table of extra environment variables, e.g., `{ API_KEY = "sk-..." }`. |
-| `install_help` | no | Shown when the executable is missing; a short note about how to install it. |
+If the agent needs a wrapper, give the wrapper a stable path and make it part of
+the maintained local integration. Do not hard-code temporary directories or
+Nix store hashes. A wrapper may translate input or output, but it does not need
+to write Dear Machine's completion file when it can return a nonempty native
+final answer.
 
-For deepcode, the full entry might look like:
+## Register the backend
 
-```toml
-[deepcode]
-name = "Deepcode (Deepseek v4 Flash)"
-executable = "deepcode-backend"
-output_format = "plain"
-install_help = "See the custom backend runbook for details."
-```
-
-## 2. What your backend must do (the contract)
-
-Your executable receives the work request on **stdin**.  The very last line of stdin is always a close‑path in the form:
-
-```
-CLOSE <absolute-path>
-```
-
-Everything before that line is the work request (ticket description).  
-Your program **must** write its reply to that exact file. The DearMachine Client then picks it up automatically.
-
-That's the whole interface—if your program can read a request, decide what to do, and write a response to a file whose path it learns from stdin, it can be a DearMachine Client backend.
-
-## 3. Approve the backend
-
-The DearMachine Client only dispatches work to backends you explicitly list.
-Edit `~/.dearmachine/config/dearmachine.toml` and add `"deepcode"` to the `backends` line:
-
-```
-backends = ["codex", "forge", "deepcode"]
-```
-
-(If the file doesn't exist, create it with that single line.)
-
-Or, for a quick test without touching the file, use an environment variable:
-
-```bash
-export DEARMACHINE_BACKENDS='["codex", "forge", "deepcode"]'
-```
-
-The order sets the **priority**—when no specific backend is requested, the DearMachine Client tries the first available one.
-
-## 4. Verify everything is healthy
-
-From the `dearmachine` directory, build the `agent-manager` and run a health probe:
-
-```bash
-cd /path/to/DearMachine/dearmachine
-go build -o agent-manager ./cmd/agent-manager
-
-DEARMACHINE_BACKENDS='["deepcode"]' ./agent-manager backend health deepcode
-```
-
-If the executable is found and responds correctly to the probe, you'll see `result=ok`.  
-If the binary is missing or the probe fails, you'll get `result=fail` with details — check the `install_help` hint if you defined one.
-
-## 5. Dispatch a test ticket
-
-Create a tiny work‑request file and send it as a ticket:
-
-```bash
-mkdir -p /tmp/test-project
-echo "Say hello in French, just one short phrase." > /tmp/test-request.md
-
-DEARMACHINE_BACKENDS='["deepcode"]' \
-  ./agent-manager ticket send \
-    --backend deepcode \
-    --file /tmp/test-request.md \
-    --cwd /tmp/test-project
-```
-
-The command prints a ticket ID (e.g., `20260811T201221-ca06bb82`).  
-Once the ticket status moves to `closed`, view the result:
-
-```bash
-./agent-manager ticket view <ticket-id>
-```
-
-The reply (e.g., `"Bonjour !"`) appears in the ticket output.  Your custom backend is live.
-
-## A quick note on output format
-
-Picking the right `output_format` is usually the only guesswork:
-
-- **`"plain"`** — Use if your backend prints the reply as normal text (or writes the reply file and prints very little to stdout). The DearMachine Client captures up to the last 64 KiB of stdout as the conversation reply.
-- **`"json-stream"`** — Use if your backend prints one JSON object per line and embeds the reply text in an `agent_message` field (the Codex CLI convention).
-
-**Tip:** If you're unsure, start with `"plain"` and send a test ticket.  If the captured reply is garbled or empty, switch to `"json-stream"`.
-
-## Is My Executable Compatible? (TUI vs Headless Backends)
-
-DearMachine Client backends must be **headless, non-interactive** programs that read from stdin, do their work, write a reply file, and exit. Terminal TUI (Text User Interface) applications—like many modern AI coding tools in their default mode—are **not compatible** as backends because they expect a pseudo-TTY for interactive input and produce ANSI-escape-heavy output.
-
-### Quick Pre‑Flight Test
-
-Before registering a backend, run this one‑liner to check compatibility:
-
-```bash
-echo "Say hello in French, just one short phrase." | timeout 10 /path/to/your-executable --headless-flag 2>&1
-```
-
-**Compatible if:**
-- The command completes within seconds (not minutes).
-- Produces clean, readable text output (plain text or JSON).
-- Does **not** print ANSI escape codes, spinner animations, or interactive prompts.
-
-**Incompatible if you see:**
-- The command hangs until timeout (waiting for TTY input).
-- Escape sequences like `\x1b[`, `ESC[`, or terminal control codes.
-- Interactive prompts like `? Select an option`.
-
-### Finding Headless/Automation Flags
-
-Many TUI tools offer a headless or non‑interactive mode. Check the tool's help:
-
-```bash
-/path/to/your-executable --help | grep -i -E 'auto|headless|non.interactive|batch|run|--model'
-```
-
-Examples:
-- **OpenCode**: requires `run --auto` (headless mode). Without `--auto`, opencode hangs waiting for TTY input.
-- **Codex CLI**: headless by default; accepts stdin and produces JSON Lines output.
-- **DeepCode CLI** (`@vegamo/deepcode-cli`): terminal TUI only; requires a wrapper script to work as a backend.
-
-### Writing a Wrapper Script
-
-If your tool is TUI‑only but can be scripted via an API, write a wrapper that:
-1. Reads the work request from stdin.
-2. Extracts the `Close-Path` line (format: `# Close-Path: /absolute/path`).
-3. Calls the tool's underlying API (or SDK) programmatically.
-4. Writes the reply to the close‑path file.
-
-See the deepcode‑backend example in the walkthrough above for a working pattern.
-
-## Beware of MACHTIANI_SESSION_ID when testing
-
-If you are testing a temporary dearmachine from within an existing
-machtiani session, the inherited `MACHTIANI_SESSION_ID` environment
-variable will cause the temporary client to collide with the parent
-session lock. The client fails with an error matching
-`session already active for .../session.lock`. Either unset the variable
-(`unset MACHTIANI_SESSION_ID`) or launch with a clean environment
-(`env -i PATH="$PATH" HOME="$HOME" dearmachine ...`).
-
-## Where to find more help
-
-- [DearMachine Client and Agent Manager](../dearmachine/README.md)
-- [The versioned DeepCode wrapper example](../scripts/deepcode-wrapper.sh)
-
-## DeepCode CLI example (using the `deepcode` CLI directly)
-
-DeepCode is a terminal TUI tool by default, but supports headless operation
-via `-x`/`--exec`. To use it as a DearMachine Client backend, a thin wrapper script
-handles the agent-manager's stdin protocol.
-
-### 1. Install deepcode
-
-```bash
-cd /path/to/deepcode-cli
-npm install && npm run build
-# Ensure Node 23+ is on PATH; deepcode uses regex features from Node 23+
-```
-
-### 2. Create the wrapper
-
-Save the wrapper script (see `scripts/deepcode-wrapper.sh` in the DearMachine
-repository) to a location on your machine, e.g.
-`/path/to/DearMachine/scripts/deepcode-wrapper.sh`. The wrapper:
-
-- Recognises health-check probes and writes the probe file
-- Extracts the `Close-Path` from ticket-open.md headers
-- Invokes `deepcode -x -p "<work_request>"` in headless mode
-- Writes the reply to the Close-Path file and prints it to stdout
-
-### 3. Register
+Create or edit `~/.dearmachine/config/custom-backends.toml`. Each table name is
+the backend ID used by Dear Machine:
 
 ```toml
-[deepcode]
-name = "DeepCode (Deepseek v4 Flash)"
-executable = "/path/to/DearMachine/scripts/deepcode-wrapper.sh"
+[my-agent]
+name = "My Agent"
+executable = "/home/me/.local/bin/my-agent"
+arguments = ["--non-interactive"]
 output_format = "plain"
-install_help = "Install DeepCode CLI and ensure the deepcode executable is on PATH"
+install_help = "Install My Agent and make its executable available."
 ```
 
-### 4. How the Close-Path protocol works
+The fields are:
 
-The agent-manager feeds the full `ticket-open.md` to stdin. The header
-contains metadata lines including:
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `executable` | yes | An absolute path, or a command resolvable on `PATH`. |
+| `output_format` | no | `plain` (the default) or `json-stream`. |
+| `name` | no | A display name; defaults to the backend ID. |
+| `arguments` | no | Invocation arguments. `$WRITABLE_DIR` expands to the task's writable directory. |
+| `environment` | no | Non-secret environment additions required by the command. |
+| `install_help` | no | A short diagnostic shown when the executable is unavailable. |
 
+Use `plain` when standard output is the final response. Use `json-stream` only
+when the command emits Codex-style JSON Lines whose final response is an
+`item.completed` event containing an `agent_message` item.
+
+Keep credentials out of `custom-backends.toml`. Arrange for the backend to read
+them from its normal private files or inherited environment.
+
+Then approve only the intended backend in
+`~/.dearmachine/config/dearmachine.toml`:
+
+```toml
+version = 1
+backends = ["my-agent"]
+response_tier = "formatted"
 ```
+
+Custom backends are configured directly. `dearmachine setup-agents` discovers
+and selects built-in backends, so do not run it after registering a custom
+backend.
+
+## The request and completion contract
+
+Dear Machine sends the complete ticket envelope to the backend on standard
+input while running the command in the selected project directory. The envelope
+contains the delegated request and a compatibility header:
+
+```text
 # Close-Path: /absolute/path/to/ticket-close.md
 ```
 
-Your executable should return a nonempty final answer through its configured
-stdout format. After a successful exit, Agent Manager atomically publishes
-that native answer to `ticket-close.md` with private permissions and a bounded
-size. A backend may instead write `ticket-close.md` itself; Agent Manager
-preserves that compatibility artifact and never overwrites its content. Before
-accepting it, the manager requires a regular, size-bounded file and normalizes
-its permissions to `0600`.
+The preferred completion path is a nonempty final response through the
+backend's configured standard-output format. Agent Manager validates and
+atomically writes that response to `ticket-close.md` with private permissions
+and a bounded size.
 
-The completion instructions appear after the delegated request and take
-precedence over request wording such as `read-only`, `reply only`, or `do not
-modify files`. Those constraints still govern the task workspace and every
-other path. The close artifact is mandatory control-plane bookkeeping owned by
-Agent Manager, so a backend that only returns its native final answer does not
-need a Close-Path-aware wrapper.
+For compatibility, a backend may instead write the response directly to the
+exact Close-Path. Agent Manager preserves a valid existing close file rather
+than overwriting it. The close artifact is control-plane bookkeeping, so a
+request such as `read-only`, `reply only`, or `do not modify files` still permits
+that one write; those constraints continue to govern the task workspace and
+every other path.
 
-Terminal ticket states distinguish the outcome: `closed` has a published
-result, `incomplete` is a clean exit without a nonempty result, `failed` is a
-nonzero exit or manager/output failure, `cancelled` is an accepted cancellation,
-and `crashed` is reserved for signal termination. Failure metadata records the
-reason, exit code or signal, and a bounded stderr tail.
+A successful process exit without either a nonempty native final response or a
+valid close file produces an `incomplete` ticket, not a successful one. A
+nonzero exit or invalid output produces a failed ticket.
+
+## Verify the connection
+
+Use the installed `agent-manager`; do not compile another copy from the source
+tree. Run health from a disposable repository because the probe briefly asks
+the backend to create one temporary file and then removes it:
+
+```bash
+probe_dir=$(mktemp -d)
+git -C "$probe_dir" init --quiet
+(
+  cd "$probe_dir"
+  agent-manager backend health my-agent
+)
+```
+
+A successful check ends with `result=ok`. Remove the disposable repository
+after inspecting a failure or completing the test.
+
+Next, dispatch a small synthetic ticket from another disposable repository:
+
+```bash
+ticket_dir=$(mktemp -d)
+git -C "$ticket_dir" init --quiet
+printf '%s\n' 'Say hello in French using one short phrase.' >"$ticket_dir/request.md"
+
+agent-manager ticket send \
+  --backend my-agent \
+  --file "$ticket_dir/request.md" \
+  --cwd "$ticket_dir"
+```
+
+The command prints a ticket ID. After it reaches a terminal state, inspect the
+result with:
+
+```bash
+agent-manager ticket view <ticket-id>
+```
+
+Do not start a live email flow until both the health probe and synthetic ticket
+pass. Restart a running Dear Machine client after changing backend
+configuration.
+
+## Guidance for an installation agent
+
+When a person chooses a custom backend, keep the explanation simple: say that
+you will check whether the agent can work with Dear Machine and set it up. Do
+not describe internal built-in-backend defaults or narrate how the custom path
+differs from another backend's procedure.
+
+Work in this order:
+
+1. Check whether the requested agent is already installed.
+2. If it is missing, install it only after the person explicitly asks.
+3. Determine and live-test its documented noninteractive invocation.
+4. Create the smallest stable configuration or wrapper needed for that
+   invocation.
+5. Run the installed Agent Manager health check and a synthetic ticket.
+6. Continue with Dear Machine using that verified backend.
+
+The request to set up a custom backend includes creating a small adapter or
+wrapper when one is needed. Do not add another conceptual permission question.
+Ask the person only when credentials, external authentication, destructive
+changes, or a significant machine-level change genuinely requires their
+involvement.
+
+If testing inside an existing Machtiani session, unset
+`MACHTIANI_SESSION_ID` for the disposable Dear Machine commands so they do not
+collide with the parent session lock.
+
+## More information
+
+- [Dear Machine Client and Agent Manager](../dearmachine/README.md)
+- [Native installation](../dearmachine/runbooks/native-install.md)

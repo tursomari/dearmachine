@@ -10,6 +10,7 @@ disposable=$PROJECT_ROOT/dearmachine/runbooks/testing/disposable-instance.md
 multi_pair=$PROJECT_ROOT/dearmachine/runbooks/testing/multi-pair.md
 openmail=$PROJECT_ROOT/dearmachine/runbooks/testing/openmail-transport.md
 native=$PROJECT_ROOT/dearmachine/runbooks/native-install.md
+custom_backend=$PROJECT_ROOT/docs/custom-backend-guide.md
 readme=$PROJECT_ROOT/README.md
 
 for contract in \
@@ -69,6 +70,20 @@ grep -F 'dearmachine status' "$native" >/dev/null
 grep -F 'up --foreground' "$native" >/dev/null
 grep -F 'nix profile install .#dearmachine' "$native" >/dev/null
 grep -F 'machtiani` and the backend commands' "$native" >/dev/null
+for contract in \
+  'source change or local Agent Manager build is required' \
+  'Do not hard-code temporary directories or' \
+  'Custom backends are configured directly' \
+  'The preferred completion path is a nonempty final response' \
+  'Use the installed `agent-manager`; do not compile another copy from the source' \
+  'Do not describe internal built-in-backend defaults' \
+  'Do not add another conceptual permission question'; do
+  grep -F -- "$contract" "$custom_backend" >/dev/null
+done
+if grep -F -- 'The very last line of stdin is always a close' "$custom_backend"; then
+  echo 'custom backend guide still documents the retired CLOSE-line protocol' >&2
+  exit 1
+fi
 grep -F '### 3. Choose an email transport and start' "$readme" >/dev/null
 for transport in agentmail openmail sendmux; do
   grep -F -- "--transport $transport" "$readme" >/dev/null
