@@ -248,11 +248,98 @@ func conversationReferencesInBodies(bodies ...string) []string {
 	return references
 }
 
+// stripReplyHistory keeps the newly authored, top-posted reply while removing
+// a recognized mail-client history block. It intentionally does not remove
+// free-standing ">" quotations or forwarded messages.
+func stripReplyHistory(body string) string {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	lines := strings.Split(body, "\n")
+	for index := range lines {
+		boundary := -1
+		line := strings.TrimSpace(lines[index])
+		if strings.EqualFold(line, "-----Original Message-----") {
+			boundary = index
+		} else if replyAttributionEnd(lines, index) >= index {
+			boundary = index
+		} else if outlookReplyHeader(lines, index) {
+			boundary = index
+			if index > 0 && mailHeaderSeparator(lines[index-1]) {
+				boundary = index - 1
+			}
+		}
+		if boundary < 0 {
+			continue
+		}
+		contribution := strings.TrimSpace(strings.Join(lines[:boundary], "\n"))
+		if contribution != "" {
+			return contribution
+		}
+	}
+	return strings.TrimSpace(body)
+}
+
+func replyAttributionEnd(lines []string, start int) int {
+	first := strings.TrimSpace(lines[start])
+	if !strings.HasPrefix(strings.ToLower(first), "on ") {
+		return -1
+	}
+	combined := first
+	for end := start; end < len(lines) && end < start+3; end++ {
+		if end > start {
+			part := strings.TrimSpace(lines[end])
+			if part == "" {
+				break
+			}
+			combined += " " + part
+		}
+		lower := strings.ToLower(combined)
+		if strings.HasSuffix(lower, " wrote:") && strings.Contains(combined, "@") {
+			return end
+		}
+	}
+	return -1
+}
+
+func outlookReplyHeader(lines []string, start int) bool {
+	from := strings.TrimSpace(lines[start])
+	if !strings.HasPrefix(strings.ToLower(from), "from:") || !strings.Contains(from, "@") {
+		return false
+	}
+	found := map[string]bool{}
+	for index := start + 1; index < len(lines) && index < start+8; index++ {
+		line := strings.ToLower(strings.TrimSpace(lines[index]))
+		if line == "" {
+			continue
+		}
+		for _, field := range []string{"sent:", "date:", "to:", "subject:"} {
+			if strings.HasPrefix(line, field) {
+				found[field] = true
+			}
+		}
+	}
+	return (found["sent:"] || found["date:"]) && found["to:"] && found["subject:"]
+}
+
+func mailHeaderSeparator(line string) bool {
+	line = strings.TrimSpace(line)
+	if len(line) < 10 {
+		return false
+	}
+	for _, character := range line {
+		if character != '_' && character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
 func prepareInboundMessage(message Message) (Message, string) {
-	clean, bodyReferences := stripConversationFooters(message.Body)
+	_, historyReferences := stripConversationFooters(message.Body)
+	clean, bodyReferences := stripConversationFooters(stripReplyHistory(message.Body))
 	message.Body = clean
 	message.ConversationReferences = mergeConversationReferences(
 		message.ConversationReferences,
+		historyReferences,
 		bodyReferences,
 	)
 	if len(message.ConversationReferences) == 1 {

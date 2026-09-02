@@ -428,6 +428,34 @@ func TestFollowUpUsesExtractedTextWithoutQuotedHistory(t *testing.T) {
 	assertReplyText(t, rig.mail.sentReplies()[1].Text, "I've updated section 3.")
 }
 
+func TestFollowUpStripsRecognizedQuotedHistoryWithoutProviderExtraction(t *testing.T) {
+	rig := newTestRig(t)
+	rig.mail.add(testMessage("msg-raw-1", "thread-raw", "Draft a proposal."))
+	rig.setAnswer("Here is the proposal draft.")
+	mustProcess(t, rig)
+
+	message := testMessage(
+		"msg-raw-2",
+		"thread-raw",
+		"Focus Section 3 on costs.\n\n"+
+			"On Wed, Sep 2, 2026 at 9:22 AM <machine@example.com> wrote:\n\n"+
+			"> Here is the proposal draft.",
+	)
+	rig.mail.add(message)
+	rig.setAnswer("I've updated section 3.")
+	mustProcess(t, rig)
+
+	prompt := rig.capture("text-2")
+	if !strings.Contains(prompt, "Focus Section 3 on costs.") {
+		t.Fatalf("prompt omitted new reply:\n%s", prompt)
+	}
+	for _, unwanted := range []string{"On Wed,", "machine@example.com", "Here is the proposal draft."} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt contains quoted history %q:\n%s", unwanted, prompt)
+		}
+	}
+}
+
 func TestInterruptedMessageReplaysOnceWithoutSequenceGap(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage(

@@ -351,6 +351,83 @@ func TestPrepareInboundMessageDeduplicatesLegacyFullAndItsShortToken(t *testing.
 	}
 }
 
+func TestPrepareInboundMessageKeepsOnlyNewlyAuthoredReplyAcrossTransportFormats(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "gmail and agentmail",
+			body: "Are you running on the host or in a container?\n\n" +
+				"On Wed, Sep 2, 2026 at 9:22 AM <machine@example.com> wrote:\n\n" +
+				"> The working directory is /home/user/.dearmachine/entrypoint/main.\n" +
+				"> Best, Dear Machine",
+			want: "Are you running on the host or in a container?",
+		},
+		{
+			name: "wrapped attribution",
+			body: "Use the smaller model.\n\n" +
+				"On Wed, Sep 2, 2026 at 9:22 AM Dear Machine\n" +
+				"<machine@example.com> wrote:\n" +
+				"> I can use either model.",
+			want: "Use the smaller model.",
+		},
+		{
+			name: "outlook and openmail",
+			body: "Please proceed.\n\n________________________________\n" +
+				"From: Dear Machine <machine@example.com>\n" +
+				"Sent: Wednesday, September 2, 2026 9:22 AM\n" +
+				"To: User <user@example.com>\n" +
+				"Subject: Re: setup\n\nEarlier answer.",
+			want: "Please proceed.",
+		},
+		{
+			name: "original message and sendmux",
+			body: "That works.\n\n-----Original Message-----\n" +
+				"From: machine@example.com\nSubject: Re: setup\n\nEarlier answer.",
+			want: "That works.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			message, _ := prepareInboundMessage(Message{Body: test.body})
+			if message.Body != test.want {
+				t.Fatalf("clean body = %q, want %q", message.Body, test.want)
+			}
+		})
+	}
+}
+
+func TestPrepareInboundMessagePreservesReferenceFromDiscardedHistory(t *testing.T) {
+	reference := newConversationReference()
+	body := "Continue with the next section.\n\n" +
+		"On Wed, Sep 2, 2026 at 9:22 AM <machine@example.com> wrote:\n\n" +
+		"> Earlier answer.\n> " + strings.ReplaceAll(conversationFooter(reference), "\n", "\n> ")
+
+	message, gotReference := prepareInboundMessage(Message{Body: body})
+	if message.Body != "Continue with the next section." {
+		t.Fatalf("clean body = %q", message.Body)
+	}
+	if gotReference != reference || len(message.ConversationReferences) != 1 {
+		t.Fatalf("reference = %q, evidence = %v, want %q", gotReference, message.ConversationReferences, reference)
+	}
+}
+
+func TestPrepareInboundMessageDoesNotStripOrdinaryQuotesOrForwardedMail(t *testing.T) {
+	for _, body := range []string{
+		"On reliability, Alice wrote:\nKeep this sentence because it is the user's whole message.",
+		"Please compare these lines:\n\n> first option\n> second option",
+		"Please review this.\n\nBegin forwarded message:\nFrom: alice@example.com\n\nOriginal material.",
+		"On Wed, Sep 2, 2026 at 9:22 AM <machine@example.com> wrote:\n> This reply contains no newly authored text.",
+	} {
+		message, _ := prepareInboundMessage(Message{Body: body})
+		if message.Body != body {
+			t.Fatalf("body was unexpectedly stripped:\nwant: %q\n got: %q", body, message.Body)
+		}
+	}
+}
+
 func TestFormattedReplyFooterRoundTripsThroughHTMLNormalization(t *testing.T) {
 	reference := newConversationReference()
 	outbound := appendConversationFooter("Formatted answer.", reference)
