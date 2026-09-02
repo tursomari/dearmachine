@@ -104,11 +104,14 @@ Creation first initializes the selected entry-point repository when it is
 absent. With no override, that is the default repository at
 `~/.dearmachine/entrypoint/main`. It then provisions and registers the inbox,
 asks the selected transport to authorize the exact correspondent, creates the
-pair's UUID-path SQLite database, and starts the daemon. Pair authorization is
-owned by the transport adapter and happens before the local pair is published.
-Later, plain `dearmachine up` starts every registered pair. Repeat `--pair
-<email-or-uuid>` to run only a specific subset for that invocation. Selection
-never changes registry state.
+pair's UUID-path SQLite database, records the effective machine-global runtime
+settings, and starts the daemon. Pair authorization is owned by the transport
+adapter and happens before the local pair is published. The private runtime
+profile at `~/.dearmachine/config/runtime.toml` contains paths and launch
+options, never credentials. Later, plain `dearmachine up` starts every
+registered pair with that profile, independent of the shell's current
+directory. Repeat `--pair <email-or-uuid>` to run only a specific subset for
+that invocation. Selection never changes registry state.
 
 To add a pair, stop the daemon and run `up --create` again. Use `--new-inbox`
 for a new provider inbox, or `--inbox <registered-uuid-or-address>` to
@@ -238,7 +241,9 @@ idle polls remain silent by default.
 Plain `dearmachine up` launches the native client in the background and waits
 for readiness. `dearmachine up --foreground` keeps it attached for a process
 supervisor or test container. Both forms use the same internal lock and
-readiness files.
+readiness files. Run flags explicitly supplied to an invocation override the
+saved machine-global runtime profile. A later successful `up --create` records
+the resulting effective settings for subsequent plain launches.
 
 Set `AGENTMAIL_BASE_URL` to point the SDK at a non-production endpoint when
 needed.
@@ -248,7 +253,9 @@ needed.
 `--project` and `--entry-point-repo` are independent settings:
 
 - `--project` selects the working directory and machtiani project where email
-  sessions are created. Its default is `.`, the directory from which DearMachine Client was launched.
+  sessions are created. Before the first pair is created, its default is `.`,
+  the directory from which DearMachine Client was launched. Pair creation
+  records its absolute path, and later plain launches reload that path.
 - `--entry-point-repo` selects only the repository inspected and maintained by
   entry-point documentation sync. Its default is
   `~/.dearmachine/entrypoint/main`.

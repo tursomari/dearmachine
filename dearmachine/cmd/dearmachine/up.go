@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/mail"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
@@ -56,6 +58,20 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	if err != nil {
 		return err
 	}
+	runtimePath, err := client.DefaultRuntimeConfigPath(deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	persisted, found, err := client.LoadRuntimeConfig(runtimePath)
+	if err != nil {
+		return err
+	}
+	if found {
+		cfg, err = mergeRuntimeConfig(cfg, persisted)
+		if err != nil {
+			return err
+		}
+	}
 	if command.create {
 		if len(command.pairSelectors) != 0 {
 			return errors.New("--pair cannot be combined with --create")
@@ -87,6 +103,13 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		); err != nil {
 			return fmt.Errorf("authorize %s pair: %w", inbox.Transport, err)
 		}
+		persisted, err := runtimeConfigFrom(cfg, deps.userHomeDir)
+		if err != nil {
+			return err
+		}
+		if err := client.SaveRuntimeConfig(runtimePath, persisted); err != nil {
+			return err
+		}
 		pair, err := client.CreatePair(deps.userHomeDir, client.Pair{UserEmail: request.email, InboxID: inbox.ID})
 		if err != nil {
 			return err
@@ -98,7 +121,7 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		return err
 	}
 	if command.foreground || cfg.once {
-		return runPairStates(runArgs, getenv, deps, states)
+		return runPairStates(cfg, getenv, deps, states)
 	}
 	if err := requireDaemonStopped(deps.userHomeDir); err != nil {
 		return err
@@ -141,6 +164,109 @@ func parseUpRunConfig(args []string, deps dependencies) (config, error) {
 		output = io.Discard
 	}
 	return parseConfig(args, output)
+}
+
+func mergeRuntimeConfig(cfg config, persisted client.RuntimeConfig) (config, error) {
+	if !cfg.setFlags["project"] {
+		cfg.projectDir = persisted.Project
+	}
+	if !cfg.setFlags["model"] {
+		cfg.model = persisted.Model
+	}
+	if !cfg.setFlags["agent-bin"] {
+		cfg.agentBinary = persisted.AgentBinary
+	}
+	if !cfg.setFlags["config"] {
+		cfg.deviceConfig = persisted.DeviceConfig
+	}
+	if !cfg.setFlags["agent-manager"] {
+		cfg.managerPath = persisted.ManagerPath
+	}
+	if !cfg.setFlags["entry-point-repo"] {
+		cfg.entryPointRepo = persisted.EntryPointRepo
+	}
+	if !cfg.setFlags["entry-point-prompt"] {
+		cfg.entryPointPrompt = persisted.EntryPointPrompt
+	}
+	if !cfg.setFlags["poll-interval"] {
+		parsed, err := time.ParseDuration(persisted.PollInterval)
+		if err != nil {
+			return config{}, fmt.Errorf("parse persisted poll interval: %w", err)
+		}
+		cfg.pollInterval = parsed
+	}
+	if !cfg.setFlags["concurrency"] {
+		cfg.concurrency = persisted.Concurrency
+	}
+	if !cfg.setFlags["maintenance-min-turns"] {
+		cfg.maintenanceMinTurns = persisted.MaintenanceMinTurns
+		cfg.maintenanceMinTurnsSet = persisted.MaintenanceMinTurnsSet
+	}
+	if !cfg.setFlags["magnifica-humanitas"] {
+		cfg.magnificaHumanitas = persisted.MagnificaHumanitas
+	}
+	if !cfg.setFlags["verbose"] {
+		cfg.verbose = persisted.Verbose
+	}
+	return cfg, nil
+}
+
+func runtimeConfigFrom(cfg config, userHomeDir func() (string, error)) (client.RuntimeConfig, error) {
+	project, err := resolvePath(cfg.projectDir, userHomeDir)
+	if err != nil {
+		return client.RuntimeConfig{}, err
+	}
+	entryPointRepo := strings.TrimSpace(cfg.entryPointRepo)
+	if entryPointRepo != "" {
+		entryPointRepo, err = resolvePath(entryPointRepo, userHomeDir)
+		if err != nil {
+			return client.RuntimeConfig{}, err
+		}
+	}
+	entryPointPrompt := strings.TrimSpace(cfg.entryPointPrompt)
+	if entryPointPrompt != "" {
+		entryPointPrompt, err = resolvePath(entryPointPrompt, userHomeDir)
+		if err != nil {
+			return client.RuntimeConfig{}, err
+		}
+	}
+	deviceConfig := strings.TrimSpace(cfg.deviceConfig)
+	if deviceConfig != "" {
+		deviceConfig, err = resolvePath(deviceConfig, userHomeDir)
+		if err != nil {
+			return client.RuntimeConfig{}, err
+		}
+	}
+	managerPath := strings.TrimSpace(cfg.managerPath)
+	if managerPath != "" {
+		managerPath, err = resolvePath(managerPath, userHomeDir)
+		if err != nil {
+			return client.RuntimeConfig{}, err
+		}
+	}
+	agentBinary := strings.TrimSpace(cfg.agentBinary)
+	if strings.ContainsRune(agentBinary, filepath.Separator) {
+		agentBinary, err = resolvePath(agentBinary, userHomeDir)
+		if err != nil {
+			return client.RuntimeConfig{}, err
+		}
+	}
+	return client.RuntimeConfig{
+		Version:                client.RuntimeConfigVersion,
+		Project:                project,
+		Model:                  cfg.model,
+		AgentBinary:            agentBinary,
+		DeviceConfig:           deviceConfig,
+		ManagerPath:            managerPath,
+		EntryPointRepo:         entryPointRepo,
+		EntryPointPrompt:       entryPointPrompt,
+		PollInterval:           cfg.pollInterval.String(),
+		Concurrency:            cfg.concurrency,
+		MaintenanceMinTurns:    cfg.maintenanceMinTurns,
+		MaintenanceMinTurnsSet: cfg.maintenanceMinTurnsSet,
+		MagnificaHumanitas:     cfg.magnificaHumanitas,
+		Verbose:                cfg.verbose,
+	}, nil
 }
 
 func initializeSelectedEntryPoint(ctx context.Context, cfg config, deps dependencies, output io.Writer) error {
@@ -366,12 +492,11 @@ func upHelp(output io.Writer) error {
   dearmachine up --create --email <address> (--new-inbox --transport <id> | --inbox <selector>) [run flags]
 
 Plain "up" starts every registered pair and every referenced inbox in one
-background client. --foreground keeps that client attached for service managers
-and containers. --pair is repeatable and narrows only this invocation; it never
-changes global state. --create is the sole creation path. Sharing an inbox is always
-intentional and requires --inbox. Pair creation asks the selected transport to
-authorize the correspondent before publishing local pair state. It also initializes
-the selected entry point when absent and leaves existing Git repositories unchanged.
+background client using the runtime settings recorded by pair creation.
+--foreground keeps that client attached for service managers and containers.
+--pair is repeatable and narrows only this invocation; it never changes global
+state. --create is the sole creation path. Sharing an inbox is always intentional
+and requires --inbox. Pair creation asks the selected transport to authorize the correspondent before publishing local pair state. It also initializes the selected entry point when absent and leaves existing Git repositories unchanged.
 Creation requires the daemon to be down.
 `)
 	return err

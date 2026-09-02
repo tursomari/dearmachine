@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -26,15 +25,7 @@ func requireDaemonStopped(userHomeDir func() (string, error)) error {
 	return unlock()
 }
 
-func runPairStates(args []string, getenv func(string) string, deps dependencies, states []client.PairState) error {
-	output := deps.flagOutput
-	if output == nil {
-		output = io.Discard
-	}
-	cfg, err := parseConfig(args, output)
-	if err != nil {
-		return err
-	}
+func runPairStates(cfg config, getenv func(string) string, deps dependencies, states []client.PairState) error {
 	backends, managerPath, customBackends, responseTier, err := loadAgentManagedConfig(cfg, deps)
 	if err != nil {
 		return err

@@ -46,6 +46,7 @@ type config struct {
 	once                   bool
 	verbose                bool
 	magnificaHumanitas     bool
+	setFlags               map[string]bool
 }
 
 const defaultEntryPointRepo = "~/.dearmachine/entrypoint/main"
@@ -247,6 +248,10 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		return config{}, err
 	}
 	flags.Visit(func(setFlag *flag.Flag) {
+		if cfg.setFlags == nil {
+			cfg.setFlags = make(map[string]bool)
+		}
+		cfg.setFlags[setFlag.Name] = true
 		switch setFlag.Name {
 		case "maintenance-min-turns":
 			cfg.maintenanceMinTurnsSet = true

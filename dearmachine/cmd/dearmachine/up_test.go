@@ -5,14 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
+	"github.com/dearmachine/dearmachine/internal/synctrigger"
 )
 
 func TestUpWithoutRegistryRequiresCreate(t *testing.T) {
@@ -226,6 +230,188 @@ func TestUpDefaultsToAllPairsAndPairFlagNarrowsWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestUpCreatePersistsRuntimeSettingsForLaterPlainUp(t *testing.T) {
+	deps := testDependencies(t, &fakeApplication{})
+	deps.isInteractive = func(io.Reader) bool { return false }
+	home, err := deps.userHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(home, "selected-project")
+	entryPoint := filepath.Join(home, "selected-entry-point")
+	prompt := filepath.Join(entryPoint, "documentation", "selected-prompt.md")
+
+	var projects []string
+	var models []string
+	var agents []string
+	var pollIntervals []time.Duration
+	var verboseValues []bool
+	deps.newRunner = func(agent, gotProject, model string) (*client.AgentRunner, error) {
+		agents = append(agents, agent)
+		projects = append(projects, gotProject)
+		models = append(models, model)
+		return client.NewAgentRunner(agent, gotProject, model)
+	}
+	deps.newApp = func(
+		_ client.Transport,
+		_ *client.Store,
+		_ *client.AgentRunner,
+		_ *synctrigger.Orchestrator,
+		_ int,
+		pollInterval time.Duration,
+		_ *log.Logger,
+		verbose bool,
+		_ string,
+		_ client.ResponseTier,
+	) (application, error) {
+		pollIntervals = append(pollIntervals, pollInterval)
+		verboseValues = append(verboseValues, verbose)
+		return &fakeApplication{}, nil
+	}
+
+	if err := run([]string{
+		"up", "--create", "--email", "user@example.test", "--new-inbox", "--transport", "agentmail",
+		"--project", project,
+		"--entry-point-repo", entryPoint,
+		"--entry-point-prompt", prompt,
+		"--agent-bin", "/test/machtiani",
+		"--model", "selected-model",
+		"--poll-interval", "7s",
+		"--concurrency", "4",
+		"--maintenance-min-turns", "9",
+		"--magnifica-humanitas",
+		"--verbose",
+		"--once",
+	}, func(string) string { return "" }, deps); err != nil {
+		t.Fatalf("create pair: %v", err)
+	}
+	if err := run([]string{"up", "--once"}, func(string) string { return "" }, deps); err != nil {
+		t.Fatalf("plain up: %v", err)
+	}
+
+	if want := []string{project, project}; !slices.Equal(projects, want) {
+		t.Fatalf("project history = %v, want %v", projects, want)
+	}
+	if want := []string{"selected-model", "selected-model"}; !slices.Equal(models, want) {
+		t.Fatalf("model history = %v, want %v", models, want)
+	}
+	if want := []string{"/test/machtiani", "/test/machtiani"}; !slices.Equal(agents, want) {
+		t.Fatalf("agent history = %v, want %v", agents, want)
+	}
+	if want := []time.Duration{7 * time.Second, 7 * time.Second}; !slices.Equal(pollIntervals, want) {
+		t.Fatalf("poll interval history = %v, want %v", pollIntervals, want)
+	}
+	if want := []bool{true, true}; !slices.Equal(verboseValues, want) {
+		t.Fatalf("verbose history = %v, want %v", verboseValues, want)
+	}
+	profile := filepath.Join(home, ".dearmachine", "config", "runtime.toml")
+	info, err := os.Stat(profile)
+	if err != nil {
+		t.Fatalf("runtime profile: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("runtime profile mode = %o, want 600", info.Mode().Perm())
+	}
+	persisted, found, err := client.LoadRuntimeConfig(profile)
+	if err != nil || !found {
+		t.Fatalf("load runtime profile: found=%v, err=%v", found, err)
+	}
+	if persisted.Project != project || persisted.EntryPointRepo != entryPoint ||
+		persisted.EntryPointPrompt != prompt || persisted.Model != "selected-model" ||
+		persisted.AgentBinary != "/test/machtiani" || persisted.PollInterval != "7s" ||
+		persisted.Concurrency != 4 || persisted.MaintenanceMinTurns != 9 ||
+		!persisted.MaintenanceMinTurnsSet || !persisted.MagnificaHumanitas || !persisted.Verbose {
+		t.Fatalf("persisted runtime profile = %+v", persisted)
+	}
+}
+
+func TestExplicitRunFlagsOverridePersistedRuntimeSettings(t *testing.T) {
+	cfg, err := parseConfig([]string{"--project", "/explicit/project", "--poll-interval", "2s"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := mergeRuntimeConfig(cfg, client.RuntimeConfig{
+		Version:             client.RuntimeConfigVersion,
+		Project:             "/persisted/project",
+		AgentBinary:         "/persisted/machtiani",
+		EntryPointRepo:      "/persisted/entry-point",
+		EntryPointPrompt:    "/persisted/prompt.md",
+		PollInterval:        "7s",
+		Concurrency:         4,
+		MaintenanceMinTurns: 9,
+		MagnificaHumanitas:  true,
+		Verbose:             true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.projectDir != "/explicit/project" || merged.pollInterval != 2*time.Second {
+		t.Fatalf("explicit flags lost: %+v", merged)
+	}
+	if merged.agentBinary != "/persisted/machtiani" ||
+		merged.entryPointRepo != "/persisted/entry-point" ||
+		merged.entryPointPrompt != "/persisted/prompt.md" ||
+		merged.concurrency != 4 || merged.maintenanceMinTurns != 9 ||
+		!merged.magnificaHumanitas || !merged.verbose {
+		t.Fatalf("persisted defaults not merged: %+v", merged)
+	}
+}
+
+func TestRuntimeConfigResolvesWorkingDirectoryDependentPaths(t *testing.T) {
+	home := t.TempDir()
+	runtime, err := runtimeConfigFrom(config{
+		projectDir:          ".",
+		agentBinary:         "bin/machtiani",
+		deviceConfig:        "config/dearmachine.toml",
+		managerPath:         "bin/agent-manager",
+		entryPointRepo:      "~/.dearmachine/entrypoint/main",
+		entryPointPrompt:    "~/.dearmachine/entrypoint/main/documentation/prompt.md",
+		pollInterval:        time.Minute,
+		concurrency:         3,
+		maintenanceMinTurns: 20,
+	}, func() (string, error) { return home, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	workingDirectory, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for label, path := range map[string]string{
+		"project":       runtime.Project,
+		"agent":         runtime.AgentBinary,
+		"device config": runtime.DeviceConfig,
+		"manager":       runtime.ManagerPath,
+	} {
+		if !filepath.IsAbs(path) {
+			t.Errorf("%s path is not absolute: %q", label, path)
+		}
+	}
+	if runtime.Project != workingDirectory {
+		t.Fatalf("project = %q, want %q", runtime.Project, workingDirectory)
+	}
+	if runtime.EntryPointRepo != filepath.Join(home, ".dearmachine", "entrypoint", "main") ||
+		runtime.EntryPointPrompt != filepath.Join(home, ".dearmachine", "entrypoint", "main", "documentation", "prompt.md") {
+		t.Fatalf("home-relative paths = %q/%q", runtime.EntryPointRepo, runtime.EntryPointPrompt)
+	}
+
+	bare, err := runtimeConfigFrom(config{
+		projectDir:          ".",
+		agentBinary:         "machtiani",
+		entryPointRepo:      "",
+		entryPointPrompt:    "",
+		pollInterval:        time.Minute,
+		concurrency:         3,
+		maintenanceMinTurns: 20,
+	}, func() (string, error) { return home, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.AgentBinary != "machtiani" || bare.EntryPointRepo != "" || bare.EntryPointPrompt != "" {
+		t.Fatalf("bare executable or disabled entry point changed: %+v", bare)
+	}
+}
+
 func TestUpCreateCanIntentionallyShareRegisteredInbox(t *testing.T) {
 	deps := testDependencies(t, &fakeApplication{})
 	first := makeUpTestPair(t, deps, "first")
@@ -395,7 +581,7 @@ func TestPublicHelpDescribesAllPairsAndCreation(t *testing.T) {
 	if err := run([]string{"up", "--help"}, func(string) string { return "" }, dependencies{stdout: &output}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"starts every registered pair", "--pair", "--create", "--new-inbox", "--inbox", "selected entry point when absent", "authorize the correspondent"} {
+	for _, want := range []string{"starts every registered pair", "runtime settings recorded by pair creation", "--pair", "--create", "--new-inbox", "--inbox", "selected entry point when absent", "authorize the correspondent"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("help missing %q:\n%s", want, output.String())
 		}

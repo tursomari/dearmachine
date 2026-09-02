@@ -30,6 +30,13 @@ backends = ["codex", "forge"]
 ```
 
 Backend order is priority order. At least one supported backend is required.
+The machine-global, secret-free launch profile is
+`~/.dearmachine/config/runtime.toml`. `up --create` records the effective
+project, entry-point, executable, and polling settings there. Later plain
+`dearmachine up` launches reload that profile, so they do not depend on the
+shell's current directory. All registered pairs share it because one daemon
+serves them together; explicitly supplied run flags override it for that
+invocation.
 The provisioned mailbox address and other sensitive operational notes belong in
 `.scratch/`, while API credentials and other secret values belong in
 `.secrets/`. Bootstrap adds both directories to the repository's local
@@ -44,7 +51,8 @@ Important launch settings include:
   share/adopt an inbox.
 - `--pair`: optionally narrow one invocation by pair email or UUID.
 - `--project`: working directory and machtiani project used for email sessions;
-  it defaults to the DearMachine Client launch directory.
+  before first pair creation it defaults to the DearMachine Client launch
+  directory, then its absolute path is saved for later plain launches.
 - `--entry-point-repo`: repository used only for entry-point documentation
   sync; it defaults to `~/.dearmachine/entrypoint/main` and does not provide
   entry-point context to a different `--project`.

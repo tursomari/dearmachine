@@ -82,9 +82,11 @@ dearmachine status
 dearmachine down
 ```
 
-Plain `dearmachine up` starts all registered pairs again. Service managers and
-containers use `dearmachine up --foreground` so they supervise the real client
-process.
+Plain `dearmachine up` starts all registered pairs again with the machine-global
+runtime settings recorded by `up --create`. Those private, secret-free settings
+live at `~/.dearmachine/config/runtime.toml`, so a later launch does not depend
+on the shell's current directory. Service managers and containers use
+`dearmachine up --foreground` so they supervise the real client process.
 
 ### 4. Add another pair
 
