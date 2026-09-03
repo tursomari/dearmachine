@@ -119,6 +119,44 @@ service manager or test container must supervise the process directly.
 Do not start a native process and a container deployment against the same
 inbox and database at the same time.
 
+## Optional persistent user service (Linux)
+
+After the native client has passed its live email check, the packaged lifecycle
+helper can keep it running under the current user's systemd manager and enable
+it for later logins and reboots. Stop the background client first, preserve the
+launching shell's backend lookup path, and identify the selected transport:
+
+```bash
+dearmachine down
+DEARMACHINE_SERVICE_PATH="$PATH" nix run .#dearmachine-native-service-lifecycle -- \
+  install \
+  --transport <agentmail|openmail|sendmux> \
+  --credential-file "$HOME/.config/dearmachine/<transport>-api-key" \
+  --environment-file "$HOME/.config/dearmachine/backends.env" \
+  --client "$HOME/.nix-profile/bin/dearmachine" \
+  --agent-manager "$HOME/.nix-profile/bin/agent-manager" \
+  --working-directory "$HOME/.dearmachine/entrypoint/main" \
+  --linger
+```
+
+The helper writes a private native launcher and a `dearmachine-native.service`
+user unit, records credential file paths rather than credential values, enables
+the unit for `default.target`, starts it, and verifies that it is enabled and
+active. `--linger` asks the login manager to keep the user's service manager
+available even when the user is not signed in, so the enabled service can start
+after reboot. This may require the normal local authorization supported by the
+host.
+
+Use the same helper to inspect or turn off automatic operation:
+
+```bash
+nix run .#dearmachine-native-service-lifecycle -- status
+nix run .#dearmachine-native-service-lifecycle -- disable
+```
+
+Disabling the service stops it and removes it from automatic startup without
+deleting Dear Machine configuration, credentials, pair state, or mail.
+
 ## Optional transient user service (Linux)
 
 For an unattended native client, use the packaged transient-service launcher.

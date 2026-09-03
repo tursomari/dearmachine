@@ -76,6 +76,11 @@
             runtimeInputs = [ pkgs.systemd ];
             text = builtins.readFile ./scripts/nix/native-service-launch.sh;
           } else null;
+          nativeServiceLifecycle = if pkgs.stdenv.isLinux then pkgs.writeShellApplication {
+            name = "dearmachine-native-service-lifecycle";
+            runtimeInputs = with pkgs; [ coreutils systemd ];
+            text = builtins.readFile ./scripts/nix/native-service-lifecycle.sh;
+          } else null;
           codexTool = codexPkgs.codex;
           goTests = dearmachine.overrideAttrs (_: {
             pname = "dearmachine-go-tests";
@@ -376,14 +381,25 @@
               bash ${./tests/nix/test-native-service-launch.sh}
             touch $out
           '';
+          nativeServiceLifecycleCheck = pkgs.runCommand "dearmachine-native-service-lifecycle-check" {
+            nativeBuildInputs = with pkgs; [ bash coreutils gnugrep systemd ];
+          } ''
+            PROJECT_ROOT=${./.} \
+              NATIVE_SERVICE_LIFECYCLE=${nativeServiceLifecycle}/bin/dearmachine-native-service-lifecycle \
+              SYSTEMD_EXAMPLE_USER=${pkgs.systemd}/example/systemd/user \
+              bash ${./tests/nix/test-native-service-lifecycle.sh}
+            touch $out
+          '';
           shellCheck = pkgs.runCommand "dearmachine-shellcheck" {
             nativeBuildInputs = [ pkgs.shellcheck ];
           } ''
             shellcheck \
               ${./scripts/nix/host-lifecycle.sh} \
+              ${./scripts/nix/native-service-lifecycle.sh} \
               ${./scripts/nix/native-service-launch.sh} \
               ${./scripts/nix/stack-runtime.sh} \
               ${./tests/nix/test-host-lifecycle.sh} \
+              ${./tests/nix/test-native-service-lifecycle.sh} \
               ${./tests/nix/test-native-service-launch.sh} \
               ${./tests/nix/test-host-podman-integration.sh} \
               ${./tests/nix/test-stack-runtime.sh} \
@@ -392,12 +408,12 @@
           '';
         in {
           inherit
-            pkgs dearmachine agentManager nativeServiceLauncher codexTool goTests install dearmachineImage composeBundle
+            pkgs dearmachine agentManager nativeServiceLauncher nativeServiceLifecycle codexTool goTests install dearmachineImage composeBundle
             composeCheck stackRuntime hostLifecycle
             hostInstall hostUpgrade hostUninstall hostSecrets
             containerLifecycle containerInstall containerUpgrade containerUninstall
             containerSecrets
-            unitCheck hostLifecycleCheck stackRuntimeCheck runbookCheck nativeServiceLauncherCheck shellCheck;
+            unitCheck hostLifecycleCheck stackRuntimeCheck runbookCheck nativeServiceLauncherCheck nativeServiceLifecycleCheck shellCheck;
         };
     in {
       packages = forAllSystems (system:
@@ -414,6 +430,7 @@
           dearmachine-host-lifecycle = project.hostLifecycle;
           dearmachine-container-lifecycle = project.containerLifecycle;
           dearmachine-native-service = project.nativeServiceLauncher;
+          dearmachine-native-service-lifecycle = project.nativeServiceLifecycle;
         });
 
       apps = forAllSystems (system:
@@ -440,6 +457,10 @@
           dearmachine-native-service = {
             type = "app";
             program = "${project.nativeServiceLauncher}/bin/dearmachine-native-service";
+          };
+          dearmachine-native-service-lifecycle = {
+            type = "app";
+            program = "${project.nativeServiceLifecycle}/bin/dearmachine-native-service-lifecycle";
           };
           host-install = {
             type = "app";
@@ -518,6 +539,7 @@
           systemd-user-unit = project.unitCheck;
           runbook-contracts = project.runbookCheck;
           native-service-launcher = project.nativeServiceLauncherCheck;
+          native-service-lifecycle = project.nativeServiceLifecycleCheck;
           shellcheck = project.shellCheck;
         });
     };

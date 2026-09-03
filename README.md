@@ -109,7 +109,9 @@ own inbox. Pair email addresses and pair UUIDs are also the selectors accepted
 by `dearmachine up --pair` and `dearmachine inbox ... --pair`.
 
 DearMachine runs natively by default and does not require systemd. The optional
-native systemd launcher and Nix/OCI testing/deployment helpers are documented in
+persistent and transient native systemd helpers are documented in
+[`dearmachine/runbooks/native-install.md`](dearmachine/runbooks/native-install.md);
+the Nix/OCI deployment helpers are documented separately in
 [`dearmachine/runbooks/host-install.md`](dearmachine/runbooks/host-install.md).
 Live integration tests use isolated container deployments by default.
 
