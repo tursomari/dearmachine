@@ -237,6 +237,62 @@ func TestInitializeFailureLeavesExplicitIncompleteMarker(t *testing.T) {
 	}
 }
 
+func TestInitializeResumeContinuesAfterRecordedPhase(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	repo := filepath.Join(root, "entrypoint")
+	runner := &fakeCommandRunner{store: filepath.Join(root, "store"), failSync: true}
+	_, err := Initialize(context.Background(), Options{
+		RepoPath: repo, AgentBinary: "/fake/machtiani", RunCommand: runner.Run,
+	})
+	if err == nil || !strings.Contains(err.Error(), "sync failed") {
+		t.Fatalf("first Initialize error = %v", err)
+	}
+	runner.failSync = false
+	result, err := Initialize(context.Background(), Options{
+		RepoPath: repo, AgentBinary: "/fake/machtiani", RunCommand: runner.Run, Resume: true,
+	})
+	if err != nil {
+		t.Fatalf("resumed Initialize: %v", err)
+	}
+	if result.SkeletonCommit != "skeleton-commit" || result.DearMachineCommit != "dearmachine-commit" {
+		t.Fatalf("resumed commits = %q, %q", result.SkeletonCommit, result.DearMachineCommit)
+	}
+	if countCall(runner.calls, "git init") != 1 || countCall(runner.calls, "git commit -m "+skeletonCommitMessage) != 1 ||
+		countCall(runner.calls, "/fake/machtiani init --no-interactive --json") != 1 {
+		t.Fatalf("durable phases repeated on resume: %v", runner.calls)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git", bootstrapMarkerName)); !os.IsNotExist(err) {
+		t.Fatalf("bootstrap journal remains after resume: %v", err)
+	}
+}
+
+func TestInitializeResumeRejectsPublicBootstrapJournal(t *testing.T) {
+	t.Parallel()
+	repo := filepath.Join(t.TempDir(), "entrypoint")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(repo, ".git", bootstrapMarkerName)
+	if err := os.WriteFile(marker, []byte(`{"version":1,"phase":"repository-initialized"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Initialize(context.Background(), Options{RepoPath: repo, AgentBinary: "/fake/machtiani", Resume: true})
+	if err == nil || !strings.Contains(err.Error(), "private regular file") {
+		t.Fatalf("Initialize error = %v", err)
+	}
+}
+
+func countCall(calls []string, target string) int {
+	count := 0
+	for _, call := range calls {
+		if call == target {
+			count++
+		}
+	}
+	return count
+}
+
 func TestSkeletonSeedDoesNotFrameDearMachineAsEntryPointPurpose(t *testing.T) {
 	t.Parallel()
 	var combined strings.Builder

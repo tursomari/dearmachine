@@ -3,12 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/mail"
+	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -28,6 +31,7 @@ func (values *stringListFlag) add(value string) error {
 
 type upCommand struct {
 	create        bool
+	resume        bool
 	foreground    bool
 	help          bool
 	newInbox      bool
@@ -76,45 +80,114 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		if len(command.pairSelectors) != 0 {
 			return errors.New("--pair cannot be combined with --create")
 		}
-		request, err := collectCreateRequest(command, deps.stdin, output, inputIsInteractive(deps))
+		transactionPath, err := createTransactionPath(deps.userHomeDir)
 		if err != nil {
 			return err
+		}
+		transaction, foundTransaction, err := loadCreateTransaction(transactionPath)
+		if err != nil {
+			return err
+		}
+		if foundTransaction && !command.resume {
+			return fmt.Errorf("pair creation is incomplete; retry the same command with --resume")
+		}
+		var request createRequest
+		if foundTransaction {
+			request = transaction.Request.createRequest()
+			if err := validateResumeSelection(command, request); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(output, "Resuming incomplete Dear Machine setup.")
+		} else {
+			request, err = collectCreateRequest(command, deps.stdin, output, inputIsInteractive(deps))
+			if err != nil {
+				return err
+			}
+			transaction = createTransaction{Version: createTransactionVersion, Phase: createPhaseRequested, Request: newCreateSelection(request)}
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
+			}
 		}
 		if err := requireDaemonStopped(deps.userHomeDir); err != nil {
 			return fmt.Errorf("create pair: %w", err)
 		}
-		for _, existing := range registry.Pairs {
-			if strings.EqualFold(existing.UserEmail, request.email) {
-				return fmt.Errorf("pair email %s is already registered as %s", request.email, existing.ID)
+		existingPair, pairAlreadyPublished := pairForEmail(registry, request.email)
+		if pairAlreadyPublished && phaseBeforeCreate(transaction.Phase, createPhasePairCreated) {
+			if transaction.Inbox.ID == "" || existingPair.InboxID != transaction.Inbox.ID {
+				return fmt.Errorf("pair email %s is already registered as %s", request.email, existingPair.ID)
+			}
+			transaction.PairID = existingPair.ID
+			transaction.Phase = createPhasePairCreated
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
 			}
 		}
-		if err := initializeSelectedEntryPoint(context.Background(), cfg, deps, output); err != nil {
-			return err
+		if phaseBeforeCreate(transaction.Phase, createPhaseEntryPointInitialized) {
+			if err := initializeSelectedEntryPoint(context.Background(), cfg, deps, output, command.resume); err != nil {
+				return err
+			}
+			transaction.Phase = createPhaseEntryPointInitialized
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
+			}
 		}
-		inbox, err := resolveCreateInbox(context.Background(), request, registry, deps)
-		if err != nil {
-			return err
+		inbox := transaction.Inbox.clientInbox()
+		if phaseBeforeCreate(transaction.Phase, createPhaseInboxResolved) {
+			inbox, err = resolveCreateInbox(context.Background(), request, registry, deps)
+			if err != nil {
+				return err
+			}
+			transaction.Inbox = newCreateInbox(inbox)
+			transaction.Phase = createPhaseInboxResolved
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(output, "Inbox ready: %s (%s).\n", inbox.Address, inbox.Transport)
 		}
-		if deps.authorizePair == nil {
-			return fmt.Errorf("transport %q cannot authorize pair creation", inbox.Transport)
+		if phaseBeforeCreate(transaction.Phase, createPhasePairAuthorized) {
+			if deps.authorizePair == nil {
+				return fmt.Errorf("transport %q cannot authorize pair creation", inbox.Transport)
+			}
+			if err := deps.authorizePair(
+				context.Background(), inbox.Transport, inbox.ProviderID, request.email,
+			); err != nil {
+				return fmt.Errorf("authorize %s pair: %w", inbox.Transport, err)
+			}
+			transaction.Phase = createPhasePairAuthorized
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(output, "Authorized the sender for this Dear Machine pair.")
 		}
-		if err := deps.authorizePair(
-			context.Background(), inbox.Transport, inbox.ProviderID, request.email,
-		); err != nil {
-			return fmt.Errorf("authorize %s pair: %w", inbox.Transport, err)
+		if phaseBeforeCreate(transaction.Phase, createPhaseRuntimeConfigured) {
+			persisted, err := runtimeConfigFrom(cfg, deps.userHomeDir)
+			if err != nil {
+				return err
+			}
+			if err := client.SaveRuntimeConfig(runtimePath, persisted); err != nil {
+				return err
+			}
+			transaction.Phase = createPhaseRuntimeConfigured
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
+			}
 		}
-		persisted, err := runtimeConfigFrom(cfg, deps.userHomeDir)
-		if err != nil {
-			return err
-		}
-		if err := client.SaveRuntimeConfig(runtimePath, persisted); err != nil {
-			return err
-		}
-		pair, err := client.CreatePair(deps.userHomeDir, client.Pair{UserEmail: request.email, InboxID: inbox.ID})
-		if err != nil {
-			return err
+		pair := existingPair
+		if phaseBeforeCreate(transaction.Phase, createPhasePairCreated) {
+			pair, err = client.CreatePair(deps.userHomeDir, client.Pair{UserEmail: request.email, InboxID: inbox.ID})
+			if err != nil {
+				return err
+			}
+			transaction.PairID = pair.ID
+			transaction.Phase = createPhasePairCreated
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
+			}
 		}
 		_, _ = fmt.Fprintf(output, "Created pair %s (%s) on inbox %s (%s).\n", pair.UserEmail, pair.ID, inbox.Address, inbox.ID)
+		if err := os.Remove(transactionPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("finish pair creation transaction: %w", err)
+		}
 	}
 	states, err := client.ResolvePairStates(deps.userHomeDir, command.pairSelectors)
 	if err != nil {
@@ -269,7 +342,7 @@ func runtimeConfigFrom(cfg config, userHomeDir func() (string, error)) (client.R
 	}, nil
 }
 
-func initializeSelectedEntryPoint(ctx context.Context, cfg config, deps dependencies, output io.Writer) error {
+func initializeSelectedEntryPoint(ctx context.Context, cfg config, deps dependencies, output io.Writer, resume bool) error {
 	repoPath, err := resolvePath(cfg.entryPointRepo, deps.userHomeDir)
 	if err != nil {
 		return err
@@ -281,6 +354,10 @@ func initializeSelectedEntryPoint(ctx context.Context, cfg config, deps dependen
 	result, err := initialize(ctx, entrypoint.Options{
 		RepoPath:    repoPath,
 		AgentBinary: cfg.agentBinary,
+		Resume:      resume,
+		Progress: func(message string) {
+			_, _ = fmt.Fprintf(output, "Entry point: %s.\n", message)
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("initialize selected entry point: %w", err)
@@ -307,6 +384,8 @@ func parseUpArgs(args []string) (upCommand, []string, error) {
 		switch {
 		case arg == "--create":
 			command.create = true
+		case arg == "--resume":
+			command.resume = true
 		case arg == "--foreground":
 			command.foreground = true
 		case arg == "--new-inbox":
@@ -354,8 +433,8 @@ func parseUpArgs(args []string) (upCommand, []string, error) {
 			runArgs = append(runArgs, arg)
 		}
 	}
-	if !command.create && (command.newInbox || command.email != "" || command.inbox != "" || command.transport != "") {
-		return upCommand{}, nil, errors.New("--email, --inbox, --new-inbox, and --transport require --create")
+	if !command.create && (command.resume || command.newInbox || command.email != "" || command.inbox != "" || command.transport != "") {
+		return upCommand{}, nil, errors.New("--resume, --email, --inbox, --new-inbox, and --transport require --create")
 	}
 	if command.newInbox && strings.TrimSpace(command.inbox) != "" {
 		return upCommand{}, nil, errors.New("choose exactly one of --new-inbox or --inbox")
@@ -489,7 +568,7 @@ func printRegistry(output io.Writer, registry client.PairRegistry) error {
 func upHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
   dearmachine up [--pair <email-or-uuid> ...] [run flags]
-  dearmachine up --create --email <address> (--new-inbox --transport <id> | --inbox <selector>) [run flags]
+  dearmachine up --create [--resume] --email <address> (--new-inbox --transport <id> | --inbox <selector>) [run flags]
 
 Plain "up" starts every registered pair and every referenced inbox in one
 background client using the runtime settings recorded by pair creation.
@@ -500,6 +579,170 @@ and requires --inbox. Pair creation asks the selected transport to authorize the
 Creation requires the daemon to be down.
 `)
 	return err
+}
+
+const createTransactionVersion = 1
+
+type createPhase string
+
+const (
+	createPhaseRequested             createPhase = "requested"
+	createPhaseEntryPointInitialized createPhase = "entry-point-initialized"
+	createPhaseInboxResolved         createPhase = "inbox-resolved"
+	createPhasePairAuthorized        createPhase = "pair-authorized"
+	createPhaseRuntimeConfigured     createPhase = "runtime-configured"
+	createPhasePairCreated           createPhase = "pair-created"
+)
+
+type createSelection struct {
+	Email     string `json:"email"`
+	NewInbox  bool   `json:"new_inbox"`
+	Inbox     string `json:"inbox,omitempty"`
+	Transport string `json:"transport,omitempty"`
+}
+
+func newCreateSelection(request createRequest) createSelection {
+	return createSelection{Email: request.email, NewInbox: request.newInbox, Inbox: request.inbox, Transport: request.transport}
+}
+
+func (selection createSelection) createRequest() createRequest {
+	return createRequest{email: selection.Email, newInbox: selection.NewInbox, inbox: selection.Inbox, transport: selection.Transport}
+}
+
+type createInbox struct {
+	ID         string `json:"id"`
+	Transport  string `json:"transport"`
+	ProviderID string `json:"provider_id"`
+	Address    string `json:"address"`
+}
+
+func newCreateInbox(inbox client.Inbox) createInbox {
+	return createInbox{ID: inbox.ID, Transport: inbox.Transport, ProviderID: inbox.ProviderID, Address: inbox.Address}
+}
+
+func (inbox createInbox) clientInbox() client.Inbox {
+	return client.Inbox{ID: inbox.ID, Transport: inbox.Transport, ProviderID: inbox.ProviderID, Address: inbox.Address}
+}
+
+type createTransaction struct {
+	Version int             `json:"version"`
+	Phase   createPhase     `json:"phase"`
+	Request createSelection `json:"request"`
+	Inbox   createInbox     `json:"inbox,omitempty"`
+	PairID  string          `json:"pair_id,omitempty"`
+}
+
+func createTransactionPath(userHomeDir func() (string, error)) (string, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home directory: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", errors.New("user home directory is empty")
+	}
+	return filepath.Join(home, ".dearmachine", "state", "create-transaction.json"), nil
+}
+
+func loadCreateTransaction(path string) (createTransaction, bool, error) {
+	metadata, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return createTransaction{}, false, nil
+	}
+	if err != nil {
+		return createTransaction{}, false, fmt.Errorf("inspect pair creation transaction: %w", err)
+	}
+	stat, owned := metadata.Sys().(*syscall.Stat_t)
+	if !metadata.Mode().IsRegular() || metadata.Mode()&os.ModeSymlink != 0 || metadata.Mode().Perm()&0o077 != 0 || !owned || stat.Uid != uint32(os.Getuid()) {
+		return createTransaction{}, false, errors.New("pair creation transaction must be a private regular file owned by the current user")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return createTransaction{}, false, fmt.Errorf("read pair creation transaction: %w", err)
+	}
+	var transaction createTransaction
+	if err := json.Unmarshal(data, &transaction); err != nil {
+		return createTransaction{}, false, fmt.Errorf("parse pair creation transaction: %w", err)
+	}
+	if transaction.Version != createTransactionVersion || !knownCreatePhase(transaction.Phase) {
+		return createTransaction{}, false, fmt.Errorf("unsupported pair creation transaction in %s", path)
+	}
+	return transaction, true, nil
+}
+
+func saveCreateTransaction(path string, transaction createTransaction) error {
+	data, err := json.MarshalIndent(transaction, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode pair creation transaction: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create pair creation state directory: %w", err)
+	}
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("secure pair creation state directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".create-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create pair creation transaction: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("publish pair creation transaction: %w", err)
+	}
+	return nil
+}
+
+func phaseBeforeCreate(current, target createPhase) bool {
+	order := map[createPhase]int{
+		createPhaseRequested: 1, createPhaseEntryPointInitialized: 2, createPhaseInboxResolved: 3,
+		createPhasePairAuthorized: 4, createPhaseRuntimeConfigured: 5, createPhasePairCreated: 6,
+	}
+	return order[current] < order[target]
+}
+
+func knownCreatePhase(phase createPhase) bool {
+	return !phaseBeforeCreate(phase, createPhaseRequested) && !phaseBeforeCreate(createPhasePairCreated, phase)
+}
+
+func validateResumeSelection(command upCommand, request createRequest) error {
+	checks := []struct{ label, supplied, recorded string }{
+		{"email", strings.ToLower(strings.TrimSpace(command.email)), request.email},
+		{"inbox", strings.TrimSpace(command.inbox), request.inbox},
+		{"transport", strings.ToLower(strings.TrimSpace(command.transport)), request.transport},
+	}
+	for _, check := range checks {
+		if check.supplied != "" && check.supplied != check.recorded {
+			return fmt.Errorf("--%s does not match the incomplete pair creation; resume with the original selection", check.label)
+		}
+	}
+	if command.newInbox && !request.newInbox {
+		return errors.New("--new-inbox does not match the incomplete pair creation")
+	}
+	return nil
+}
+
+func pairForEmail(registry client.PairRegistry, email string) (client.Pair, bool) {
+	for _, pair := range registry.Pairs {
+		if strings.EqualFold(pair.UserEmail, email) {
+			return pair, true
+		}
+	}
+	return client.Pair{}, false
 }
 
 func inputOrEmpty(input io.Reader) io.Reader {

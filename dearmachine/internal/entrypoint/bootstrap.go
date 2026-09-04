@@ -11,12 +11,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const (
 	skeletonCommitMessage    = "feat: initialize user entry-point scaffold"
 	dearMachineCommitMessage = "docs: add Dear Machine, reference and runbook"
 	bootstrapMarkerName      = "dearmachine-bootstrap-in-progress"
+	bootstrapJournalVersion  = 1
+)
+
+type bootstrapPhase string
+
+const (
+	phaseRepositoryInitialized bootstrapPhase = "repository-initialized"
+	phaseLFSInstalled          bootstrapPhase = "lfs-installed"
+	phaseSkeletonCommitted     bootstrapPhase = "skeleton-committed"
+	phaseMachtianiInitialized  bootstrapPhase = "machtiani-initialized"
+	phaseSkeletonSynced        bootstrapPhase = "skeleton-synced"
+	phaseDearMachineCommitted  bootstrapPhase = "dearmachine-committed"
+	phaseFinalSynced           bootstrapPhase = "final-synced"
 )
 
 var localExcludePatterns = []string{
@@ -43,6 +57,8 @@ type Options struct {
 	AgentBinary string
 	SnapshotDir string
 	RunCommand  CommandRunner
+	Resume      bool
+	Progress    func(string)
 }
 
 // Result describes a completed or skipped bootstrap.
@@ -57,6 +73,14 @@ type Result struct {
 
 type projectDetails struct {
 	Store string `json:"store"`
+}
+
+type bootstrapJournal struct {
+	Version           int            `json:"version"`
+	Phase             bootstrapPhase `json:"phase"`
+	ProjectStore      string         `json:"project_store,omitempty"`
+	SkeletonCommit    string         `json:"skeleton_commit,omitempty"`
+	DearMachineCommit string         `json:"dearmachine_commit,omitempty"`
 }
 
 // Initialize creates a two-stage, user-centered entry-point repository.
@@ -83,24 +107,33 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 	}
 
 	result := Result{RepoPath: repoPath}
-	newRepo, err := prepareRepositoryPath(repoPath)
+	newRepo, journal, err := prepareRepositoryPath(repoPath, options.Resume)
 	if err != nil {
 		return Result{}, err
 	}
 	if !newRepo {
-		result.AlreadyInitialized = true
-		return result, nil
+		if journal == nil {
+			result.AlreadyInitialized = true
+			return result, nil
+		}
+		result.ProjectStore = journal.ProjectStore
+		result.SkeletonCommit = journal.SkeletonCommit
+		result.DearMachineCommit = journal.DearMachineCommit
 	}
 
-	if _, err := run(ctx, runCommand, repoPath, "git", "init"); err != nil {
-		return Result{}, err
+	markerPath := filepath.Join(repoPath, ".git", bootstrapMarkerName)
+	if newRepo {
+		if _, err := run(ctx, runCommand, repoPath, "git", "init"); err != nil {
+			return Result{}, err
+		}
+		journal = &bootstrapJournal{Version: bootstrapJournalVersion, Phase: phaseRepositoryInitialized}
+		if err := saveBootstrapJournal(markerPath, *journal); err != nil {
+			return Result{}, err
+		}
+		progress(options, "Repository initialized")
 	}
 	if err := installLocalExcludes(repoPath); err != nil {
 		return Result{}, err
-	}
-	markerPath := filepath.Join(repoPath, ".git", bootstrapMarkerName)
-	if err := os.WriteFile(markerPath, []byte("bootstrap in progress\n"), 0o600); err != nil {
-		return Result{}, fmt.Errorf("write bootstrap marker: %w", err)
 	}
 	completed := false
 	defer func() {
@@ -109,48 +142,79 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		}
 	}()
 
-	if _, err := run(ctx, runCommand, repoPath, "git", "lfs", "install", "--local"); err != nil {
-		return Result{}, err
+	if phaseBefore(journal.Phase, phaseLFSInstalled) {
+		if _, err := run(ctx, runCommand, repoPath, "git", "lfs", "install", "--local"); err != nil {
+			return Result{}, err
+		}
+		journal.Phase = phaseLFSInstalled
+		if err := saveBootstrapJournal(markerPath, *journal); err != nil {
+			return Result{}, err
+		}
+		progress(options, "Git LFS configured")
 	}
-	if err := installSeed(repoPath, "skeleton"); err != nil {
-		return Result{}, err
-	}
-	if err := commitAll(ctx, runCommand, repoPath, skeletonCommitMessage); err != nil {
-		return Result{}, err
-	}
-	result.SkeletonCommit, err = commandText(ctx, runCommand, repoPath, "git", "rev-parse", "HEAD")
-	if err != nil {
-		return Result{}, err
+	if phaseBefore(journal.Phase, phaseSkeletonCommitted) {
+		if err := installSeed(repoPath, "skeleton"); err != nil {
+			return Result{}, err
+		}
+		if err := commitAll(ctx, runCommand, repoPath, skeletonCommitMessage); err != nil {
+			return Result{}, err
+		}
+		result.SkeletonCommit, err = commandText(ctx, runCommand, repoPath, "git", "rev-parse", "HEAD")
+		if err != nil {
+			return Result{}, err
+		}
+		journal.SkeletonCommit = result.SkeletonCommit
+		journal.Phase = phaseSkeletonCommitted
+		if err := saveBootstrapJournal(markerPath, *journal); err != nil {
+			return Result{}, err
+		}
+		progress(options, "Entry-point scaffold committed")
 	}
 
-	if _, err := run(ctx, runCommand, repoPath, agentBinary, "init", "--no-interactive", "--json"); err != nil {
-		return Result{}, err
+	if phaseBefore(journal.Phase, phaseMachtianiInitialized) {
+		if _, err := run(ctx, runCommand, repoPath, agentBinary, "init", "--no-interactive", "--json"); err != nil {
+			return Result{}, err
+		}
+		projectOutput, err := run(ctx, runCommand, repoPath, agentBinary, "project", "show", "--json")
+		if err != nil {
+			return Result{}, err
+		}
+		var project projectDetails
+		if err := json.Unmarshal(projectOutput, &project); err != nil {
+			return Result{}, fmt.Errorf("parse machtiani project details: %w", err)
+		}
+		result.ProjectStore, err = absolutePath(project.Store, "machtiani project store")
+		if err != nil {
+			return Result{}, err
+		}
+		journal.ProjectStore = result.ProjectStore
+		journal.Phase = phaseMachtianiInitialized
+		if err := saveBootstrapJournal(markerPath, *journal); err != nil {
+			return Result{}, err
+		}
+		progress(options, "Machtiani project initialized")
 	}
-	projectOutput, err := run(ctx, runCommand, repoPath, agentBinary, "project", "show", "--json")
-	if err != nil {
-		return Result{}, err
-	}
-	var project projectDetails
-	if err := json.Unmarshal(projectOutput, &project); err != nil {
-		return Result{}, fmt.Errorf("parse machtiani project details: %w", err)
-	}
-	result.ProjectStore, err = absolutePath(project.Store, "machtiani project store")
-	if err != nil {
-		return Result{}, err
-	}
+	result.ProjectStore = journal.ProjectStore
 	readmePath := filepath.Join(result.ProjectStore, "artifacts", "readme", "internal-readme.md")
 
-	if snapshotDir != "" {
+	if snapshotDir != "" && phaseBefore(journal.Phase, phaseSkeletonSynced) {
 		path, err := captureSnapshot(snapshotDir, "01-before-skeleton-sync.md", readmePath)
 		if err != nil {
 			return Result{}, err
 		}
 		result.Snapshots = append(result.Snapshots, path)
 	}
-	if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
-		return Result{}, err
+	if phaseBefore(journal.Phase, phaseSkeletonSynced) {
+		if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
+			return Result{}, err
+		}
+		journal.Phase = phaseSkeletonSynced
+		if err := saveBootstrapJournal(markerPath, *journal); err != nil {
+			return Result{}, err
+		}
+		progress(options, "Entry-point scaffold synchronized")
 	}
-	if snapshotDir != "" {
+	if snapshotDir != "" && journal.Phase == phaseSkeletonSynced {
 		path, err := captureSnapshot(snapshotDir, "02-after-skeleton-sync.md", readmePath)
 		if err != nil {
 			return Result{}, err
@@ -158,25 +222,40 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		result.Snapshots = append(result.Snapshots, path)
 	}
 
-	if err := installSeed(repoPath, "dearmachine"); err != nil {
-		return Result{}, err
+	if phaseBefore(journal.Phase, phaseDearMachineCommitted) {
+		if err := installSeed(repoPath, "dearmachine"); err != nil {
+			return Result{}, err
+		}
+		if err := commitAll(ctx, runCommand, repoPath, dearMachineCommitMessage); err != nil {
+			return Result{}, err
+		}
+		result.DearMachineCommit, err = commandText(ctx, runCommand, repoPath, "git", "rev-parse", "HEAD")
+		if err != nil {
+			return Result{}, err
+		}
+		journal.DearMachineCommit = result.DearMachineCommit
+		journal.Phase = phaseDearMachineCommitted
+		if err := saveBootstrapJournal(markerPath, *journal); err != nil {
+			return Result{}, err
+		}
+		progress(options, "Dear Machine documentation committed")
 	}
-	if err := commitAll(ctx, runCommand, repoPath, dearMachineCommitMessage); err != nil {
-		return Result{}, err
-	}
-	result.DearMachineCommit, err = commandText(ctx, runCommand, repoPath, "git", "rev-parse", "HEAD")
-	if err != nil {
-		return Result{}, err
-	}
-	if snapshotDir != "" {
+	if snapshotDir != "" && phaseBefore(journal.Phase, phaseFinalSynced) {
 		path, err := captureSnapshot(snapshotDir, "03-before-dearmachine-sync.md", readmePath)
 		if err != nil {
 			return Result{}, err
 		}
 		result.Snapshots = append(result.Snapshots, path)
 	}
-	if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
-		return Result{}, err
+	if phaseBefore(journal.Phase, phaseFinalSynced) {
+		if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
+			return Result{}, err
+		}
+		journal.Phase = phaseFinalSynced
+		if err := saveBootstrapJournal(markerPath, *journal); err != nil {
+			return Result{}, err
+		}
+		progress(options, "Dear Machine entry point synchronized")
 	}
 	if snapshotDir != "" {
 		path, err := captureSnapshot(snapshotDir, "04-after-dearmachine-sync.md", readmePath)
@@ -238,37 +317,124 @@ func absolutePath(path, label string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
-func prepareRepositoryPath(path string) (bool, error) {
+func prepareRepositoryPath(path string, resume bool) (bool, *bootstrapJournal, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			return false, fmt.Errorf("inspect entry-point repository: %w", err)
+			return false, nil, fmt.Errorf("inspect entry-point repository: %w", err)
 		}
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return false, fmt.Errorf("create entry-point repository: %w", err)
+			return false, nil, fmt.Errorf("create entry-point repository: %w", err)
 		}
-		return true, nil
+		return true, nil, nil
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return false, fmt.Errorf("entry-point repository path must be a directory, not a symlink or file: %s", path)
+		return false, nil, fmt.Errorf("entry-point repository path must be a directory, not a symlink or file: %s", path)
 	}
 	gitPath := filepath.Join(path, ".git")
 	if _, err := os.Stat(gitPath); err == nil {
-		if _, markerErr := os.Stat(filepath.Join(gitPath, bootstrapMarkerName)); markerErr == nil {
-			return false, fmt.Errorf("entry-point repository has an incomplete bootstrap: %s", path)
+		markerPath := filepath.Join(gitPath, bootstrapMarkerName)
+		if _, markerErr := os.Stat(markerPath); markerErr == nil {
+			if !resume {
+				return false, nil, fmt.Errorf("entry-point repository has an incomplete bootstrap: %s; retry with --resume", path)
+			}
+			journal, err := loadBootstrapJournal(markerPath)
+			if err != nil {
+				return false, nil, err
+			}
+			return false, &journal, nil
 		}
-		return false, nil
+		return false, nil, nil
 	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("inspect entry-point Git metadata: %w", err)
+		return false, nil, fmt.Errorf("inspect entry-point Git metadata: %w", err)
 	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return false, fmt.Errorf("read entry-point repository: %w", err)
+		return false, nil, fmt.Errorf("read entry-point repository: %w", err)
 	}
 	if len(entries) != 0 {
-		return false, fmt.Errorf("entry-point repository exists, is not a Git repository, and is not empty: %s", path)
+		return false, nil, fmt.Errorf("entry-point repository exists, is not a Git repository, and is not empty: %s", path)
 	}
-	return true, nil
+	return true, nil, nil
+}
+
+func phaseBefore(current, target bootstrapPhase) bool {
+	order := map[bootstrapPhase]int{
+		phaseRepositoryInitialized: 1,
+		phaseLFSInstalled:          2,
+		phaseSkeletonCommitted:     3,
+		phaseMachtianiInitialized:  4,
+		phaseSkeletonSynced:        5,
+		phaseDearMachineCommitted:  6,
+		phaseFinalSynced:           7,
+	}
+	return order[current] < order[target]
+}
+
+func saveBootstrapJournal(path string, journal bootstrapJournal) error {
+	data, err := json.MarshalIndent(journal, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode bootstrap journal: %w", err)
+	}
+	data = append(data, '\n')
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".dearmachine-bootstrap-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create bootstrap journal: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write bootstrap journal: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("publish bootstrap journal: %w", err)
+	}
+	return nil
+}
+
+func loadBootstrapJournal(path string) (bootstrapJournal, error) {
+	metadata, err := os.Lstat(path)
+	if err != nil {
+		return bootstrapJournal{}, fmt.Errorf("inspect bootstrap journal: %w", err)
+	}
+	stat, owned := metadata.Sys().(*syscall.Stat_t)
+	if !metadata.Mode().IsRegular() || metadata.Mode()&os.ModeSymlink != 0 || metadata.Mode().Perm()&0o077 != 0 || !owned || stat.Uid != uint32(os.Getuid()) {
+		return bootstrapJournal{}, errors.New("bootstrap journal must be a private regular file owned by the current user")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return bootstrapJournal{}, fmt.Errorf("read bootstrap journal: %w", err)
+	}
+	var journal bootstrapJournal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		return bootstrapJournal{}, fmt.Errorf("parse bootstrap journal: %w", err)
+	}
+	if journal.Version != bootstrapJournalVersion || !knownBootstrapPhase(journal.Phase) {
+		return bootstrapJournal{}, fmt.Errorf("unsupported bootstrap journal version or phase in %s", path)
+	}
+	return journal, nil
+}
+
+func knownBootstrapPhase(phase bootstrapPhase) bool {
+	return !phaseBefore(phase, phaseRepositoryInitialized) && !phaseBefore(phaseFinalSynced, phase)
+}
+
+func progress(options Options, message string) {
+	if options.Progress != nil {
+		options.Progress(message)
+	}
 }
 
 func installSeed(repoPath, phase string) error {

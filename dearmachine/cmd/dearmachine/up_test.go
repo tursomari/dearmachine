@@ -121,6 +121,54 @@ func TestUpCreateSelectedInitializationFailurePrecedesProviderMutation(t *testin
 	}
 }
 
+func TestUpCreateResumeDoesNotProvisionInboxTwice(t *testing.T) {
+	app := &fakeApplication{}
+	deps := testDependencies(t, app)
+	deps.isInteractive = func(io.Reader) bool { return false }
+	provisions := 0
+	deps.provisionInbox = func(_ context.Context, transport string) (client.Inbox, error) {
+		provisions++
+		return client.Inbox{Transport: transport, ProviderID: "durable-inbox", Address: "machine@example.test"}, nil
+	}
+	authorizations := 0
+	deps.authorizePair = func(context.Context, string, string, string) error {
+		authorizations++
+		if authorizations == 1 {
+			return errors.New("injected authorization interruption")
+		}
+		return nil
+	}
+	args := []string{"up", "--create", "--email", "user@example.test", "--new-inbox", "--transport", "agentmail", "--once"}
+	err := run(args, func(string) string { return "" }, deps)
+	if err == nil || !strings.Contains(err.Error(), "injected authorization interruption") {
+		t.Fatalf("first create error = %v", err)
+	}
+	if provisions != 1 {
+		t.Fatalf("first create provisions = %d", provisions)
+	}
+	args = append(args, "--resume")
+	if err := run(args, func(string) string { return "" }, deps); err != nil {
+		t.Fatalf("resumed create: %v", err)
+	}
+	if provisions != 1 || authorizations != 2 || app.runOnceCount != 1 {
+		t.Fatalf("resume provisions/authorizations/runs = %d/%d/%d", provisions, authorizations, app.runOnceCount)
+	}
+	home, _ := deps.userHomeDir()
+	if _, err := os.Stat(filepath.Join(home, ".dearmachine", "state", "create-transaction.json")); !os.IsNotExist(err) {
+		t.Fatalf("completed create transaction remains: %v", err)
+	}
+}
+
+func TestLoadCreateTransactionRejectsPublicState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "create-transaction.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"phase":"requested","request":{"email":"user@example.test","new_inbox":true,"transport":"agentmail"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadCreateTransaction(path); err == nil || !strings.Contains(err.Error(), "private regular file") {
+		t.Fatalf("loadCreateTransaction error = %v", err)
+	}
+}
+
 func TestUpCreateLeavesExistingSelectedCustomEntryPointUntouched(t *testing.T) {
 	deps := testDependencies(t, &fakeApplication{})
 	deps.isInteractive = func(io.Reader) bool { return false }
