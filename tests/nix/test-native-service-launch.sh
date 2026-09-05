@@ -83,9 +83,12 @@ assert_contains "backend resolve --config $CONFIG" "$MANAGER_LOG"
 assert_contains "$expected_path_prefix" "$SYSTEMD_LOG"
 assert_contains "--property=EnvironmentFile=$ENVIRONMENT_FILE" "$SYSTEMD_LOG"
 assert_contains "--property=UnsetEnvironment=AGENTMAIL_API_KEY" "$SYSTEMD_LOG"
-assert_contains "--property=Restart=on-abnormal" "$SYSTEMD_LOG"
-if grep -F -- '--property=Restart=on-failure' "$SYSTEMD_LOG" >/dev/null; then
-  echo 'launcher would restart-loop after an ordinary provider failure' >&2
+assert_contains "--property=Restart=on-failure" "$SYSTEMD_LOG"
+assert_contains "--property=RestartSec=1min" "$SYSTEMD_LOG"
+assert_contains "--property=RestartSteps=6" "$SYSTEMD_LOG"
+assert_contains "--property=RestartMaxDelaySec=1h" "$SYSTEMD_LOG"
+if grep -F -- '--property=Restart=on-abnormal' "$SYSTEMD_LOG" >/dev/null; then
+  echo 'launcher would not recover from an ordinary provider failure' >&2
   exit 1
 fi
 assert_contains "--setenv=AGENTMAIL_API_KEY_FILE=$CREDENTIAL" "$SYSTEMD_LOG"

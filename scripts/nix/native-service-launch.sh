@@ -215,8 +215,10 @@ fi
 exec "$dm_systemd_run" --user \
   --unit="$dm_unit" \
   --collect \
-  --property=Restart=on-abnormal \
-  --property=RestartSec=5s \
+  --property=Restart=on-failure \
+  --property=RestartSec=1min \
+  --property=RestartSteps=6 \
+  --property=RestartMaxDelaySec=1h \
   --property=KillMode=control-group \
   --working-directory="$dm_working_directory" \
   --setenv="PATH=$dm_service_path" \

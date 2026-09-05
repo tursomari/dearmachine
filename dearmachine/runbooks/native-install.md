@@ -147,13 +147,17 @@ available even when the user is not signed in, so the enabled service can start
 after reboot. This may require the normal local authorization supported by the
 host.
 
-The unit restarts after abnormal termination, but deliberately does not restart
-after a normal nonzero exit. Provider authentication, quota, model, and other
-actionable configuration failures therefore remain visible in `systemctl
---user status dearmachine-native.service` and the user journal without rerunning
-pending model work in a restart loop. Repair the reported condition (for an
-expired subscription sign-in, run `machtiani auth login --model <alias>`), then
-run `systemctl --user start dearmachine-native.service`.
+The unit restarts after abnormal termination and normal nonzero exits. Native
+systemd backoff spaces repeated attempts from approximately one minute through
+two, four, eight, fifteen, and thirty minutes to a one-hour ceiling. A clean
+intentional stop remains stopped. Durable message and session state lets a
+temporary network or provider failure resume without accepting the same email
+as new work. Authentication, quota, model, and other actionable failures remain
+visible in `systemctl --user status dearmachine-native.service` and the user
+journal while retries back off. Repair the reported condition (for an expired
+subscription sign-in, run `machtiani auth login --model <alias>`), then run
+`systemctl --user restart dearmachine-native.service` to retry immediately
+rather than waiting for the next scheduled attempt.
 
 Use the same helper to inspect or turn off automatic operation:
 
@@ -220,10 +224,10 @@ credential *file path*, not its value, to systemd and force-unsets any
 `AGENTMAIL_API_KEY` supplied by that environment file.
 
 Like the persistent helper, the transient unit restarts after abnormal
-termination but remains failed after a normal nonzero exit. This keeps an
-authentication or account-exhaustion failure visible without repeatedly
-running the same pending model work. Reauthenticate or repair the reported
-condition, then launch the transient unit again.
+termination and normal nonzero exits with systemd-native backoff from one
+minute to a one-hour ceiling. A clean intentional stop remains stopped.
+Reauthenticate or repair an actionable failure, then restart the transient
+unit to retry immediately rather than waiting for the next scheduled attempt.
 
 Confirm the unit and its runtime lookup environment before accepting work:
 
