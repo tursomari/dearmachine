@@ -52,6 +52,11 @@ grep -F 'WantedBy=default.target' "$UNIT" >/dev/null
 grep -F 'OPENMAIL_API_KEY_FILE=' "$UNIT" >/dev/null
 grep -F "EnvironmentFile=$HOME/.config/dearmachine/backends.env" "$UNIT" >/dev/null
 grep -F 'UnsetEnvironment=AGENTMAIL_API_KEY OPENMAIL_API_KEY SENDMUX_API_KEY' "$UNIT" >/dev/null
+grep -F 'Restart=on-abnormal' "$UNIT" >/dev/null
+if grep -F 'Restart=on-failure' "$UNIT" >/dev/null; then
+  echo 'native service would restart-loop after an ordinary provider failure' >&2
+  exit 1
+fi
 if grep -F 'private-test-value' "$UNIT" "$WRAPPER" >/dev/null; then
   echo 'native service files contain credential values' >&2
   exit 1

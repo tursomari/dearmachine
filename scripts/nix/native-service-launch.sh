@@ -215,7 +215,7 @@ fi
 exec "$dm_systemd_run" --user \
   --unit="$dm_unit" \
   --collect \
-  --property=Restart=on-failure \
+  --property=Restart=on-abnormal \
   --property=RestartSec=5s \
   --property=KillMode=control-group \
   --working-directory="$dm_working_directory" \

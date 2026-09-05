@@ -194,7 +194,11 @@ dm_unit_temporary=$dm_unit_path.new
   printf 'Environment=%s\n' "$(dm_systemd_quote "$dm_credential_variable=$dm_credential_file")"
   printf 'UnsetEnvironment=AGENTMAIL_API_KEY OPENMAIL_API_KEY SENDMUX_API_KEY\n'
   printf 'ExecStart=%s\n' "$(dm_systemd_quote "$dm_wrapper_path")"
-  printf 'Restart=on-failure\nRestartSec=5s\nKillMode=control-group\nUMask=0077\n\n'
+  # A normal nonzero exit is an actionable configuration/provider failure.
+  # Restarting it cannot repair authentication or quota and would repeatedly
+  # rerun pending model work. Signals, timeouts, and other abnormal failures
+  # remain restartable for unattended operation.
+  printf 'Restart=on-abnormal\nRestartSec=5s\nKillMode=control-group\nUMask=0077\n\n'
   printf '[Install]\nWantedBy=default.target\n'
 } >"$dm_unit_temporary"
 chmod 0600 "$dm_unit_temporary"
