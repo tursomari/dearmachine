@@ -491,7 +491,7 @@ You already know how to use `Dear Machine,`.
 - [Optional container installation](dearmachine/runbooks/host-install.md) describes the Nix OCI, rootless Podman, and current Linux lifecycle helper.
 - [DearMachine Client operations](dearmachine/runbooks/operate-entrypoint-client.md) covers launching, monitoring, and stopping the normal entry-point client.
 - [Runbooks](dearmachine/runbooks/README.md) indexes normal operations, maintenance, and isolated live-test procedures.
-- [Testing](dearmachine/TESTING.md) explains how to run and extend the automated suite.
+- [Testing](TESTING.md) is the canonical entrypoint for automated checks and live scenario evaluations.
 - [Roadmap](ROADMAP.md) outlines the next engineering tracks and alpha milestones.
 - [Custom Backend Guide](docs/custom-backend-guide.md) explains how to register your own backend agent.
 
