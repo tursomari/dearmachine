@@ -265,3 +265,14 @@ func TestSystemdStartupRaceDoesNotAdoptForeignOwner(t *testing.T) {
 		t.Fatal("adopted a foreign owner racing service startup")
 	}
 }
+
+func TestSystemdUnitPreservesLiteralEnvironmentPaths(t *testing.T) {
+	m := serviceManager{home: "/fixture/home$with%spaces", executable: "/fixture/bin$native"}
+	unit := m.unit()
+	if !strings.Contains(unit, `Environment="HOME=/fixture/home$with%%spaces"`) {
+		t.Fatalf("environment value changed: %s", unit)
+	}
+	if !strings.Contains(unit, `ExecStart="/fixture/bin$$native"`) {
+		t.Fatalf("executable expanded environment: %s", unit)
+	}
+}

@@ -110,9 +110,9 @@ XDG state/config/data/runtime roots and native control endpoints; service tests
 used injected runners or temporary mock executables. No live provider, real
 service configuration, native instance, main worktree, gitlink, or push was used.
 
-- Fresh `go test -count=1` passed: `./cmd/dearmachine` 119 tests/subtests
-  (0.373 s), `./internal/supervisor` 19 (1.156 s), `./internal/client` 354
-  (2.384 s): 492 total, zero failures or skips. The native binary built afresh.
+- Fresh `go test -count=1` passed: `./cmd/dearmachine` 120 tests/subtests
+  (0.363 s), `./internal/supervisor` 19 (1.160 s), `./internal/client` 354
+  (2.798 s): 493 total, zero failures or skips. The native binary built afresh.
 - Maintained concierge entry/shell/control/CLI/TUI suites, new bootstrap/consent/
   conversation contracts, DSH adapter suite and native handoff suite passed:
   129 tests in ten files, zero failures/skips, 2.49 s overall. Native handoff
