@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"github.com/dearmachine/dearmachine/internal/supervisor"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSystemdSeparateConsent(t *testing.T) {
@@ -160,5 +164,59 @@ func TestSystemdCLIWithMockExecutables(t *testing.T) {
 	data, _ := os.ReadFile(log)
 	if !strings.Contains(string(data), "enable-linger") || !strings.Contains(string(data), "--user disable") {
 		t.Fatalf("calls: %s", data)
+	}
+}
+
+func TestSystemdStartUsesOneNativeOwner(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".dearmachine")
+	os.MkdirAll(root, 0700)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	started := false
+	defer func() {
+		if started {
+			cancel()
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	starts := 0
+	m := serviceManager{home: home, executable: "/test/bin/dearmachine", run: func(_ string, args ...string) (string, error) {
+		command := strings.Join(args, " ")
+		if strings.Contains(command, "--user start") {
+			starts++
+			started = true
+			go func() {
+				done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{"/bin/sleep", "60"}})
+			}()
+		}
+		if strings.Contains(command, "MainPID") {
+			return strconv.Itoa(os.Getpid()), nil
+		}
+		return "", nil
+	}}
+	if err := m.save(supervisionConsent{Version: 1, UseSystemd: true}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := startWithServiceManager(m, []string{"up", "--foreground"}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := startWithServiceManager(m, []string{"up", "--foreground"}, root)
+	if err != nil || first != second || starts != 1 {
+		t.Fatalf("duplicated owner: %d %d %d %v", first, second, starts, err)
+	}
+	if _, err := startWithServiceManager(m, []string{"up", "--foreground", "--verbose"}, root); err == nil {
+		t.Fatal("silently ignored explicit flags")
+	}
+	if _, err := supervisor.Request(root, "down", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	s, err := supervisor.Request(root, "status", time.Second)
+	if err != nil || s.Supervisor != "stopped" {
+		t.Fatalf("down: %+v %v", s, err)
 	}
 }

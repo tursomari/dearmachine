@@ -272,12 +272,17 @@ func runSupervisionChoice(kind string, args []string, deps dependencies) error {
 }
 func startSelected(executable string, args []string, root string) (int, error) {
 	m := nativeServiceManager(filepath.Dir(root))
+	m.executable = executable
+	return startWithServiceManager(m, args, root)
+}
+
+func startWithServiceManager(m serviceManager, args []string, root string) (int, error) {
 	owner, err := selectSupervision(m)
 	if err != nil {
 		return 0, err
 	}
 	if owner == "supervisor-lite" {
-		return startSupervised(executable, args, root)
+		return startSupervised(m.executable, args, root)
 	}
 	if strings.Join(args, "\x00") != "up\x00--foreground" {
 		return 0, errors.New("systemd service uses saved native configuration; explicit launch flags require supervisor-lite")
