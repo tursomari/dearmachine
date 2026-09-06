@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -144,6 +145,11 @@ func launchConciergeForeground(binary string, args []string, stdin io.Reader, st
 		return fmt.Errorf("read terminal foreground group: %w", err)
 	}
 	cmd := exec.Command(binary, args...)
+	native, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd.Env = conciergeEnvironment(os.Environ(), native)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Foreground: true, Ctty: fd}
 	// A background/orphaned parent must ignore SIGTTOU while restoring the
@@ -193,4 +199,15 @@ func discoverConcierge(override, home string, lookPath func(string) (string, err
 		}
 	}
 	return "", err
+}
+
+// The launching native CLI is authoritative for later local control and consent.
+func conciergeEnvironment(environment []string, native string) []string {
+	result := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, "DEARMACHINE_NATIVE_BIN=") {
+			result = append(result, entry)
+		}
+	}
+	return append(result, "DEARMACHINE_NATIVE_BIN="+native)
 }

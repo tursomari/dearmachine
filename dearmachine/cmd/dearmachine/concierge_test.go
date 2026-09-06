@@ -226,3 +226,19 @@ func TestConciergeDiscoveryOrder(t *testing.T) {
 		t.Fatalf("override fell back: %d %v", calls, err)
 	}
 }
+
+func TestConciergePinsLaunchingNativeBinary(t *testing.T) {
+	env := conciergeEnvironment([]string{"HOME=/isolated", "DEARMACHINE_NATIVE_BIN=/wrong/binary"}, "/fixture/dearmachine")
+	count := 0
+	for _, value := range env {
+		if strings.HasPrefix(value, "DEARMACHINE_NATIVE_BIN=") {
+			count++
+			if value != "DEARMACHINE_NATIVE_BIN=/fixture/dearmachine" {
+				t.Fatal(value)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("native discovery: %v", env)
+	}
+}
