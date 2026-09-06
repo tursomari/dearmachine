@@ -18,6 +18,7 @@ import (
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
 	"github.com/dearmachine/dearmachine/internal/transports"
+	"github.com/mattn/go-isatty"
 
 	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
 )
@@ -76,19 +77,20 @@ type dependencies struct {
 		string,
 		client.ResponseTier,
 	) (application, error)
-	newPairDaemon   func([]application, int, string) (application, error)
-	newLogger       func() *log.Logger
-	notifyContext   func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
-	flagOutput      io.Writer
-	stdin           io.Reader
-	stdout          io.Writer
-	lookPath        func(string) (string, error)
-	userHomeDir     func() (string, error)
-	isInteractive   func(io.Reader) bool
-	startBackground func([]string, string) (int, error)
-	waitDaemonReady func(string, int, time.Duration) error
-	stopDaemon      func(string, time.Duration) error
-	daemonStatus    func(string) (int, bool, error)
+	newPairDaemon     func([]application, int, string) (application, error)
+	newLogger         func() *log.Logger
+	notifyContext     func(context.Context, ...os.Signal) (context.Context, context.CancelFunc)
+	flagOutput        io.Writer
+	stdin             io.Reader
+	stdout            io.Writer
+	lookPath          func(string) (string, error)
+	userHomeDir       func() (string, error)
+	isInteractive     func(io.Reader) bool
+	outputInteractive func(io.Writer) bool
+	startBackground   func([]string, string) (int, error)
+	waitDaemonReady   func(string, int, time.Duration) error
+	stopDaemon        func(string, time.Duration) error
+	daemonStatus      func(string) (int, bool, error)
 }
 
 func defaultDependencies() dependencies {
@@ -150,13 +152,13 @@ func defaultDependencies() dependencies {
 			if !ok {
 				return false
 			}
-			info, err := file.Stat()
-			return err == nil && info.Mode()&os.ModeCharDevice != 0
+			return isatty.IsTerminal(file.Fd())
 		},
-		startBackground: startBackground,
-		waitDaemonReady: client.WaitDaemonReady,
-		stopDaemon:      client.StopDaemon,
-		daemonStatus:    client.DaemonStatus,
+		outputInteractive: func(output io.Writer) bool { file, ok := output.(*os.File); return ok && isatty.IsTerminal(file.Fd()) },
+		startBackground:   startBackground,
+		waitDaemonReady:   client.WaitDaemonReady,
+		stopDaemon:        client.StopDaemon,
+		daemonStatus:      client.DaemonStatus,
 	}
 }
 
@@ -288,7 +290,10 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if len(args) > 0 && args[0] == "down" {
 		return runDown(args[1:], deps)
 	}
-	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
+		return runBare(deps)
+	}
+	if args[0] == "--help" || args[0] == "-h" {
 		return globalHelp(deps.stdout)
 	}
 	return fmt.Errorf("unknown command %q", args[0])

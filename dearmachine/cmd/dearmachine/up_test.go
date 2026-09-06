@@ -164,6 +164,10 @@ func TestLoadCreateTransactionRejectsPublicState(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"phase":"requested","request":{"email":"user@example.test","new_inbox":true,"transport":"agentmail"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// File creation permissions are filtered by the invoking shell's umask.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := loadCreateTransaction(path); err == nil || !strings.Contains(err.Error(), "private regular file") {
 		t.Fatalf("loadCreateTransaction error = %v", err)
 	}
