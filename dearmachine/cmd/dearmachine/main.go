@@ -278,6 +278,9 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 }
 
 func run(args []string, getenv func(string) string, deps dependencies) error {
+	if len(args) > 0 && (args[0] == "systemd" || args[0] == "persistence") {
+		return runSupervisionChoice(args[0], args[1:], deps)
+	}
 	if len(args) > 0 && args[0] == "_supervise" {
 		return runSupervise(args[1:], deps)
 	}
@@ -322,7 +325,9 @@ Commands:
   status        show registered pairs and client state
   inbox         maintain pair inbox state
   init          initialize the entry-point repository
-  setup-agents  configure agent backends`)
+  setup-agents  configure agent backends
+  systemd on|off|status     explicitly choose service use (no reboot persistence)
+  persistence on|off|status separately approve reboot startup AND loginctl enable-linger`)
 	return err
 }
 

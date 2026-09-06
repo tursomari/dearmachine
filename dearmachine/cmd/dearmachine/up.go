@@ -213,9 +213,6 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 			return err
 		}
 	}
-	if selectSupervision() != "supervisor-lite" {
-		return errors.New("unsupported supervision policy")
-	}
 	logPath, err := client.DefaultDaemonLogPath(deps.userHomeDir)
 	if err != nil {
 		return err

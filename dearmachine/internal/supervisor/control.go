@@ -58,6 +58,7 @@ type Config struct {
 	Command        []string
 	Ready          func(int) bool
 	Installation   func() string
+	Persistence    func() string
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
 	HealthyRun     time.Duration
@@ -174,6 +175,9 @@ func Run(ctx context.Context, cfg Config) error {
 	var pending []operation
 	snapshot := func() Status {
 		result := state
+		if cfg.Persistence != nil {
+			result.Persistence = cfg.Persistence()
+		}
 		if cfg.Installation != nil {
 			result.Installation = cfg.Installation()
 		}

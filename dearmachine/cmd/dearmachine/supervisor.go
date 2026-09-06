@@ -19,17 +19,12 @@ import (
 
 func stateFromLock(lockPath string) string { return filepath.Dir(filepath.Dir(lockPath)) }
 
-// selectSupervision is the future consent/capability boundary. TODO: consume
-// explicit saved consent and probe a usable user manager before choosing systemd.
-// Existing systemd units keep invoking up --foreground and own their retries.
-func selectSupervision() string { return "supervisor-lite" }
-
 func startBackground(args []string, logPath string) (int, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return 0, err
 	}
-	return startSupervised(executable, args, filepath.Dir(filepath.Dir(logPath)))
+	return startSelected(executable, args, filepath.Dir(filepath.Dir(logPath)))
 }
 
 func startSupervised(executable string, args []string, root string) (int, error) {
@@ -103,7 +98,7 @@ func runSupervise(args []string, deps dependencies) error {
 		}
 		return nil
 	}
-	return supervisor.Run(ctx, supervisor.Config{StateDir: *root, Command: flags.Args(), Ready: ready, BeforeStart: beforeStart, Installation: func() string { return detectStateRoot(*root) }})
+	return supervisor.Run(ctx, supervisor.Config{StateDir: *root, Command: flags.Args(), Ready: ready, Persistence: nativeServiceManager(filepath.Dir(*root)).persistence, BeforeStart: beforeStart, Installation: func() string { return detectStateRoot(*root) }})
 }
 
 func managedDaemonStatus(lockPath string) (int, bool, error) {
