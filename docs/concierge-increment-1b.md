@@ -152,22 +152,49 @@ This override does not redirect native state: it must point to the socket of
 an owner configured for the intended state root. An absent owner must still be
 bootstrapped with native `dearmachine up`; the TS client does not spawn owners.
 
-Bare native invocation checks both stdin and stdout with a real TTY probe. If
-either is not a terminal, it prints help without filesystem detection or provider
-work. `--help` always prints help. In a terminal:
+## Increment 2: foreground concierge handoff
 
-- Absent native and installer state prints installer guidance:
-  `machtiani-installer --concierge --source-root <absolute-source-root>`.
-- A valid nonempty native pair registry prints concierge guidance, the native
-  control path, and the explicit `status`, `up`, `down`, `restart` commands.
-- Existing partial, substituted, unreadable, or invalid state prints recovery
-  guidance and fails. Existing `.machtiani` state prevents fresh setup routing.
+Bare native invocation probes both stdin and stdout. `--help` always prints help;
+explicit subcommands retain their scriptable/rescue behavior.
 
-These are honest local placeholders. No TS process, conversation, install, or
-daemon is started by opening the bare CLI. Source discovery and automatic TS
-handoff remain deferred. Installation detection validates native registry
-structure; it does not perform provider/credential or complete database health
-checks. A stopped daemon is still an installation.
+| stdin and stdout | Installation detection | Result |
+| --- | --- | --- |
+| Either is not a TTY | Not performed | Help, exit 0 |
+| Both TTY | Absent | Launch `machtiani-installer --concierge`, adding `--source-root` when configured; TS selects fresh setup |
+| Both TTY | Installed, including stopped | Launch `machtiani-installer --concierge` for management |
+| Both TTY | Partial, unreadable, invalid, or substituted state | Recovery guidance, exit 1; no launch |
+
+Discovery uses `DEARMACHINE_CONCIERGE_BIN` (one absolute executable path or PATH
+name). When unset it resolves the exact name `machtiani-installer` on PATH.
+Relative paths, shell command strings, and guessed checkout locations are not
+supported. Missing/unexecutable binaries print the honest installer or management
+guidance plus discovery instructions and exit 1. The override is not silently
+replaced by another binary when discovery fails.
+
+Set `DEARMACHINE_SOURCE_ROOT` to an absolute Machtiani umbrella source checkout
+for fresh setup. Native absence routing passes it as `--source-root`; the TS
+entry also accepts it for bare/`--concierge` launch. Explicit source arguments
+win. This reuses the existing detection, installation consent, model wizard,
+and post-install re-detection flow; opening the interface authorizes no product
+changes. If no source root is configured, the TS fresh-machine shell retains
+its exact setup command and local help. Source discovery/bundling remains a
+prerequisite for a zero-configuration IXE launch.
+
+The child inherits stdin, stdout, stderr, and environment and owns the foreground
+terminal process group. The native parent waits and restores the original
+foreground group. It installs no SIGINT handler and does not forward SIGINT:
+terminal interrupts reach TS directly, preserving its two-second second-press
+window. There is no daemonization or parent-death kill policy for the concierge;
+normal terminal/session semantics apply. SIGTTOU is ignored only during foreground
+restoration after the child exits.
+
+Child exit codes propagate unchanged, including nonzero codes without duplicate
+native error logging. Signal termination maps to `128 + signal` (e.g. SIGTERM
+143). Discovery/launch failures exit 1; successful help and ordinary child exit
+are 0. Merely opening or exiting the interface never starts/stops a daemon.
+An unavailable owner remains an unconfirmed control outcome; explicitly bootstrap
+it with native `dearmachine up`. The TS management interface provides local
+commands; agent-backed conversation remains deferred.
 
 CLI exit 0 means successful help/status or confirmed lifecycle operation, including
 no-ops. Exit 1 means invalid arguments, a failed/unreachable/unknown observation,
@@ -213,3 +240,14 @@ reset, cancelled restart intent, framing errors, stale sockets, changed launch
 flags, conflicting owners, TTY routing, and conservative install detection.
 One existing permission fixture now explicitly chmods its intended public file,
 so a restrictive invoking umask cannot invalidate the fixture.
+
+Increment 2 adds default-path and literal TS-envelope tests, conservative launch
+routing/discovery tests, and real-PTY foreground, terminal restoration, signal,
+and exit-code tests. The installer repository also has an opt-in
+`concierge-native.spec.ts` gate using `DEARMACHINE_TEST_BIN`, a freshly built
+native CLI, to exercise the actual Go-to-TS handoff and all slash commands against
+a disposable native supervisor and dummy daemon. It uses no real provider.
+
+Increment 2 verification: the scoped Go gate passed 466 tests including subtests;
+the same gate passed with `-race -p 1`. The native CLI build passed. The companion
+TS native-handoff gate passed against that build using entirely disposable state.

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -13,8 +15,8 @@ func TestBareDispatchTTYGuard(t *testing.T) {
 		home := t.TempDir()
 		var output strings.Builder
 		deps := dependencies{stdout: &output, userHomeDir: func() (string, error) { return home, nil }, isInteractive: func(io.Reader) bool { return tty.in }, outputInteractive: func(io.Writer) bool { return tty.out }}
-		if err := run(nil, func(string) string { return "" }, deps); err != nil {
-			t.Fatal(err)
+		if err := run(nil, func(string) string { return "" }, deps); (err != nil) != (tty.in && tty.out) {
+			t.Fatalf("TTY %v: %v", tty, err)
 		}
 		want := "Usage:"
 		if tty.in && tty.out {
@@ -41,7 +43,7 @@ func TestBareInstalledAndPartialRouting(t *testing.T) {
 	}
 	makeUpTestPair(t, deps, "concierge")
 	output.Reset()
-	if err := run(nil, func(string) string { return "" }, deps); err != nil || !strings.Contains(output.String(), "Concierge mode") {
+	if err := run(nil, func(string) string { return "" }, deps); err == nil || !strings.Contains(output.String(), "Concierge mode") {
 		t.Fatalf("installed: %s %v", output.String(), err)
 	}
 	output.Reset()
@@ -85,5 +87,111 @@ func TestDevNullIsNotTTY(t *testing.T) {
 	defer f.Close()
 	if defaultDependencies().isInteractive(f) {
 		t.Fatal("character device mistaken for TTY")
+	}
+}
+
+func TestBareLaunchRouting(t *testing.T) {
+	for _, state := range []string{"absent", "installed", "partial", "invalid", "unreadable"} {
+		t.Run(state, func(t *testing.T) {
+			home := t.TempDir()
+			var output strings.Builder
+			deps := dependencies{stdin: strings.NewReader(""), stdout: &output, flagOutput: &output,
+				userHomeDir:   func() (string, error) { return home, nil },
+				isInteractive: func(io.Reader) bool { return true }, outputInteractive: func(io.Writer) bool { return true }}
+			if state == "installed" {
+				deps = testDependencies(t, &fakeApplication{})
+				makeUpTestPair(t, deps, "concierge")
+				deps.stdout, deps.flagOutput = &output, &output
+				deps.outputInteractive = func(io.Writer) bool { return true }
+			} else if state != "absent" {
+				root := filepath.Join(home, ".dearmachine")
+				os.Mkdir(root, 0700)
+				if state == "invalid" {
+					os.WriteFile(filepath.Join(root, "pairs.toml"), []byte("bad toml ["), 0600)
+				}
+				if state == "unreadable" {
+					os.Chmod(root, 0000)
+					defer os.Chmod(root, 0700)
+				}
+			}
+			bin := filepath.Join(home, "concierge")
+			source := filepath.Join(home, "source with spaces")
+			calls := 0
+			deps.lookPath = func(name string) (string, error) {
+				if name != bin {
+					t.Fatalf("guessed binary %q", name)
+				}
+				return bin, nil
+			}
+			childExit := errors.New("child result")
+			deps.launchConcierge = func(path string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+				calls++
+				want := []string{"--concierge"}
+				if state == "absent" {
+					want = append(want, "--source-root", source)
+				}
+				if path != bin || !reflect.DeepEqual(args, want) || stdin != deps.stdin || stdout != deps.stdout || stderr != deps.flagOutput {
+					t.Fatalf("launch: %q %q", path, args)
+				}
+				return childExit
+			}
+			env := func(key string) string {
+				if key == "DEARMACHINE_CONCIERGE_BIN" {
+					return bin
+				}
+				if key == "DEARMACHINE_SOURCE_ROOT" {
+					return source
+				}
+				return ""
+			}
+			err := run(nil, env, deps)
+			if state == "absent" || state == "installed" {
+				if calls != 1 || !errors.Is(err, childExit) {
+					t.Fatalf("calls %d, error %v", calls, err)
+				}
+			} else if calls != 0 || err == nil || !strings.Contains(output.String(), "Recovery") {
+				t.Fatalf("unsafe routing: %d %v %s", calls, err, output.String())
+			}
+			for _, args := range [][]string{nil, {"--help"}} {
+				deps.isInteractive = func(io.Reader) bool { return false }
+				deps.userHomeDir = func() (string, error) { t.Fatal("help performed detection"); return "", nil }
+				if err := run(args, env, deps); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+func TestBareDiscoveryFallback(t *testing.T) {
+	for _, override := range []string{"", "missing-concierge", "relative/path"} {
+		t.Run(override, func(t *testing.T) {
+			home := t.TempDir()
+			var output strings.Builder
+			deps := dependencies{stdout: &output, userHomeDir: func() (string, error) { return home, nil }, isInteractive: func(io.Reader) bool { return true }, outputInteractive: func(io.Writer) bool { return true }}
+			deps.lookPath = func(name string) (string, error) {
+				want := override
+				if want == "" {
+					want = "machtiani-installer"
+				}
+				if name != want {
+					t.Fatalf("unexpected discovery: %q", name)
+				}
+				return "", os.ErrNotExist
+			}
+			deps.launchConcierge = func(string, []string, io.Reader, io.Writer, io.Writer) error {
+				t.Fatal("launched missing binary")
+				return nil
+			}
+			err := run(nil, func(key string) string {
+				if key == "DEARMACHINE_CONCIERGE_BIN" {
+					return override
+				}
+				return ""
+			}, deps)
+			if err == nil || !strings.Contains(output.String(), "machtiani-installer --concierge --source-root <absolute-source-root>") || !strings.Contains(output.String(), "DEARMACHINE_CONCIERGE_BIN") {
+				t.Fatalf("guidance: %s %v", output.String(), err)
+			}
+		})
 	}
 }

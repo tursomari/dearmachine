@@ -28,6 +28,10 @@ func main() {
 	if err == nil || errors.Is(err, flag.ErrHelp) {
 		return
 	}
+	var childExit *conciergeExitError
+	if errors.As(err, &childExit) {
+		os.Exit(childExit.code)
+	}
 	log.Printf("dearmachine: %v", err)
 	os.Exit(1)
 }
@@ -84,6 +88,7 @@ type dependencies struct {
 	stdin             io.Reader
 	stdout            io.Writer
 	lookPath          func(string) (string, error)
+	launchConcierge   func(string, []string, io.Reader, io.Writer, io.Writer) error
 	userHomeDir       func() (string, error)
 	isInteractive     func(io.Reader) bool
 	outputInteractive func(io.Writer) bool
@@ -141,12 +146,13 @@ func defaultDependencies() dependencies {
 		newLogger: func() *log.Logger {
 			return log.New(os.Stderr, "dearmachine: ", log.LstdFlags)
 		},
-		notifyContext: signal.NotifyContext,
-		flagOutput:    os.Stderr,
-		stdin:         os.Stdin,
-		stdout:        os.Stdout,
-		lookPath:      exec.LookPath,
-		userHomeDir:   os.UserHomeDir,
+		notifyContext:   signal.NotifyContext,
+		flagOutput:      os.Stderr,
+		stdin:           os.Stdin,
+		stdout:          os.Stdout,
+		lookPath:        exec.LookPath,
+		launchConcierge: launchConciergeForeground,
+		userHomeDir:     os.UserHomeDir,
 		isInteractive: func(input io.Reader) bool {
 			file, ok := input.(*os.File)
 			if !ok {
@@ -297,7 +303,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 		return runDown(args[1:], deps)
 	}
 	if len(args) == 0 {
-		return runBare(deps)
+		return runBare(getenv, deps)
 	}
 	if args[0] == "--help" || args[0] == "-h" {
 		return globalHelp(deps.stdout)

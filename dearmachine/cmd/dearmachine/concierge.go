@@ -3,9 +3,14 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/supervisor"
@@ -61,9 +66,9 @@ func detectStateRoot(root string) string {
 	return "installed"
 }
 
-// runBare currently supplies an honest local handoff, with no provider session
-// or daemon mutation. The TS launcher still needs native endpoint selection.
-func runBare(deps dependencies) error {
+// runBare delegates the conversation to the existing TS entry. Detection does
+// not inspect liveness or imply permission to install or start the daemon.
+func runBare(getenv func(string) string, deps dependencies) error {
 	if !inputIsInteractive(deps) || deps.outputInteractive == nil || !deps.outputInteractive(deps.stdout) {
 		return globalHelp(deps.stdout)
 	}
@@ -71,18 +76,113 @@ func runBare(deps dependencies) error {
 	if err != nil {
 		return err
 	}
-	if home == "" {
-		return errors.New("user home directory is empty")
+	socket, err := supervisor.DefaultSocketPath(func() (string, error) { return home, nil })
+	if err != nil {
+		return err
 	}
 	output := outputOrDiscard(deps.stdout)
-	switch detectInstallation(home) {
-	case "absent":
-		_, err = fmt.Fprintln(output, "Installer mode: run machtiani-installer --concierge --source-root <absolute-source-root> to open guided setup. Source discovery and automatic handoff are pending.")
-	case "installed":
-		_, err = fmt.Fprintf(output, "Concierge mode: an installation is configured. Use dearmachine status, up, down, or restart for local management. The TS shell is available via machtiani-installer --concierge; native endpoint wiring is pending. Native control: %s\n", supervisor.SocketPath(filepath.Join(home, ".dearmachine")))
-	default:
+	state := detectInstallation(home)
+	if state != "absent" && state != "installed" {
 		_, _ = fmt.Fprintln(output, "Recovery: existing installation state is partial or unreadable. Inspect dearmachine status and dearmachine --help before repairing setup.")
 		return errors.New("installation needs recovery; automatic fresh setup was not selected")
+	}
+	guidance := func() {
+		if state == "absent" {
+			_, _ = fmt.Fprintln(output, "Installer mode: run machtiani-installer --concierge --source-root <absolute-source-root> to open guided setup. Set DEARMACHINE_SOURCE_ROOT to that absolute source root for bare launch.")
+		} else {
+			_, _ = fmt.Fprintf(output, "Concierge mode: an installation is configured. Run machtiani-installer --concierge for local management, or use dearmachine status, up, down, or restart. Native control: %s\n", socket)
+		}
+		_, _ = fmt.Fprintln(output, "Set DEARMACHINE_CONCIERGE_BIN to the concierge executable, or install machtiani-installer on PATH.")
+	}
+	binary := getenv("DEARMACHINE_CONCIERGE_BIN")
+	if binary == "" {
+		binary = "machtiani-installer"
+	}
+	// An override is one executable, never a shell command or a guessed checkout.
+	// Reject relative paths; bare names are resolved explicitly through PATH.
+	if !filepath.IsAbs(binary) && filepath.Base(binary) != binary {
+		guidance()
+		return errors.New("DEARMACHINE_CONCIERGE_BIN must be an absolute path or PATH executable name")
+	}
+	if deps.lookPath == nil {
+		guidance()
+		return errors.New("concierge executable is unavailable")
+	}
+	resolved, err := deps.lookPath(binary)
+	if err != nil {
+		guidance()
+		return fmt.Errorf("find concierge executable: %w", err)
+	}
+	args := []string{"--concierge"}
+	if state == "absent" {
+		source := getenv("DEARMACHINE_SOURCE_ROOT")
+		if source != "" {
+			if !filepath.IsAbs(source) {
+				guidance()
+				return errors.New("DEARMACHINE_SOURCE_ROOT must be absolute")
+			}
+			args = append(args, "--source-root", source)
+		}
+	}
+	launch := deps.launchConcierge
+	if launch == nil {
+		launch = launchConciergeForeground
+	}
+	err = launch(resolved, args, deps.stdin, deps.stdout, deps.flagOutput)
+	var childExit *conciergeExitError
+	if err != nil && !errors.As(err, &childExit) {
+		guidance()
+	}
+	return err
+}
+
+type conciergeExitError struct {
+	code  int
+	cause error
+}
+
+func (e *conciergeExitError) Error() string { return e.cause.Error() }
+func (e *conciergeExitError) Unwrap() error { return e.cause }
+
+// Foreground gives the child its own terminal process group, so terminal SIGINT
+// goes directly to TS. The parent does not handle or forward SIGINT, daemonize,
+// or kill the child on parent death. Wait restores the caller's foreground group.
+func launchConciergeForeground(binary string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	terminal, ok := stdin.(*os.File)
+	if !ok {
+		return errors.New("concierge launch requires a terminal file")
+	}
+	fd := int(terminal.Fd())
+	group, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP)
+	if err != nil {
+		return fmt.Errorf("read terminal foreground group: %w", err)
+	}
+	cmd := exec.Command(binary, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Foreground: true, Ctty: fd}
+	// A background/orphaned parent must ignore SIGTTOU while restoring the
+	// terminal. Do this only after the child has exited, preserving its signals.
+	defer func() {
+		ignored := signal.Ignored(syscall.SIGTTOU)
+		signal.Ignore(syscall.SIGTTOU)
+		defer func() {
+			if !ignored {
+				signal.Reset(syscall.SIGTTOU)
+			}
+		}()
+		_ = unix.IoctlSetPointerInt(fd, unix.TIOCSPGRP, group)
+	}()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	err = cmd.Wait()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		code := exit.ExitCode()
+		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			code = 128 + int(status.Signal())
+		}
+		return &conciergeExitError{code: code, cause: err}
 	}
 	return err
 }
