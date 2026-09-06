@@ -1,5 +1,9 @@
 # Native concierge increment 1b
 
+See [increment 3](concierge-increment-3.md) for current bootstrap, discovery,
+systemd consent, and conversational management behavior. The notes below record
+the earlier increments.
+
 Ordinary `dearmachine up` now starts a small independent Go supervisor. It holds
 an exclusive `flock`, owns the append-only daemon log, starts the existing
 `up --foreground` command as a child, and serves local lifecycle requests.

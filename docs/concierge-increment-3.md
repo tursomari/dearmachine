@@ -73,3 +73,58 @@ operation when no other service needs it. Disable persistence before systemd off
 `/down` cancels daemon retries even with persistence enabled; login/reboot can
 start it again. Real logout/reboot verification requires a disposable systemd
 machine and remains outside these mock-only tests.
+
+## Conversation above the local shell
+
+Management opens the existing DSH session adapter lazily, on the first natural
+language message. It uses the saved shared model-host profile at
+`$HOME/.config/machtiani/model-profile.json`; only the model host resolves the
+credential reference. It does not collect credentials or repeat the model wizard.
+Missing/invalid profiles and provider failures leave `/help` and local controls
+usable. Each management session has a disposable DSH home under installer state,
+uses the shared model-host plugin, and omits installer mutation tools.
+
+Management instructions route lifecycle actions through the native CLI, require
+read-only status questions, clarification for ambiguous requests, actual observed
+results, and two distinct service/persistence questions with explicit replies.
+Natural-language replies are handled by that DSH conversation; deterministic
+answers use `/systemd on|off|status` and `/persistence on|off|status`. The launcher
+pins `DEARMACHINE_NATIVE_BIN` to its own executable for local calls and instructs
+the agent to use it. Direct TS launch may set that variable or resolve native
+`dearmachine` on PATH. Credential values are never included in prompts.
+
+Slash commands never initialize DSH, consult a provider, or wait on the model
+turn queue. Bootstrap progress is rendered through the TUI. Ctrl+C discards
+requests still waiting for lazy setup and interrupts active agent work; it does
+not undo committed daemon operations. Exit bounds an unresponsive management
+protocol shutdown to 500 ms and restores the terminal independently of provider
+health. This is wiring and instruction coverage, not a new agent tool/LLM feature
+or proof of live model compliance. Live-provider and real reboot/logout gates
+remain deferred; no provider or real service manager is used by these tests.
+
+## Increment 3 verification
+
+Behavior tests were written first and observed failing before the corresponding
+implementation gates passed. All test invocations used disposable HOME,
+XDG state/config/data/runtime roots and native control endpoints; service tests
+used injected runners or temporary mock executables. No live provider, real
+service configuration, native instance, main worktree, gitlink, or push was used.
+
+- Fresh `go test -count=1` passed: `./cmd/dearmachine` 119 tests/subtests
+  (0.373 s), `./internal/supervisor` 19 (1.156 s), `./internal/client` 354
+  (2.384 s): 492 total, zero failures or skips. The native binary built afresh.
+- Maintained concierge entry/shell/control/CLI/TUI suites, new bootstrap/consent/
+  conversation contracts, DSH adapter suite and native handoff suite passed:
+  129 tests in ten files, zero failures/skips, 2.49 s overall. Native handoff
+  includes three tests against the freshly built CLI, real PTYs, absent-owner
+  bootstrap with a guaranteed local parse failure, and offline-profile recovery.
+- Workspace `pnpm build` and `pnpm typecheck` passed. The build retained its
+  sourcemap/plugin-timing warnings. Both repository diffs pass `git diff --check`.
+- Full Nix runtime closure, live-provider compliance, and actual reboot/logout
+  tests were not run. The scoped gates avoid the earlier Nix ENOSPC problem;
+  approximately 2 GB remained free in `/tmp` at completion.
+
+After a bootstrap attempt, TS reports the observed running/backoff/failed/stopped
+state without issuing a second `up`. A concurrent stop is not undone and failed
+startup is not blindly retried. Systemd startup also verifies that its MainPID
+matches the observed native supervisor before claiming service ownership.
