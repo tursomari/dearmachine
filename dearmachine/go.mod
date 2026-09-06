@@ -8,6 +8,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-sqlite3 v1.14.32
 	golang.org/x/net v0.40.0
+	golang.org/x/sys v0.33.0
 	sendmux.ai/go v1.4.1
 )
 
@@ -36,7 +37,6 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/exp v0.0.0-20230725093048-515e97ebf090 // indirect
 	golang.org/x/sync v0.14.0 // indirect
-	golang.org/x/sys v0.33.0 // indirect
 	golang.org/x/text v0.25.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

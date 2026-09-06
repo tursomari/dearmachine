@@ -104,3 +104,50 @@ func spawn(argv []string, log *os.File) (*childProcess, error) {
 
 func (c *childProcess) terminate() { _ = syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM) }
 func (c *childProcess) kill()      { _ = syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL) }
+
+// HasRecord is read-only. A leftover record requires socket-based recovery;
+// it must never cause a fallback to signalling a stale PID.
+func HasRecord(root string) (bool, error) {
+	for _, path := range []string{filepath.Join(root, "run", "supervisor.lock"), SocketPath(root)} {
+		if _, err := os.Lstat(path); err == nil {
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// CheckAvailable probes ownership before spawning. The child must still acquire
+// the lock itself: this probe is not a reservation against concurrent starts.
+func CheckAvailable(root string) error {
+	lock, err := acquire(root)
+	if err != nil {
+		return err
+	}
+	return lock.Close()
+}
+
+// StartDetached starts the non-agent owner in its own session. The caller
+// confirms startup through the socket, never through this diagnostic PID.
+func StartDetached(root string, argv []string) (int, error) {
+	if len(argv) == 0 {
+		return 0, errors.New("supervisor command is required")
+	}
+	if err := privateDir(root); err != nil {
+		return 0, err
+	}
+	log, err := openLog(root)
+	if err != nil {
+		return 0, err
+	}
+	defer log.Close()
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdout, cmd.Stderr = log, log
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	go func() { _ = cmd.Wait() }()
+	return cmd.Process.Pid, nil
+}

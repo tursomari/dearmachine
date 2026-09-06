@@ -4,48 +4,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
+	"github.com/dearmachine/dearmachine/internal/supervisor"
 )
 
 const daemonStartupTimeout = 15 * time.Second
-
-func startBackground(args []string, logPath string) (int, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return 0, fmt.Errorf("locate dearmachine executable: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
-		return 0, fmt.Errorf("create log directory: %w", err)
-	}
-	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		return 0, fmt.Errorf("open daemon log: %w", err)
-	}
-	command := exec.Command(executable, args...)
-	command.Stdin = nil
-	command.Stdout = logFile
-	command.Stderr = logFile
-	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := command.Start(); err != nil {
-		_ = logFile.Close()
-		return 0, fmt.Errorf("start background client: %w", err)
-	}
-	pid := command.Process.Pid
-	if err := command.Process.Release(); err != nil {
-		_ = logFile.Close()
-		return 0, fmt.Errorf("release background client PID %d: %w", pid, err)
-	}
-	if err := logFile.Close(); err != nil {
-		return 0, fmt.Errorf("close daemon log: %w", err)
-	}
-	return pid, nil
-}
 
 func runStatus(args []string, deps dependencies) error {
 	flags := flag.NewFlagSet("status", flag.ContinueOnError)
@@ -62,7 +27,46 @@ func runStatus(args []string, deps dependencies) error {
 	}
 	status := deps.daemonStatus
 	if status == nil {
-		status = client.DaemonStatus
+		status = managedDaemonStatus
+	}
+	present, err := supervisor.HasRecord(stateFromLock(lockPath))
+	if err != nil {
+		return err
+	}
+	if present {
+		s, err := querySupervisor(stateFromLock(lockPath))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(outputOrDiscard(deps.stdout), "Installation: %s. Supervisor: %s. Daemon: %s (PID %d). Persistence: %s.\n", s.Installation, s.Supervisor, s.Daemon, s.DaemonPID, s.Persistence)
+		if err != nil {
+			return err
+		}
+		if s.RetryInMs != nil {
+			if _, err := fmt.Fprintf(outputOrDiscard(deps.stdout), "Retry in %d ms.\n", *s.RetryInMs); err != nil {
+				return err
+			}
+		}
+		if s.LastExit != "" {
+			if _, err := fmt.Fprintf(outputOrDiscard(deps.stdout), "Last exit: %s\n", s.LastExit); err != nil {
+				return err
+			}
+		}
+		if s.Installation != "installed" {
+			return fmt.Errorf("installation is %s; inspect setup before repairing", s.Installation)
+		}
+		if s.Supervisor == "failed" || s.Daemon == "unknown" {
+			return fmt.Errorf("supervisor is %s; inspect daemon log", s.Supervisor)
+		}
+		registryPath, err := client.DefaultPairRegistryPath(deps.userHomeDir)
+		if err != nil {
+			return err
+		}
+		registry, err := client.LoadPairRegistry(registryPath)
+		if err != nil {
+			return err
+		}
+		return printRegistry(outputOrDiscard(deps.stdout), registry)
 	}
 	pid, running, err := status(lockPath)
 	if err != nil {
@@ -103,7 +107,7 @@ func runDown(args []string, deps dependencies) error {
 	}
 	stop := deps.stopDaemon
 	if stop == nil {
-		stop = client.StopDaemon
+		stop = stopManagedDaemon
 	}
 	if err := stop(lockPath, daemonStartupTimeout); err != nil {
 		if errors.Is(err, client.ErrDaemonStopped) {

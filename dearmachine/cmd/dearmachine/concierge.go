@@ -14,13 +14,20 @@ import (
 // Detection is deliberately independent of daemon liveness. A partial or
 // inaccessible installation must never route into a fresh setup implicitly.
 func detectInstallation(home string) string {
-	root := filepath.Join(home, ".dearmachine")
+	state := detectStateRoot(filepath.Join(home, ".dearmachine"))
+	if state != "absent" {
+		return state
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".machtiani")); os.IsNotExist(err) {
+		return "absent"
+	}
+	return "partial"
+}
+
+func detectStateRoot(root string) string {
 	info, err := os.Lstat(root)
 	if os.IsNotExist(err) {
-		if _, err := os.Lstat(filepath.Join(home, ".machtiani")); os.IsNotExist(err) {
-			return "absent"
-		}
-		return "partial"
+		return "absent"
 	}
 	if err != nil {
 		return "unreadable"

@@ -16,6 +16,7 @@ import (
 
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
+	"github.com/dearmachine/dearmachine/internal/supervisor"
 )
 
 type stringListFlag []string
@@ -196,8 +197,21 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	if command.foreground || cfg.once {
 		return runPairStates(cfg, getenv, deps, states)
 	}
-	if err := requireDaemonStopped(deps.userHomeDir); err != nil {
+	lock, err := client.DefaultDaemonLockPath(deps.userHomeDir)
+	if err != nil {
 		return err
+	}
+	present, err := supervisor.HasRecord(stateFromLock(lock))
+	if err != nil {
+		return err
+	}
+	if !present {
+		if err := requireDaemonStopped(deps.userHomeDir); err != nil {
+			return err
+		}
+	}
+	if selectSupervision() != "supervisor-lite" {
+		return errors.New("unsupported supervision policy")
 	}
 	logPath, err := client.DefaultDaemonLogPath(deps.userHomeDir)
 	if err != nil {

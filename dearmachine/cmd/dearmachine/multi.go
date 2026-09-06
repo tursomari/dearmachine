@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
+	"github.com/dearmachine/dearmachine/internal/supervisor"
 	"github.com/dearmachine/dearmachine/internal/synctrigger"
 	"github.com/dearmachine/dearmachine/internal/transports"
 )
@@ -17,6 +19,19 @@ func requireDaemonStopped(userHomeDir func() (string, error)) error {
 	path, err := client.DefaultDaemonLockPath(userHomeDir)
 	if err != nil {
 		return err
+	}
+	present, err := supervisor.HasRecord(stateFromLock(path))
+	if err != nil {
+		return err
+	}
+	if present {
+		status, err := supervisor.Request(stateFromLock(path), "status", 5*time.Second)
+		if err != nil {
+			return err
+		}
+		if status.Supervisor != "stopped" {
+			return fmt.Errorf("supervisor is %s; run dearmachine down before changing pairs", status.Supervisor)
+		}
 	}
 	unlock, err := client.CreateDaemonLock(path)
 	if err != nil {

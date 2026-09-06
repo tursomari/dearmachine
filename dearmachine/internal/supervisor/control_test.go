@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -85,7 +87,7 @@ func TestControlLifecycle(t *testing.T) {
 }
 
 func TestBackoffBoundAndStop(t *testing.T) {
-	root := serveTest(t, Config{Command: []string{"/bin/sh", "-c", "exit 7"}, InitialBackoff: 80 * time.Millisecond, MaxBackoff: 100 * time.Millisecond, MaxFailures: 3})
+	root := serveTest(t, Config{Command: []string{"/bin/sh", "-c", "exit 7"}, Ready: func(int) bool { return false }, InitialBackoff: 80 * time.Millisecond, MaxBackoff: 100 * time.Millisecond, MaxFailures: 3})
 	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "backing-off" })
 	if s.RetryInMs == nil || *s.RetryInMs > 100 || !strings.Contains(s.LastExit, "7") {
 		t.Fatalf("backoff: %+v", s)
@@ -185,5 +187,42 @@ func TestStartupTimeoutFailsAndReaps(t *testing.T) {
 	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
 	if s.DaemonPID != 0 || !strings.Contains(s.LastExit, "readiness timeout") {
 		t.Fatalf("timeout: %+v", s)
+	}
+}
+
+func TestLaunchOptionsAreNotSilentlyIgnored(t *testing.T) {
+	root := serveTest(t, Config{Command: []string{"/bin/sleep", "60"}})
+	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
+	if _, err := RequestUp(root, []string{"/bin/sleep", "61"}, time.Second); err == nil {
+		t.Fatal("changed running command accepted")
+	}
+	if _, err := Request(root, "down", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RequestUp(root, []string{"/bin/sleep", "61"}, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientTimeoutDoesNotUndoCommittedUp(t *testing.T) {
+	var ready atomic.Bool
+	root := serveTest(t, Config{Command: []string{"/bin/sleep", "60"}, Ready: func(int) bool { return ready.Load() }})
+	if _, err := Request(root, "up", 20*time.Millisecond); err == nil {
+		t.Fatal("unready child reported success")
+	}
+	ready.Store(true)
+	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
+}
+
+func TestOwnershipCheckPreventsChildSpawn(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "unexpected")
+	serveTest(t, Config{StateDir: root, Command: []string{"/bin/touch", marker}, BeforeStart: func() error { return errors.New("another daemon owner") }, MaxFailures: 1})
+	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
+	if !strings.Contains(s.LastExit, "another daemon owner") {
+		t.Fatalf("ownership: %+v", s)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("spawned despite another owner")
 	}
 }

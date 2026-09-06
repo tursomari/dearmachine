@@ -157,8 +157,8 @@ func defaultDependencies() dependencies {
 		outputInteractive: func(output io.Writer) bool { file, ok := output.(*os.File); return ok && isatty.IsTerminal(file.Fd()) },
 		startBackground:   startBackground,
 		waitDaemonReady:   client.WaitDaemonReady,
-		stopDaemon:        client.StopDaemon,
-		daemonStatus:      client.DaemonStatus,
+		stopDaemon:        stopManagedDaemon,
+		daemonStatus:      managedDaemonStatus,
 	}
 }
 
@@ -272,6 +272,12 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 }
 
 func run(args []string, getenv func(string) string, deps dependencies) error {
+	if len(args) > 0 && args[0] == "_supervise" {
+		return runSupervise(args[1:], deps)
+	}
+	if len(args) > 0 && args[0] == "restart" {
+		return runRestart(args[1:], getenv, deps)
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return runInit(args[1:], deps)
 	}
@@ -305,7 +311,8 @@ func globalHelp(output io.Writer) error {
 
 Commands:
   up            create pairs or start registered pairs
-  down          stop the background client
+  down          stop the background client and cancel retries
+  restart       restart through the existing supervisor
   status        show registered pairs and client state
   inbox         maintain pair inbox state
   init          initialize the entry-point repository

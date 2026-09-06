@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"time"
 )
@@ -34,12 +36,14 @@ type Response struct {
 }
 
 type request struct {
-	Version int    `json:"version"`
-	Command string `json:"command"`
+	Version int      `json:"version"`
+	Command string   `json:"command"`
+	Argv    []string `json:"argv,omitempty"`
 }
 
 type operation struct {
 	command string
+	argv    []string
 	reply   chan Response
 }
 
@@ -47,8 +51,10 @@ type operation struct {
 // check of this child's readiness. Nil means successful exec is sufficient.
 type Config struct {
 	StateDir       string
+	BeforeStart    func() error
 	Command        []string
 	Ready          func(int) bool
+	Installation   func() string
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
 	HealthyRun     time.Duration
@@ -158,6 +164,9 @@ func Run(ctx context.Context, cfg Config) error {
 	var pending []operation
 	snapshot := func() Status {
 		result := state
+		if cfg.Installation != nil {
+			result.Installation = cfg.Installation()
+		}
 		if !retryAt.IsZero() {
 			ms := max(int64(0), time.Until(retryAt).Milliseconds())
 			result.RetryInMs = &ms
@@ -194,7 +203,12 @@ func Run(ctx context.Context, cfg Config) error {
 		healthySince = time.Time{}
 		exitReason = ""
 		var err error
-		child, err = spawn(cfg.Command, log)
+		if cfg.BeforeStart != nil {
+			err = cfg.BeforeStart()
+		}
+		if err == nil {
+			child, err = spawn(cfg.Command, log)
+		}
 		if err != nil {
 			failed("start failed: " + err.Error())
 			return
@@ -253,6 +267,13 @@ func Run(ctx context.Context, cfg Config) error {
 					pending = append(pending, op)
 				}
 			case "up", "restart":
+				if len(op.argv) != 0 && !slices.Equal(op.argv, cfg.Command) {
+					if child != nil || len(pending) != 0 {
+						respond(op, false, "launch options differ; run dearmachine down before up with new options")
+						continue
+					}
+					cfg.Command = slices.Clone(op.argv)
+				}
 				if len(pending) != 0 {
 					if op.command == "up" && wanted {
 						pending = append(pending, op)
@@ -325,13 +346,15 @@ func Run(ctx context.Context, cfg Config) error {
 
 func handle(ctx context.Context, conn net.Conn, requests chan<- operation) {
 	defer conn.Close()
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopClose()
 	conn.SetDeadline(time.Now().Add(4 * time.Second))
 	reader := bufio.NewReaderSize(conn, 65536)
 	line, err := reader.ReadSlice('\n')
 	var req request
 	reply := Response{Version: 1, Error: "invalid control request"}
-	if err == nil && json.Unmarshal(line, &req) == nil && req.Version == 1 && validCommand(req.Command) {
-		op := operation{command: req.Command, reply: make(chan Response, 1)}
+	if err == nil && json.Unmarshal(line, &req) == nil && req.Version == 1 && validCommand(req.Command) && (len(req.Argv) == 0 || (req.Command == "up" && filepath.IsAbs(req.Argv[0]))) {
+		op := operation{command: req.Command, argv: req.Argv, reply: make(chan Response, 1)}
 		timer := time.NewTimer(3500 * time.Millisecond)
 		defer timer.Stop()
 		select {
@@ -359,6 +382,17 @@ func validCommand(command string) bool {
 // Request sends exactly one v1 operation, with a total deadline and size bound.
 // A transport failure is an unknown outcome, never evidence of stopped state.
 func Request(root, command string, timeout time.Duration) (Status, error) {
+	return sendRequest(root, request{Version: 1, Command: command}, timeout)
+}
+
+// RequestUp is a Go extension that preserves explicit launch options. A running
+// child must be stopped before replacing its command; TS needs no argv field.
+func RequestUp(root string, argv []string, timeout time.Duration) (Status, error) {
+	return sendRequest(root, request{Version: 1, Command: "up", Argv: argv}, timeout)
+}
+
+func sendRequest(root string, req request, timeout time.Duration) (Status, error) {
+	command := req.Command
 	if !validCommand(command) || timeout <= 0 {
 		return Status{}, errors.New("invalid control request")
 	}
@@ -369,7 +403,7 @@ func Request(root, command string, timeout time.Duration) (Status, error) {
 	}
 	defer conn.Close()
 	conn.SetDeadline(deadline)
-	if err := json.NewEncoder(conn).Encode(request{Version: 1, Command: command}); err != nil {
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return Status{}, err
 	}
 	line, err := bufio.NewReaderSize(conn, 65536).ReadSlice('\n')
@@ -381,6 +415,9 @@ func Request(root, command string, timeout time.Duration) (Status, error) {
 		return Status{}, err
 	}
 	if response.Version != 1 || !response.OK {
+		if response.Error != "" {
+			return response.Status, errors.New(response.Error)
+		}
 		return response.Status, errors.New("operation unconfirmed; inspect dearmachine status and daemon log")
 	}
 	if !validStatus(response.Status) {
