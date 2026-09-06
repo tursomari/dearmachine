@@ -174,7 +174,7 @@ func TestBareDiscoveryFallback(t *testing.T) {
 				if want == "" {
 					want = "machtiani-installer"
 				}
-				if name != want {
+				if name != want && !(override == "" && filepath.IsAbs(name)) {
 					t.Fatalf("unexpected discovery: %q", name)
 				}
 				return "", os.ErrNotExist
@@ -193,5 +193,36 @@ func TestBareDiscoveryFallback(t *testing.T) {
 				t.Fatalf("guidance: %s %v", output.String(), err)
 			}
 		})
+	}
+}
+
+func TestConciergeDiscoveryOrder(t *testing.T) {
+	home := t.TempDir()
+	local := filepath.Join(home, ".local", "bin", "machtiani-installer")
+	nix := filepath.Join(home, ".nix-profile", "bin", "machtiani-installer")
+	for _, target := range []string{"machtiani-installer", local, nix, "missing"} {
+		var calls []string
+		_, err := discoverConcierge("", home, func(name string) (string, error) {
+			calls = append(calls, name)
+			if name == target {
+				return name, nil
+			}
+			return "", os.ErrNotExist
+		})
+		want := []string{"machtiani-installer"}
+		if target != want[0] {
+			want = append(want, local)
+		}
+		if target != want[len(want)-1] {
+			want = append(want, nix)
+		}
+		if !reflect.DeepEqual(calls, want) || (err != nil) != (target == "missing") {
+			t.Fatalf("%s: %v %v", target, calls, err)
+		}
+	}
+	calls := 0
+	_, err := discoverConcierge("explicit-missing", home, func(string) (string, error) { calls++; return "", os.ErrNotExist })
+	if err == nil || calls != 1 {
+		t.Fatalf("override fell back: %d %v", calls, err)
 	}
 }

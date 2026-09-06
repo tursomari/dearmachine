@@ -94,21 +94,7 @@ func runBare(getenv func(string) string, deps dependencies) error {
 		}
 		_, _ = fmt.Fprintln(output, "Set DEARMACHINE_CONCIERGE_BIN to the concierge executable, or install machtiani-installer on PATH.")
 	}
-	binary := getenv("DEARMACHINE_CONCIERGE_BIN")
-	if binary == "" {
-		binary = "machtiani-installer"
-	}
-	// An override is one executable, never a shell command or a guessed checkout.
-	// Reject relative paths; bare names are resolved explicitly through PATH.
-	if !filepath.IsAbs(binary) && filepath.Base(binary) != binary {
-		guidance()
-		return errors.New("DEARMACHINE_CONCIERGE_BIN must be an absolute path or PATH executable name")
-	}
-	if deps.lookPath == nil {
-		guidance()
-		return errors.New("concierge executable is unavailable")
-	}
-	resolved, err := deps.lookPath(binary)
+	resolved, err := discoverConcierge(getenv("DEARMACHINE_CONCIERGE_BIN"), home, deps.lookPath)
 	if err != nil {
 		guidance()
 		return fmt.Errorf("find concierge executable: %w", err)
@@ -185,4 +171,26 @@ func launchConciergeForeground(binary string, args []string, stdin io.Reader, st
 		return &conciergeExitError{code: code, cause: err}
 	}
 	return err
+}
+
+// An explicit override is authoritative, even when it cannot be executed.
+func discoverConcierge(override, home string, lookPath func(string) (string, error)) (string, error) {
+	if lookPath == nil {
+		return "", errors.New("concierge executable is unavailable")
+	}
+	if override != "" {
+		if !filepath.IsAbs(override) && filepath.Base(override) != override {
+			return "", errors.New("DEARMACHINE_CONCIERGE_BIN must be an absolute path or PATH executable name")
+		}
+		return lookPath(override)
+	}
+	var err error
+	for _, candidate := range []string{"machtiani-installer", filepath.Join(home, ".local", "bin", "machtiani-installer"), filepath.Join(home, ".nix-profile", "bin", "machtiani-installer")} {
+		var resolved string
+		resolved, err = lookPath(candidate)
+		if err == nil {
+			return resolved, nil
+		}
+	}
+	return "", err
 }
