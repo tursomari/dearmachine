@@ -220,3 +220,48 @@ func TestSystemdStartUsesOneNativeOwner(t *testing.T) {
 		t.Fatalf("down: %+v %v", s, err)
 	}
 }
+
+func TestSystemdDoesNotAdoptForeignSupervisor(t *testing.T) {
+	deps, root := supervisedDeps(t)
+	home, _ := deps.userHomeDir()
+	m := serviceManager{home: home, executable: "/test/bin/dearmachine", run: func(string, ...string) (string, error) { return "0", nil }}
+	if err := m.save(supervisionConsent{Version: 1, UseSystemd: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startWithServiceManager(m, []string{"up", "--foreground"}, root); err == nil {
+		t.Fatal("foreign owner adopted")
+	}
+}
+
+func TestSystemdStartupRaceDoesNotAdoptForeignOwner(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, ".dearmachine")
+	os.MkdirAll(root, 0700)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	started := false
+	defer func() {
+		if started {
+			cancel()
+			if err := <-done; err != nil {
+				t.Error(err)
+			}
+		}
+	}()
+	m := serviceManager{home: home, executable: "/test/bin/dearmachine", run: func(_ string, args ...string) (string, error) {
+		if strings.Contains(strings.Join(args, " "), "--user start") {
+			started = true
+			go func() {
+				done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{"/bin/sleep", "60"}})
+			}()
+		}
+		return "0", nil
+	}}
+	if err := m.save(supervisionConsent{Version: 1, UseSystemd: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startWithServiceManager(m, []string{"up", "--foreground"}, root); err == nil {
+		t.Fatal("adopted a foreign owner racing service startup")
+	}
+}

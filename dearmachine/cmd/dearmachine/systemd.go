@@ -308,6 +308,13 @@ func startWithServiceManager(m serviceManager, args []string, root string) (int,
 	deadline := time.Now().Add(daemonStartupTimeout)
 	for time.Now().Before(deadline) {
 		if s, err := supervisor.Request(root, "status", 100*time.Millisecond); err == nil && s.Daemon == "running" {
+			if err := checkOtherOwner(root, s); err != nil {
+				return 0, err
+			}
+			mainPID, queryErr := m.run("systemctl", "--user", "show", conciergeUnit, "--property=MainPID", "--value")
+			if queryErr != nil || mainPID != strconv.Itoa(s.SupervisorPID) {
+				return 0, errors.New("another supervisor won the startup race; systemd ownership is unconfirmed")
+			}
 			return s.DaemonPID, nil
 		}
 		time.Sleep(25 * time.Millisecond)
