@@ -213,3 +213,25 @@ func querySupervisor(root string) (supervisor.Status, error) {
 	}
 	return s, checkOtherOwner(root, s)
 }
+
+// Headless bootstrap validates native state without setup, prompts or provider work.
+// The detached owner's flock remains the only supervisor ownership authority.
+func runBootstrap(getenv func(string) string, deps dependencies) error {
+	home, err := deps.userHomeDir()
+	if err != nil {
+		return err
+	}
+	root := filepath.Join(home, ".dearmachine")
+	if override := getenv("DEARMACHINE_SUPERVISOR_SOCKET"); override != "" && override != supervisor.SocketPath(root) {
+		return errors.New("bootstrap socket must match HOME/.dearmachine/run/supervisor.sock; custom owners must be started explicitly")
+	}
+	if detectInstallation(home) != "installed" {
+		return errors.New("no verified installation; inspect dearmachine status and setup before starting")
+	}
+	starter := deps.startBackground
+	if starter == nil {
+		starter = startBackground
+	}
+	_, err = starter([]string{"up", "--foreground"}, supervisor.LogPath(root))
+	return err
+}

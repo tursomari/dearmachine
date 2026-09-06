@@ -43,6 +43,9 @@ type upCommand struct {
 }
 
 func runUp(args []string, getenv func(string) string, deps dependencies) error {
+	if len(args) == 1 && args[0] == "--bootstrap" {
+		return runBootstrap(getenv, deps)
+	}
 	command, runArgs, err := parseUpArgs(args)
 	if err != nil {
 		return err

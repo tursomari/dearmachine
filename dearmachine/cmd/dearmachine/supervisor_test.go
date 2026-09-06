@@ -266,3 +266,44 @@ func TestSupervisorDoesNotHideAnotherDaemonOwner(t *testing.T) {
 		t.Fatal("down claimed another owner's daemon was stopped")
 	}
 }
+
+func TestHeadlessBootstrap(t *testing.T) {
+	for _, installed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(installed), func(t *testing.T) {
+			deps := testDependencies(t, &fakeApplication{})
+			if installed {
+				makeUpTestPair(t, deps, "bootstrap")
+			}
+			calls := 0
+			deps.startBackground = func(args []string, log string) (int, error) {
+				calls++
+				if strings.Join(args, " ") != "up --foreground" {
+					t.Fatalf("args: %v", args)
+				}
+				return 123, nil
+			}
+			err := run([]string{"up", "--bootstrap"}, func(string) string { return "" }, deps)
+			if installed && (err != nil || calls != 1) {
+				t.Fatalf("bootstrap: %v, calls %d", err, calls)
+			}
+			if !installed && (err == nil || calls != 0) {
+				t.Fatalf("absent: %v, calls %d", err, calls)
+			}
+		})
+	}
+}
+
+func TestBootstrapRejectsMismatchedEndpoint(t *testing.T) {
+	deps := testDependencies(t, &fakeApplication{})
+	makeUpTestPair(t, deps, "bootstrap")
+	deps.startBackground = func([]string, string) (int, error) { t.Fatal("started wrong owner"); return 0, nil }
+	err := run([]string{"up", "--bootstrap"}, func(key string) string {
+		if key == "DEARMACHINE_SUPERVISOR_SOCKET" {
+			return filepath.Join(t.TempDir(), "other.sock")
+		}
+		return ""
+	}, deps)
+	if err == nil || !strings.Contains(err.Error(), "socket") {
+		t.Fatalf("error: %v", err)
+	}
+}
