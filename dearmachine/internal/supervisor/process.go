@@ -12,6 +12,20 @@ import (
 
 var ErrLocked = errors.New("supervisor is already owned; inspect dearmachine status")
 
+// DefaultSocketPath follows the native CLI home dependency. On Linux,
+// os.UserHomeDir requires HOME; it does not fall back to XDG or the passwd DB.
+func DefaultSocketPath(userHomeDir func() (string, error)) (string, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(home) {
+		return "", errors.New("user home directory must be absolute")
+	}
+	return SocketPath(filepath.Join(home, ".dearmachine")), nil
+}
+
+// SocketPath is the single control endpoint beneath an explicit state root.
 func SocketPath(root string) string { return filepath.Join(root, "run", "supervisor.sock") }
 func LogPath(root string) string    { return filepath.Join(root, "log", "dearmachine.log") }
 

@@ -252,3 +252,52 @@ func TestLaunchDirectoryFollowsNativeUp(t *testing.T) {
 		t.Fatalf("launch directories: %q %v", data, err)
 	}
 }
+
+func TestDefaultSocketPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	got, err := DefaultSocketPath(os.UserHomeDir)
+	if err != nil || got != filepath.Join(home, ".dearmachine", "run", "supervisor.sock") {
+		t.Fatalf("default endpoint: %q %v", got, err)
+	}
+	for _, home := range []string{"", "relative"} {
+		if _, err := DefaultSocketPath(func() (string, error) { return home, nil }); err == nil {
+			t.Fatalf("accepted home %q", home)
+		}
+	}
+	t.Setenv("HOME", "")
+	if _, err := DefaultSocketPath(os.UserHomeDir); err == nil {
+		t.Fatal("missing HOME must fail, never fall back to XDG or passwd")
+	}
+}
+
+func TestTSShapedControlRequests(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := serveTest(t, Config{StateDir: filepath.Join(home, ".dearmachine"), Command: []string{"/bin/sleep", "60"}})
+	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
+	socket, err := DefaultSocketPath(os.UserHomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{"status", "down", "up", "restart"} {
+		conn, err := net.Dial("unix", socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.SetDeadline(time.Now().Add(time.Second))
+		// Literal TS wire envelope, without Go-only argv/directory extensions.
+		conn.Write([]byte(`{"version":1,"command":"` + command + `"}` + "\n"))
+		var reply Response
+		err = json.NewDecoder(conn).Decode(&reply)
+		conn.Close()
+		want := "running"
+		if command == "down" {
+			want = "stopped"
+		}
+		if err != nil || !reply.OK || reply.Version != 1 || reply.Status.Daemon != want {
+			t.Fatalf("%s: %+v %v", command, reply, err)
+		}
+	}
+}

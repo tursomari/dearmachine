@@ -135,14 +135,22 @@ are deferred.
 
 ## TS mapping and bare CLI handoff
 
-The installer increment 1 dispatcher and slash commands already send the four
-commands above. Its `SocketDaemonControl` constructor can connect directly to
-`<native-state>/run/supervisor.sock`. **The current TS launcher instead defaults
-to `$XDG_STATE_HOME/machtiani-installer/supervisor.sock` (with the documented HOME
-fallback).** This increment does not modify that repository, create a socket
-alias, or claim the launcher is connected. Future launcher integration must pass
-the native socket path to the constructor. An absent owner must be bootstrapped
-with native `dearmachine up`; the existing TS client does not spawn owners.
+The installer dispatcher and slash commands send the four commands above.
+Increment 2 aligns all TS control clients with the native endpoint contract:
+`<dearmachine-state-dir>/run/supervisor.sock`. The default is
+`$HOME/.dearmachine/run/supervisor.sock`, regardless of `XDG_STATE_HOME`.
+On Linux the native `os.UserHomeDir` dependency requires nonempty HOME and has
+no passwd/XDG fallback; the shared default resolver requires an absolute HOME.
+TS follows the same rule. Go exports `supervisor.DefaultSocketPath` alongside
+`SocketPath` for explicit state roots. Version 1 framing is unchanged.
+
+TS accepts an absolute `DEARMACHINE_SUPERVISOR_SOCKET` override or an explicit
+`SocketDaemonControl` constructor path for tests and non-default state roots.
+The old `$XDG_STATE_HOME/machtiani-installer/supervisor.sock` location is usable
+only by explicitly supplying that path; XDG still controls installer data.
+This override does not redirect native state: it must point to the socket of
+an owner configured for the intended state root. An absent owner must still be
+bootstrapped with native `dearmachine up`; the TS client does not spawn owners.
 
 Bare native invocation checks both stdin and stdout with a real TTY probe. If
 either is not a terminal, it prints help without filesystem detection or provider
