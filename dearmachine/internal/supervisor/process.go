@@ -86,10 +86,15 @@ type childProcess struct {
 }
 
 func spawn(argv []string, log *os.File) (*childProcess, error) {
+	return spawnInDirectory(argv, log, "")
+}
+
+func spawnInDirectory(argv []string, log *os.File, directory string) (*childProcess, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("foreground child command is required")
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = directory
 	cmd.Stdout, cmd.Stderr = log, log
 	// A private process group lets shutdown reach work owned by this child.
 	// Linux also kills the direct child if its supervisor dies unexpectedly.

@@ -36,21 +36,24 @@ type Response struct {
 }
 
 type request struct {
-	Version int      `json:"version"`
-	Command string   `json:"command"`
-	Argv    []string `json:"argv,omitempty"`
+	Version   int      `json:"version"`
+	Command   string   `json:"command"`
+	Argv      []string `json:"argv,omitempty"`
+	Directory string   `json:"directory,omitempty"`
 }
 
 type operation struct {
-	command string
-	argv    []string
-	reply   chan Response
+	command   string
+	argv      []string
+	directory string
+	reply     chan Response
 }
 
 // Config paths are all relative to StateDir. Ready must be a fast, read-only
 // check of this child's readiness. Nil means successful exec is sufficient.
 type Config struct {
 	StateDir       string
+	Directory      string
 	BeforeStart    func() error
 	Command        []string
 	Ready          func(int) bool
@@ -105,6 +108,13 @@ func Run(ctx context.Context, cfg Config) error {
 	runtime.LockOSThread() // Keep Linux parent-death signalling tied to this live thread.
 	defer runtime.UnlockOSThread()
 	cfg = cfg.defaults()
+	if cfg.Directory == "" {
+		var err error
+		cfg.Directory, err = os.Getwd()
+		if err != nil {
+			return err
+		}
+	}
 	if len(cfg.Command) == 0 {
 		return errors.New("foreground child command is required")
 	}
@@ -207,7 +217,7 @@ func Run(ctx context.Context, cfg Config) error {
 			err = cfg.BeforeStart()
 		}
 		if err == nil {
-			child, err = spawn(cfg.Command, log)
+			child, err = spawnInDirectory(cfg.Command, log, cfg.Directory)
 		}
 		if err != nil {
 			failed("start failed: " + err.Error())
@@ -267,12 +277,19 @@ func Run(ctx context.Context, cfg Config) error {
 					pending = append(pending, op)
 				}
 			case "up", "restart":
-				if len(op.argv) != 0 && !slices.Equal(op.argv, cfg.Command) {
+				changedCommand := len(op.argv) != 0 && !slices.Equal(op.argv, cfg.Command)
+				changedDirectory := op.directory != "" && op.directory != cfg.Directory
+				if changedCommand || changedDirectory {
 					if child != nil || len(pending) != 0 {
 						respond(op, false, "launch options differ; run dearmachine down before up with new options")
 						continue
 					}
-					cfg.Command = slices.Clone(op.argv)
+					if changedCommand {
+						cfg.Command = slices.Clone(op.argv)
+					}
+					if changedDirectory {
+						cfg.Directory = op.directory
+					}
 				}
 				if len(pending) != 0 {
 					if op.command == "up" && wanted {
@@ -353,8 +370,8 @@ func handle(ctx context.Context, conn net.Conn, requests chan<- operation) {
 	line, err := reader.ReadSlice('\n')
 	var req request
 	reply := Response{Version: 1, Error: "invalid control request"}
-	if err == nil && json.Unmarshal(line, &req) == nil && req.Version == 1 && validCommand(req.Command) && (len(req.Argv) == 0 || (req.Command == "up" && filepath.IsAbs(req.Argv[0]))) {
-		op := operation{command: req.Command, argv: req.Argv, reply: make(chan Response, 1)}
+	if err == nil && json.Unmarshal(line, &req) == nil && req.Version == 1 && validCommand(req.Command) && (len(req.Argv) == 0 || (req.Command == "up" && filepath.IsAbs(req.Argv[0]))) && (req.Directory == "" || (req.Command == "up" && filepath.IsAbs(req.Directory))) {
+		op := operation{command: req.Command, argv: req.Argv, directory: req.Directory, reply: make(chan Response, 1)}
 		timer := time.NewTimer(3500 * time.Millisecond)
 		defer timer.Stop()
 		select {
@@ -389,6 +406,11 @@ func Request(root, command string, timeout time.Duration) (Status, error) {
 // child must be stopped before replacing its command; TS needs no argv field.
 func RequestUp(root string, argv []string, timeout time.Duration) (Status, error) {
 	return sendRequest(root, request{Version: 1, Command: "up", Argv: argv}, timeout)
+}
+
+// RequestUpInDirectory preserves relative CLI launch paths when reusing an owner.
+func RequestUpInDirectory(root string, argv []string, directory string, timeout time.Duration) (Status, error) {
+	return sendRequest(root, request{Version: 1, Command: "up", Argv: argv, Directory: directory}, timeout)
 }
 
 func sendRequest(root string, req request, timeout time.Duration) (Status, error) {

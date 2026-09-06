@@ -226,3 +226,29 @@ func TestOwnershipCheckPreventsChildSpawn(t *testing.T) {
 		t.Fatal("spawned despite another owner")
 	}
 }
+
+func TestLaunchDirectoryFollowsNativeUp(t *testing.T) {
+	root := t.TempDir()
+	first, second := filepath.Join(root, "first"), filepath.Join(root, "second")
+	for _, dir := range []string{first, second} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	argv := []string{"/bin/sh", "-c", "pwd; exec sleep 60"}
+	serveTest(t, Config{StateDir: root, Command: argv, Directory: first})
+	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
+	if _, err := RequestUpInDirectory(root, argv, second, time.Second); err == nil {
+		t.Fatal("changed a running launch directory")
+	}
+	if _, err := Request(root, "down", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RequestUpInDirectory(root, argv, second, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(LogPath(root))
+	if err != nil || !strings.Contains(string(data), first+"\n") || !strings.Contains(string(data), second+"\n") {
+		t.Fatalf("launch directories: %q %v", data, err)
+	}
+}

@@ -118,18 +118,20 @@ is read-only. Mutation success reflects observed state, including an already
 running/stopped no-op. A longer native startup can continue after an unconfirmed
 response; `status` remains available during readiness waiting and backoff.
 
-Native `up` additionally sends an optional `argv` array with command `up`:
+Native `up` additionally sends optional `argv` and `directory` fields with command
+`up`:
 
 ```json
-{"version":1,"command":"up","argv":["/absolute/path/to/dearmachine","up","--foreground","--verbose"]}
+{"version":1,"command":"up","argv":["/absolute/path/to/dearmachine","up","--foreground","--verbose"],"directory":"/absolute/working-directory"}
 ```
 
-This Go extension preserves explicit CLI flags. A running child's command cannot
-change: first `down`, then `up` with the new flags. A stopped owner's command can
-be replaced. TS sends no `argv` and reuses the existing command. No credentials
-are sent. The owner retains its initial environment and working directory;
-use absolute paths in flags when reusing it from another directory. Environment
-refresh and transferring ownership between supervisors are deferred.
+These Go extensions preserve explicit CLI flags and the caller's working
+directory, including relative paths. A running child's command/directory cannot
+change: first `down`, then `up` with the new launch context. A stopped owner's
+launch context can be replaced. TS omits these fields and reuses the existing
+command/directory. No credentials are sent. The owner retains its initial
+environment; environment refresh and transferring ownership between supervisors
+are deferred.
 
 ## TS mapping and bare CLI handoff
 

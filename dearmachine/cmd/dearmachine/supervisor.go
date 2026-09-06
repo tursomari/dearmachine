@@ -33,12 +33,16 @@ func startBackground(args []string, logPath string) (int, error) {
 }
 
 func startSupervised(executable string, args []string, root string) (int, error) {
+	directory, err := os.Getwd()
+	if err != nil {
+		return 0, err
+	}
 	argv := append([]string{executable}, args...)
 	if s, err := supervisor.Request(root, "status", time.Second); err == nil {
 		if err := checkOtherOwner(root, s); err != nil {
 			return 0, err
 		}
-		s, err := supervisor.RequestUp(root, argv, 5*time.Second)
+		s, err := supervisor.RequestUpInDirectory(root, argv, directory, 5*time.Second)
 		return s.DaemonPID, err
 	}
 	available := supervisor.CheckAvailable(root)
@@ -59,7 +63,7 @@ func startSupervised(executable string, args []string, root string) (int, error)
 			if err := checkOtherOwner(root, s); err != nil {
 				return 0, err
 			}
-			s, err := supervisor.RequestUp(root, argv, 5*time.Second)
+			s, err := supervisor.RequestUpInDirectory(root, argv, directory, 5*time.Second)
 			return s.DaemonPID, err
 		}
 		time.Sleep(25 * time.Millisecond)
