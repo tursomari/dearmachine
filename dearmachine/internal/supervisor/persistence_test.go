@@ -13,7 +13,7 @@ func TestSocketReportsObservedPersistence(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Config{StateDir: root, Command: []string{"/bin/sleep", "60"}, Persistence: func() string { return "disabled" }})
+		done <- Run(ctx, Config{StateDir: root, Command: []string{testExecutable(t, "sleep"), "60"}, Persistence: func() string { return "disabled" }})
 	}()
 	defer func() {
 		cancel()

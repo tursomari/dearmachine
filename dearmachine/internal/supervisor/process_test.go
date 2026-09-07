@@ -66,7 +66,7 @@ func TestForegroundChildLogAndReap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer log.Close()
-	child, err := spawn([]string{"/bin/sh", "-c", "echo stdout; echo stderr >&2; exec sleep 60"}, log)
+	child, err := spawn([]string{testExecutable(t, "sh"), "-c", "echo stdout; echo stderr >&2; exec sleep 60"}, log)
 	if err != nil {
 		t.Fatal(err)
 	}

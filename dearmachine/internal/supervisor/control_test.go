@@ -53,7 +53,7 @@ func awaitStatus(t *testing.T, root string, check func(Status) bool) Status {
 }
 
 func TestControlLifecycle(t *testing.T) {
-	root := serveTest(t, Config{Command: []string{"/bin/sleep", "60"}})
+	root := serveTest(t, Config{Command: []string{testExecutable(t, "sleep"), "60"}})
 	initial := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
 	var wg sync.WaitGroup
 	for range 8 {
@@ -71,7 +71,7 @@ func TestControlLifecycle(t *testing.T) {
 	if err != nil || next.Daemon != "running" || next.DaemonPID == initial.DaemonPID {
 		t.Fatalf("restart: %+v %v", next, err)
 	}
-	if err := Run(context.Background(), Config{StateDir: root, Command: []string{"/bin/sleep", "60"}}); err != ErrLocked {
+	if err := Run(context.Background(), Config{StateDir: root, Command: []string{testExecutable(t, "sleep"), "60"}}); err != ErrLocked {
 		t.Fatalf("duplicate: %v", err)
 	}
 	for range 2 {
@@ -87,7 +87,7 @@ func TestControlLifecycle(t *testing.T) {
 }
 
 func TestBackoffBoundAndStop(t *testing.T) {
-	root := serveTest(t, Config{Command: []string{"/bin/sh", "-c", "exit 7"}, Ready: func(int) bool { return false }, InitialBackoff: 80 * time.Millisecond, MaxBackoff: 100 * time.Millisecond, MaxFailures: 3})
+	root := serveTest(t, Config{Command: []string{testExecutable(t, "sh"), "-c", "exit 7"}, Ready: func(int) bool { return false }, InitialBackoff: 80 * time.Millisecond, MaxBackoff: 100 * time.Millisecond, MaxFailures: 3})
 	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "backing-off" })
 	if s.RetryInMs == nil || *s.RetryInMs > 100 || !strings.Contains(s.LastExit, "7") {
 		t.Fatalf("backoff: %+v", s)
@@ -106,7 +106,7 @@ func TestBackoffBoundAndStop(t *testing.T) {
 }
 
 func TestReadinessAndStopDuringStartup(t *testing.T) {
-	root := serveTest(t, Config{Command: []string{"/bin/sleep", "60"}, Ready: func(int) bool { return false }, StartupTimeout: time.Second})
+	root := serveTest(t, Config{Command: []string{testExecutable(t, "sleep"), "60"}, Ready: func(int) bool { return false }, StartupTimeout: time.Second})
 	s, err := Request(root, "status", time.Second)
 	if err != nil || s.Supervisor != "starting" || s.Daemon != "unknown" {
 		t.Fatalf("readiness: %+v %v", s, err)
@@ -133,7 +133,7 @@ func TestProtocolAndStaleSocket(t *testing.T) {
 	}
 	stale.(*net.UnixListener).SetUnlinkOnClose(false)
 	stale.Close()
-	serveTest(t, Config{StateDir: root, Command: []string{"/bin/sleep", "60"}})
+	serveTest(t, Config{StateDir: root, Command: []string{testExecutable(t, "sleep"), "60"}})
 	info, _ := os.Stat(SocketPath(root))
 	if info.Mode().Perm() != 0600 {
 		t.Fatal("socket not private")
@@ -165,7 +165,7 @@ func TestBackoffPolicy(t *testing.T) {
 }
 
 func TestHealthyRunResetsFailures(t *testing.T) {
-	root := serveTest(t, Config{Command: []string{"/bin/sh", "-c", "echo launched; sleep 0.1; exit 9"}, HealthyRun: 30 * time.Millisecond, InitialBackoff: 10 * time.Millisecond, MaxFailures: 2})
+	root := serveTest(t, Config{Command: []string{testExecutable(t, "sh"), "-c", "echo launched; sleep 0.1; exit 9"}, HealthyRun: 30 * time.Millisecond, InitialBackoff: 10 * time.Millisecond, MaxFailures: 2})
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		data, _ := os.ReadFile(LogPath(root))
@@ -183,7 +183,7 @@ func TestHealthyRunResetsFailures(t *testing.T) {
 }
 
 func TestStartupTimeoutFailsAndReaps(t *testing.T) {
-	root := serveTest(t, Config{Command: []string{"/bin/sleep", "60"}, Ready: func(int) bool { return false }, StartupTimeout: 30 * time.Millisecond, MaxFailures: 1})
+	root := serveTest(t, Config{Command: []string{testExecutable(t, "sleep"), "60"}, Ready: func(int) bool { return false }, StartupTimeout: 30 * time.Millisecond, MaxFailures: 1})
 	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
 	if s.DaemonPID != 0 || !strings.Contains(s.LastExit, "readiness timeout") {
 		t.Fatalf("timeout: %+v", s)
@@ -191,22 +191,23 @@ func TestStartupTimeoutFailsAndReaps(t *testing.T) {
 }
 
 func TestLaunchOptionsAreNotSilentlyIgnored(t *testing.T) {
-	root := serveTest(t, Config{Command: []string{"/bin/sleep", "60"}})
+	sleep := testExecutable(t, "sleep")
+	root := serveTest(t, Config{Command: []string{sleep, "60"}})
 	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
-	if _, err := RequestUp(root, []string{"/bin/sleep", "61"}, time.Second); err == nil {
+	if _, err := RequestUp(root, []string{sleep, "61"}, time.Second); err == nil {
 		t.Fatal("changed running command accepted")
 	}
 	if _, err := Request(root, "down", time.Second); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RequestUp(root, []string{"/bin/sleep", "61"}, time.Second); err != nil {
+	if _, err := RequestUp(root, []string{sleep, "61"}, time.Second); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestClientTimeoutDoesNotUndoCommittedUp(t *testing.T) {
 	var ready atomic.Bool
-	root := serveTest(t, Config{Command: []string{"/bin/sleep", "60"}, Ready: func(int) bool { return ready.Load() }})
+	root := serveTest(t, Config{Command: []string{testExecutable(t, "sleep"), "60"}, Ready: func(int) bool { return ready.Load() }})
 	if _, err := Request(root, "up", 20*time.Millisecond); err == nil {
 		t.Fatal("unready child reported success")
 	}
@@ -217,7 +218,7 @@ func TestClientTimeoutDoesNotUndoCommittedUp(t *testing.T) {
 func TestOwnershipCheckPreventsChildSpawn(t *testing.T) {
 	root := privateTempDir(t)
 	marker := filepath.Join(root, "unexpected")
-	serveTest(t, Config{StateDir: root, Command: []string{"/bin/touch", marker}, BeforeStart: func() error { return errors.New("another daemon owner") }, MaxFailures: 1})
+	serveTest(t, Config{StateDir: root, Command: []string{testExecutable(t, "touch"), marker}, BeforeStart: func() error { return errors.New("another daemon owner") }, MaxFailures: 1})
 	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
 	if !strings.Contains(s.LastExit, "another daemon owner") {
 		t.Fatalf("ownership: %+v", s)
@@ -235,7 +236,7 @@ func TestLaunchDirectoryFollowsNativeUp(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	argv := []string{"/bin/sh", "-c", "pwd; exec sleep 60"}
+	argv := []string{testExecutable(t, "sh"), "-c", "pwd; exec sleep 60"}
 	serveTest(t, Config{StateDir: root, Command: argv, Directory: first})
 	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
 	if _, err := RequestUpInDirectory(root, argv, second, time.Second); err == nil {
@@ -275,7 +276,7 @@ func TestDefaultSocketPath(t *testing.T) {
 func TestTSShapedControlRequests(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	root := serveTest(t, Config{StateDir: filepath.Join(home, ".dearmachine"), Command: []string{"/bin/sleep", "60"}})
+	root := serveTest(t, Config{StateDir: filepath.Join(home, ".dearmachine"), Command: []string{testExecutable(t, "sleep"), "60"}})
 	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
 	socket, err := DefaultSocketPath(os.UserHomeDir)
 	if err != nil {

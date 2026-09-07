@@ -190,7 +190,7 @@ func TestSystemdStartUsesOneNativeOwner(t *testing.T) {
 			starts++
 			started = true
 			go func() {
-				done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{"/bin/sleep", "60"}})
+				done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{testExecutable(t, "sleep"), "60"}})
 			}()
 		}
 		if strings.Contains(command, "MainPID") {
@@ -253,7 +253,7 @@ func TestSystemdStartupRaceDoesNotAdoptForeignOwner(t *testing.T) {
 		if strings.Contains(strings.Join(args, " "), "--user start") {
 			started = true
 			go func() {
-				done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{"/bin/sleep", "60"}})
+				done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{testExecutable(t, "sleep"), "60"}})
 			}()
 		}
 		return "0", nil

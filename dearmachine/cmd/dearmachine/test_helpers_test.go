@@ -1,19 +1,9 @@
-package supervisor
+package main
 
 import (
-	"os"
 	"os/exec"
 	"testing"
 )
-
-func privateTempDir(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return dir
-}
 
 func testExecutable(t *testing.T, name string) string {
 	t.Helper()

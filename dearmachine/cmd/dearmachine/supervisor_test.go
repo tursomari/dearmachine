@@ -33,7 +33,7 @@ func supervisedDeps(t *testing.T) (dependencies, string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{"/bin/sleep", "60"}})
+		done <- supervisor.Run(ctx, supervisor.Config{StateDir: root, Command: []string{testExecutable(t, "sleep"), "60"}})
 	}()
 	t.Cleanup(func() {
 		cancel()
