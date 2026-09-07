@@ -18,7 +18,7 @@ import (
 func serveTest(t *testing.T, cfg Config) string {
 	t.Helper()
 	if cfg.StateDir == "" {
-		cfg.StateDir = t.TempDir()
+		cfg.StateDir = privateTempDir(t)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -123,7 +123,7 @@ func TestReadinessAndStopDuringStartup(t *testing.T) {
 }
 
 func TestProtocolAndStaleSocket(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	if err := os.Mkdir(filepath.Join(root, "run"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestClientTimeoutDoesNotUndoCommittedUp(t *testing.T) {
 }
 
 func TestOwnershipCheckPreventsChildSpawn(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	marker := filepath.Join(root, "unexpected")
 	serveTest(t, Config{StateDir: root, Command: []string{"/bin/touch", marker}, BeforeStart: func() error { return errors.New("another daemon owner") }, MaxFailures: 1})
 	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
@@ -228,7 +228,7 @@ func TestOwnershipCheckPreventsChildSpawn(t *testing.T) {
 }
 
 func TestLaunchDirectoryFollowsNativeUp(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	first, second := filepath.Join(root, "first"), filepath.Join(root, "second")
 	for _, dir := range []string{first, second} {
 		if err := os.Mkdir(dir, 0700); err != nil {

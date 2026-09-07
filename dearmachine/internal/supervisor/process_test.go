@@ -10,7 +10,7 @@ import (
 )
 
 func TestLockExclusiveAndReusable(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	lock, err := acquire(root)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestLockExclusiveAndReusable(t *testing.T) {
 func TestLockRejectsSymlinkAndPublicState(t *testing.T) {
 	for _, mode := range []string{"symlink", "public"} {
 		t.Run(mode, func(t *testing.T) {
-			root := t.TempDir()
+			root := privateTempDir(t)
 			if mode == "public" {
 				os.Chmod(root, 0755)
 			} else {
@@ -55,7 +55,7 @@ func TestLockRejectsSymlinkAndPublicState(t *testing.T) {
 }
 
 func TestForegroundChildLogAndReap(t *testing.T) {
-	root := t.TempDir()
+	root := privateTempDir(t)
 	lock, err := acquire(root)
 	if err != nil {
 		t.Fatal(err)
