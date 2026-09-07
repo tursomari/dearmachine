@@ -44,6 +44,13 @@ var catalog = []Backend{
 		Executable:  "omp",
 		InstallHelp: "Install OMP, then ensure omp is on PATH.",
 	},
+	{
+		ID:            "claude",
+		DisplayName:   "Claude Code",
+		Executable:    "claude",
+		InstallHelp:   "Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash; then ensure claude is on PATH. Uses unrestricted host access.",
+		ExplicitOptIn: true,
+	},
 }
 
 func All() []Backend {

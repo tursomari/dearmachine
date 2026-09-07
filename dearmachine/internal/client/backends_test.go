@@ -16,10 +16,10 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		ids = append(ids, backend.ID)
 		executables = append(executables, backend.Executable)
 	}
-	if !reflect.DeepEqual(ids, []string{"codex", "codex-yolo", "forge", "omp"}) {
+	if !reflect.DeepEqual(ids, []string{"codex", "codex-yolo", "forge", "omp", "claude"}) {
 		t.Fatalf("backend IDs = %v", ids)
 	}
-	if !reflect.DeepEqual(executables, []string{"codex", "codex", "forge", "omp"}) {
+	if !reflect.DeepEqual(executables, []string{"codex", "codex", "forge", "omp", "claude"}) {
 		t.Fatalf("backend executables = %v", executables)
 	}
 
@@ -29,8 +29,8 @@ func TestBackendRegistryAndPATHDetection(t *testing.T) {
 		}
 		return "", os.ErrNotExist
 	})
-	if len(detections) != 4 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
-		!detections[1].Found || detections[1].Path != "/test/bin/codex" || detections[2].Found || detections[3].Found {
+	if len(detections) != 5 || !detections[0].Found || detections[0].Path != "/test/bin/codex" ||
+		!detections[1].Found || detections[1].Path != "/test/bin/codex" || detections[2].Found || detections[3].Found || detections[4].Found {
 		t.Fatalf("detections = %+v", detections)
 	}
 }
@@ -163,7 +163,7 @@ func TestDeviceConfigRejectsInvalidBackends(t *testing.T) {
 	}{
 		{name: "missing version", content: `backends = ["codex"]`, want: "version must be 1"},
 		{name: "unknown", content: "version = 1\nbackends = [\"other\"]", want: "unknown backend"},
-		{name: "removed alpha backend", content: "version = 1\nbackends = [\"claude\"]", want: "rerun dearmachine setup-agents"},
+		{name: "removed backend", content: "version = 1\nbackends = [\"removed-backend\"]", want: "rerun dearmachine setup-agents"},
 		{name: "duplicate", content: "version = 1\nbackends = [\"codex\",\"codex\"]", want: "duplicate backend"},
 		{name: "path instead of ID", content: "version = 1\nbackends = [\"/bin/codex\"]", want: "unknown backend"},
 		{name: "unknown key", content: "version = 1\nbackends = [\"codex\"]\npath = \"/bin/codex\"", want: "unknown key"},

@@ -272,6 +272,7 @@ func New(root string) *Manager {
 	m := &Manager{
 		Root: filepath.Clean(root),
 		Adapters: map[string]Adapter{
+			"claude":     ClaudeAdapter{},
 			"codex":      CodexAdapter{},
 			"codex-yolo": CodexYoloAdapter{},
 			"forge":      ForgeAdapter{},

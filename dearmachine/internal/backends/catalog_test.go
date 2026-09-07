@@ -8,9 +8,9 @@ import (
 
 func TestCatalogAndEnvironmentRoundTrip(t *testing.T) {
 	registered := All()
-	if len(registered) != 4 || registered[0].ID != "codex" ||
+	if len(registered) != 5 || registered[0].ID != "codex" ||
 		registered[1].ID != "codex-yolo" || registered[2].ID != "forge" ||
-		registered[3].ID != "omp" {
+		registered[3].ID != "omp" || registered[4].ID != "claude" {
 		t.Fatalf("catalog = %+v", registered)
 	}
 	yolo, ok := Lookup("codex-yolo")
@@ -20,6 +20,13 @@ func TestCatalogAndEnvironmentRoundTrip(t *testing.T) {
 	omp, ok := Lookup("omp")
 	if !ok || omp.Executable != "omp" || omp.ExplicitOptIn {
 		t.Fatalf("omp backend = %+v, found = %v", omp, ok)
+	}
+	claude, ok := Lookup("claude")
+	if !ok || claude.Executable != "claude" || !claude.ExplicitOptIn || !strings.Contains(claude.InstallHelp, "https://claude.ai/install.sh") {
+		t.Fatalf("claude backend = %+v, found = %v", claude, ok)
+	}
+	if decoded, err := Decode(`["claude"]`); err != nil || !reflect.DeepEqual(decoded, []string{"claude"}) {
+		t.Fatalf("Decode claude = %v, %v", decoded, err)
 	}
 	encoded, err := Encode([]string{"codex-yolo", "forge", "omp", "codex"})
 	if err != nil || encoded != `["codex-yolo","forge","omp","codex"]` {
@@ -47,7 +54,7 @@ func TestCatalogRejectsRemovedAndDuplicateBackends(t *testing.T) {
 		want  string
 	}{
 		{value: `[]`, want: "at least one backend"},
-		{value: `["claude"]`, want: `unknown backend "claude"`},
+		{value: `["unknown"]`, want: `unknown backend "unknown"`},
 		{value: `["forge","forgecode"]`, want: `duplicate backend "forge"`},
 		{value: `["codex","codex"]`, want: `duplicate backend "codex"`},
 	} {
