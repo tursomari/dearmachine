@@ -125,7 +125,19 @@ func runPairStates(cfg config, getenv func(string) string, deps dependencies, st
 				}
 			}
 			if orchestrator != nil && orchestrator.MaintenanceMinTurns > 0 {
-				orchestrator.TurnCounter = store.CountProcessedSince
+				// The callback runs after all stores are opened. One maintenance
+				// lane counts completed turns across every selected pair.
+				orchestrator.TurnCounter = func(since time.Time) (int, error) {
+					total := 0
+					for index, pairStore := range stores {
+						count, err := pairStore.CountProcessedSince(since)
+						if err != nil {
+							return 0, fmt.Errorf("count pair %s turns: %w", states[index].Pair.ID, err)
+						}
+						total += count
+					}
+					return total, nil
+				}
 			}
 		}
 		app, err := deps.newApp(endpoints[state.Pair.ID], store, runner, orchestrator, cfg.concurrency, cfg.pollInterval, logger, cfg.verbose, "", responseTier)
