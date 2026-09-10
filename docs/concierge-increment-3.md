@@ -55,10 +55,38 @@ saved approval is never proof of success. Failed or incomplete observation is
 `unknown`. Unit files follow `XDG_CONFIG_HOME` or `$HOME/.config`, beneath
 `systemd/user/`. An unrelated/substituted unit is not overwritten.
 
-Human-readable native status explains unknown persistence directly: saved false
-consent and an unavailable user manager do not prove that automatic startup is
-disabled. This explanation does not change probes, consent, or machine-readable
-state. Both absent and explicitly false consent records have regression coverage.
+Native `dearmachine status` separates daemon state, crash recovery, closing the
+chat, logout survival, and managed startup at login and after reboot (before
+login). It uses read-only service observations regardless of saved consent,
+including absent, false, or unreadable consent. An unavailable user manager,
+failed query, or inconclusive response reports `cannot verify` with a reason;
+none means disabled. Confirmed absent/disabled/masked services report managed
+startup `not configured`. Enabled services start at login; before-login startup
+also requires observed lingering. Runtime-only enablement does not survive
+reboot; a runtime-only mask does not establish next-boot configuration. These
+are configuration observations, not proof of a successful future boot. Other
+startup mechanisms are explicitly outside the inspection scope.
+
+Crash recovery reflects the responding native supervisor, not systemd presence.
+Backoff reports the next retry and last exit; failure-limit exhaustion reports
+paused recovery; an intentional stop reports inactive recovery. A running daemon
+without confirmed native supervisor ownership gets no crash-recovery or chat-exit
+guarantee. Logout survival remains unverified because startup configuration alone
+does not establish the current process's session/service lifetime.
+
+`status --details` adds PIDs, native supervisor state, failure counts/limit, unit
+state, lingering, saved permissions (explicitly not observed state), and the
+existing tab-separated pair table. Normal status labels each inbox and authorized
+sender directly. `systemd status` and `persistence status` use the same startup
+report and include permission diagnostics. The socket retains its conservative
+three-state `persistence` compatibility field, now observed without a consent
+gate, and gains optional `consecutiveFailures`/`failureLimit` diagnostics. Native
+human-readable status does not use the ambiguous standalone persistence label.
+
+The configuration interpretation follows systemd's
+[lingering contract](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html).
+Deterministic tests cover observation failures and consent independence, output
+states, multiple pairs, CLI details, and real supervisor retry diagnostics.
 
 The unit runs the same Go `_supervise` owner, with `Restart=no` and
 `KillMode=control-group`. Go alone owns daemon retries. The same socket handles

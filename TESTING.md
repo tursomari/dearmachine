@@ -52,7 +52,9 @@ local replacement directive.
 The suite is organized by responsibility:
 
 - `cmd/dearmachine` covers CLI parsing, construction, signals, dispatch, and
-  self-describing status columns that distinguish authorized senders from inboxes.
+  status views separating crash recovery from login/reboot configuration,
+  consent-independent read-only probes (including unavailable/inconclusive
+  observations), and labels distinguishing authorized senders from inboxes.
 - `internal/client` covers orchestration, AgentMail, OpenMail, Sendmux,
   subprocess behavior, persistence, recovery, authorization, and message
   normalization.

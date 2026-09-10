@@ -322,7 +322,7 @@ Commands:
   up            create pairs or start registered pairs
   down          stop the background client and cancel retries
   restart       restart through the existing supervisor
-  status        show registered pairs and client state
+  status [--details] show runtime, crash recovery, startup configuration, and pairs
   inbox         maintain pair inbox state
   init          initialize the entry-point repository
   setup-agents  configure agent backends

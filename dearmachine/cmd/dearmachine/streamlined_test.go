@@ -100,11 +100,18 @@ func TestStatusAndDownUseCanonicalDaemonState(t *testing.T) {
 	if err := run([]string{"status"}, func(string) string { return "" }, deps); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "running (PID 6789)") || !strings.Contains(output.String(), "lifecycle@example.test") {
+	if !strings.Contains(output.String(), "Dear Machine: running") || !strings.Contains(output.String(), "lifecycle@example.test") {
 		t.Fatalf("status output = %q", output.String())
 	}
-	if !strings.Contains(output.String(), "Pair UUID\tAuthorized sender\tDear Machine inbox\tTransport\n") {
+	if !strings.Contains(output.String(), "Inbox:") || !strings.Contains(output.String(), "Authorized sender: lifecycle@example.test") {
 		t.Fatalf("status lacks self-describing pair columns: %q", output.String())
+	}
+	output.Reset()
+	if err := run([]string{"status", "--details"}, func(string) string { return "" }, deps); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Daemon PID: 6789") || !strings.Contains(output.String(), "Pair UUID\tAuthorized sender\tDear Machine inbox\tTransport\n") {
+		t.Fatal(output.String())
 	}
 	output.Reset()
 	if err := run([]string{"down"}, func(string) string { return "" }, deps); err != nil {

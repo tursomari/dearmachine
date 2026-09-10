@@ -19,8 +19,6 @@ import (
 const conciergeUnit = "dearmachine-concierge.service"
 const unitMarker = "# Managed by dearmachine concierge v1\n"
 
-const unknownPersistenceExplanation = "Automatic startup after logout or reboot is unknown, not disabled. Saved consent records permission, not observed service configuration; false consent or an unavailable user manager does not establish whether automatic startup is configured."
-
 type supervisionConsent struct {
 	Version     int  `json:"version"`
 	UseSystemd  bool `json:"useSystemd"`
@@ -229,10 +227,8 @@ func (m serviceManager) configure(kind, choice string) error {
 	return nil
 }
 func (m serviceManager) persistence() string {
-	consent, err := m.load()
-	if err != nil || !consent.UseSystemd {
-		return "unknown"
-	}
+	// Legacy socket field: retain its conservative three-state contract, but
+	// never gate read-only observation on permission to mutate the service.
 	enabled, err := m.run("systemctl", "--user", "show", conciergeUnit, "--property=UnitFileState", "--value")
 	if err != nil {
 		return "unknown"
@@ -259,19 +255,16 @@ func runSupervisionChoice(kind string, args []string, deps dependencies) error {
 	}
 	m := nativeServiceManager(home)
 	if args[0] == "status" {
-		consent, err := m.load()
-		if err != nil {
+		output := outputOrDiscard(deps.stdout)
+		observation := m.observeStartup()
+		if err := writeStartupStatus(output, observation); err != nil {
 			return err
 		}
-		persistence := m.persistence()
-		_, err = fmt.Fprintf(outputOrDiscard(deps.stdout), "Systemd user manager available: %t. Saved systemd consent: %t. Saved reboot/linger consent: %t. Observed persistence: %s.\n", m.usable(), consent.UseSystemd, consent.Persistence, persistence)
-		if err != nil {
+		if _, err := fmt.Fprintf(output, "Service: %s\nService unit state: %s\nUser lingering: %s\n", conciergeUnit, observation.unitState, observation.linger); err != nil {
 			return err
 		}
-		if persistence == "unknown" {
-			if _, err = fmt.Fprintln(outputOrDiscard(deps.stdout), unknownPersistenceExplanation); err != nil {
-				return err
-			}
+		if err := m.writeConsentDetails(output); err != nil {
+			return err
 		}
 		_, err = fmt.Fprintf(outputOrDiscard(deps.stdout), "Inspect: systemctl --user status %s; systemctl --user is-enabled %s; loginctl show-user --property=Linger\nDisable: dearmachine persistence off (retains account-wide lingering); loginctl disable-linger removes account-wide lingering if no other services need it.\n", conciergeUnit, conciergeUnit)
 		return err

@@ -143,6 +143,34 @@ func TestObservedPersistenceIsNotSavedConsent(t *testing.T) {
 	}
 }
 
+func TestSocketPersistenceProbeDoesNotRequireMutationConsent(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
+			m := serviceManager{home: t.TempDir(), run: func(name string, args ...string) (string, error) {
+				if name == "systemctl" && strings.Join(args, " ") == "--user show "+conciergeUnit+" --property=UnitFileState --value" {
+					return "enabled", nil
+				}
+				if name == "loginctl" && strings.Join(args, " ") == "show-user --property=Linger --value" {
+					return "yes", nil
+				}
+				t.Fatalf("unexpected command: %s %v", name, args)
+				return "", errors.New("unexpected command")
+			}}
+			if saved {
+				if err := os.MkdirAll(m.root(), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := m.save(supervisionConsent{Version: 1}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := m.persistence(); got != "enabled" {
+				t.Fatalf("observation gated on consent: %s", got)
+			}
+		})
+	}
+}
+
 func TestSystemdCLIWithMockExecutables(t *testing.T) {
 	deps := testDependencies(t, &fakeApplication{})
 	home, _ := deps.userHomeDir()
@@ -189,7 +217,7 @@ func TestSystemdStatusExplainsUnknownWithoutChangingConsent(t *testing.T) {
 				if err := run([]string{command, "status"}, os.Getenv, deps); err != nil {
 					t.Fatal(err)
 				}
-				for _, want := range []string{"Saved systemd consent: false", "Observed persistence: unknown", unknownPersistenceExplanation} {
+				for _, want := range []string{"Saved permission (not observed state): service use=false; reboot/linger=false", "after reboot (before login): cannot verify", "systemd user manager unavailable"} {
 					if !strings.Contains(output.String(), want) {
 						t.Fatalf("missing %q: %s", want, output.String())
 					}

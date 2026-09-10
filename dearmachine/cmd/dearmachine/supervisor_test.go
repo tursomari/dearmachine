@@ -69,11 +69,11 @@ func TestCLIReportsAndControlsSupervisor(t *testing.T) {
 	if err := run([]string{"status"}, os.Getenv, deps); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "Supervisor: running") || !strings.Contains(output.String(), "Persistence: unknown") {
+	if !strings.Contains(output.String(), "Supervisor: running") || !strings.Contains(output.String(), "Crash recovery: active") {
 		t.Fatalf("status: %s", output.String())
 	}
-	if !strings.Contains(output.String(), unknownPersistenceExplanation) {
-		t.Fatalf("unknown persistence lacks interpretation: %s", output.String())
+	if !strings.Contains(output.String(), "other startup mechanisms not inspected") {
+		t.Fatalf("startup scope missing: %s", output.String())
 	}
 	if err := run([]string{"down"}, os.Getenv, deps); err != nil {
 		t.Fatal(err)

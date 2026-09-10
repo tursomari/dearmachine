@@ -92,7 +92,13 @@ func TestBackoffBoundAndStop(t *testing.T) {
 	if s.RetryInMs == nil || *s.RetryInMs > 100 || !strings.Contains(s.LastExit, "7") {
 		t.Fatalf("backoff: %+v", s)
 	}
-	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
+	if s.ConsecutiveFailures < 1 || s.ConsecutiveFailures >= 3 || s.FailureLimit != 3 {
+		t.Fatalf("retry diagnostics: %+v", s)
+	}
+	s = awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
+	if s.ConsecutiveFailures != 3 || s.FailureLimit != 3 {
+		t.Fatalf("failure limit diagnostics: %+v", s)
+	}
 	if _, err := Request(root, "up", time.Second); err == nil {
 		t.Fatal("crashing child reported successful up")
 	}

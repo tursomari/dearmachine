@@ -18,14 +18,16 @@ import (
 // Status matches the installer SocketDaemonControl v1 schema. PIDs are optional
 // diagnostic extensions; they are never authority for signalling a process.
 type Status struct {
-	Installation  string `json:"installation"`
-	Supervisor    string `json:"supervisor"`
-	Daemon        string `json:"daemon"`
-	Persistence   string `json:"persistence"`
-	RetryInMs     *int64 `json:"retryInMs,omitempty"`
-	LastExit      string `json:"lastExit,omitempty"`
-	SupervisorPID int    `json:"supervisorPid,omitempty"`
-	DaemonPID     int    `json:"daemonPid,omitempty"`
+	Installation        string `json:"installation"`
+	Supervisor          string `json:"supervisor"`
+	Daemon              string `json:"daemon"`
+	Persistence         string `json:"persistence"`
+	RetryInMs           *int64 `json:"retryInMs,omitempty"`
+	LastExit            string `json:"lastExit,omitempty"`
+	SupervisorPID       int    `json:"supervisorPid,omitempty"`
+	DaemonPID           int    `json:"daemonPid,omitempty"`
+	ConsecutiveFailures int    `json:"consecutiveFailures,omitempty"`
+	FailureLimit        int    `json:"failureLimit,omitempty"`
 }
 
 type Response struct {
@@ -175,6 +177,11 @@ func Run(ctx context.Context, cfg Config) error {
 	var pending []operation
 	snapshot := func() Status {
 		result := state
+		result.ConsecutiveFailures = failures
+		if !healthySince.IsZero() && time.Since(healthySince) >= cfg.HealthyRun {
+			result.ConsecutiveFailures = 0
+		}
+		result.FailureLimit = cfg.MaxFailures
 		if cfg.Persistence != nil {
 			result.Persistence = cfg.Persistence()
 		}
