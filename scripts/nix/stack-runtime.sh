@@ -2,6 +2,8 @@
 set -euo pipefail
 umask 077
 
+operator_home=$HOME
+
 action=${1:-status}
 shift || true
 
@@ -35,6 +37,31 @@ export HOME=${DEARMACHINE_PODMAN_HOME:-$config_dir/home}
 export XDG_CONFIG_HOME=$HOME/.config
 export XDG_RUNTIME_DIR=$runtime_dir
 export PATH="$idmap_dir:$PATH"
+
+# Validate before creating state or asking Podman to start a worker. Read-only
+# status/down actions remain available for recovery from a bad configuration.
+case $action in
+  create|up|rebuild|config)
+    boundary_check=${DEARMACHINE_BOUNDARY_CHECK:-$(dirname "${BASH_SOURCE[0]}")/container-boundary.py}
+    boundary_args=(--native-home "$operator_home")
+    if [[ $action == create ]]; then
+      inbox_value=false
+      for argument in "$@"; do
+        if [[ $inbox_value == true ]]; then
+          boundary_args+=(--create-inbox "$argument")
+          inbox_value=false
+        else
+          case $argument in
+            --inbox) inbox_value=true ;;
+            --inbox=*) boundary_args+=(--create-inbox "${argument#--inbox=}") ;;
+          esac
+        fi
+      done
+    fi
+    DEARMACHINE_CONTAINER_PROJECT=$(python3 "$boundary_check" "${boundary_args[@]}")
+    export DEARMACHINE_CONTAINER_PROJECT
+    ;;
+esac
 
 policy_conf=$XDG_CONFIG_HOME/containers/policy.json
 test_service=$DEARMACHINE_TOOLS_DIR/test-service.sh
@@ -311,7 +338,7 @@ case $action in
     }
     compose run --rm --no-deps dearmachine \
       up --create "$@" \
-      --project /workspace \
+      --project "$DEARMACHINE_CONTAINER_PROJECT" \
       --config /home/dearmachine/.dearmachine/config/dearmachine.toml \
       --agent-bin /opt/dearmachine/bin/machtiani \
       --entry-point-repo "${DEARMACHINE_ENTRY_POINT_REPO:-}" \

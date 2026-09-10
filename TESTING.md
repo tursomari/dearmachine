@@ -93,7 +93,7 @@ also independently runnable with
 | `compose` | Compose artifact evaluation | Linux |
 | `host-lifecycle` | Host lifecycle package build | Linux |
 | `host-lifecycle-test` | Host lifecycle behavior | Linux sandbox |
-| `stack-runtime-test` | Stack runtime behavior | Linux sandbox |
+| `stack-runtime-test` | Stack runtime, project mount/cwd, native state aliases, and shared-inbox rejection | Linux sandbox |
 | `systemd-user-unit` | User-unit structure and contract | Linux sandbox |
 | `runbook-contracts` | Commands and assumptions embedded in runbooks | Linux sandbox |
 | `native-service-launcher` | Native service launch behavior | Linux sandbox |

@@ -4,6 +4,7 @@ services:
   dearmachine:
     image: ${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}
     restart: unless-stopped
+    working_dir: ${DEARMACHINE_CONTAINER_PROJECT:-/workspace}
     environment:
       AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY:-}
       AGENTMAIL_API_KEY_FILE: ${AGENTMAIL_API_KEY_FILE:-}
@@ -19,7 +20,7 @@ services:
       - up
       - --foreground
       - --project
-      - /workspace
+      - ${DEARMACHINE_CONTAINER_PROJECT:-/workspace}
       - --config
       - /home/dearmachine/.dearmachine/config/dearmachine.toml
       - --agent-bin

@@ -233,6 +233,8 @@
             service = base["services"]["dearmachine"]
             assert service["image"] == "''${DEARMACHINE_IMAGE:-localhost/dearmachine:nix}"
             assert service["restart"] == "unless-stopped"
+            assert service["working_dir"] == "''${DEARMACHINE_CONTAINER_PROJECT:-/workspace}"
+            assert service["command"][service["command"].index("--project") + 1] == service["working_dir"]
             assert service["healthcheck"]["test"] == ["CMD", "dearmachine-health"]
             assert service["command"][0] == "up"
             assert service["command"][1] == "--foreground"
@@ -281,11 +283,13 @@
               gnugrep
               podman
               podman-compose
+              python3
             ];
             text = ''
               export DEARMACHINE_COMPOSE_DIR="''${DEARMACHINE_COMPOSE_DIR:-${composeBundle}/share/dearmachine/compose}"
               export DEARMACHINE_FUSE_OVERLAYFS="''${DEARMACHINE_FUSE_OVERLAYFS:-${lib.getExe pkgs.fuse-overlayfs}}"
               export DEARMACHINE_IMAGE_ARCHIVE="''${DEARMACHINE_IMAGE_ARCHIVE:-${dearmachineImage}}"
+              export DEARMACHINE_BOUNDARY_CHECK=${./scripts/nix/container-boundary.py}
               ${builtins.readFile ./scripts/nix/stack-runtime.sh}
             '';
           };
@@ -362,9 +366,10 @@
             touch $out
           '';
           stackRuntimeCheck = pkgs.runCommand "dearmachine-stack-runtime-check" {
-            nativeBuildInputs = with pkgs; [ bash coreutils gnugrep ];
+            nativeBuildInputs = with pkgs; [ bash coreutils gnugrep python3 ];
           } ''
             PROJECT_ROOT=${./.} bash ${./tests/nix/test-stack-runtime.sh}
+            PROJECT_ROOT=${./.} python3 ${./tests/nix/test-container-boundary.py}
             touch $out
           '';
           runbookCheck = pkgs.runCommand "dearmachine-runbook-contract-check" {

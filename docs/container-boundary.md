@@ -35,7 +35,7 @@ The `dearmachine` Compose service has these host mounts:
 | `DEARMACHINE_CLIENT_LOG_DIR` | `/home/dearmachine/.dearmachine/log` | read/write | Client logs when file logging is configured. |
 | `DEARMACHINE_CLIENT_AGENT_MANAGER_DIR` | `/home/dearmachine/.dearmachine/agent-manager` | read/write | Canonical Agent Manager tickets and worker state, preserved across container replacement and host rollback. |
 | `DEARMACHINE_MACHTIANI_DIR` | `/home/dearmachine/.machtiani` | read/write | machtiani session/project stores. |
-| `DEARMACHINE_PROJECT_DIR` | `/workspace` | read/write | The single coding repository in which machtiani and backend workers operate. |
+| `DEARMACHINE_PROJECT_DIR` | `/workspace` | read/write | Explicit coding tree; `DEARMACHINE_PROJECT_SUBDIR` selects the working repository beneath it. |
 | `DEARMACHINE_TOOLS_DIR` | `/opt/dearmachine/bin` | read-only | Operator-curated `machtiani`, `codex`, `forge`, `omp`, and custom-backend executables or symlinks. Agent Manager is packaged in the image. |
 | `/nix/store` | `/nix/store` | read-only | Resolves Nix-store interpreters, libraries, and targets used by mounted Nix-installed tools. |
 
@@ -48,8 +48,8 @@ required files there. Backend `NAME=value` assignments live at
 and are validated and exported by the entry point. Do not mount a normal home directory merely to make a
 backend discover its credentials.
 
-The selected project is deliberately the only coding tree mounted in v1. It
-should be a self-contained checkout: linked worktrees whose Git directory is
+The selected project tree is the only coding tree mounted. Each working
+repository should be self-contained: linked worktrees whose Git directory is
 outside the project mount need an additional future boundary design. Mounted
 tools must be Linux-compatible, and dynamically linked tools must either be
 Nix-built (with their store closure already present) or otherwise carry an
@@ -102,3 +102,26 @@ point reads it from there.
 The container healthcheck proves that the supervised dearmachine PID is alive;
 it does not prove a successful AgentMail poll or backend turn. Live acceptance
 therefore also requires a successful provider poll and backend reply.
+
+## Selecting a project inside a larger tree
+
+Native foreground execution remains the default. Container execution is an
+explicit `dearmachine-stack` choice. Set `DEARMACHINE_PROJECT_DIR` to the exact
+host tree to mount, and optionally set `DEARMACHINE_PROJECT_SUBDIR` to the
+repository beneath it. For example, selecting a projects directory with
+`DEARMACHINE_PROJECT_SUBDIR=my-project` mounts that tree at `/workspace`, sets
+the container working directory to `/workspace/my-project`, and passes that
+same path to `--project`. Paths with spaces work. Absolute subdirectories,
+parent traversal, missing directories, and symlink escapes are rejected.
+The default subdirectory remains the mount root. Select only the intended
+project scope; a larger mount grants workers access to its other contents.
+
+Before create, up, rebuild, or config, the stack validates its writable state
+paths against the launching user's native `.dearmachine` and `.machtiani`
+trees, including symlink aliases. It also compares the native and container
+pair registries and rejects a shared provider inbox even when their databases
+are separate. Creation cannot adopt an inbox already registered natively.
+Use a distinct inbox for the container. These are local launch checks, not a
+distributed provider lease: never register that container inbox on another host
+or add it to the native registry while the container runs. Status and down
+remain available to recover from an invalid configuration.

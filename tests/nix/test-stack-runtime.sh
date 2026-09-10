@@ -107,4 +107,10 @@ if bash "$STACK_RUNTIME" create \
   exit 1
 fi
 
+rm "$TEST_CONTAINER_PRESENT"
+mkdir -p "$DEARMACHINE_PROJECT_DIR/entry-point"
+DEARMACHINE_PROJECT_SUBDIR=entry-point bash "$STACK_RUNTIME" create \
+  --email person@example.test --new-inbox --transport agentmail
+grep -F '<--project> </workspace/entry-point>' "$TEST_ACTION_LOG" >/dev/null
+
 printf 'stack runtime tests passed\n'

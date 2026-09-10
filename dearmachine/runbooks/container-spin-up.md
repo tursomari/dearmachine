@@ -7,6 +7,17 @@ Stage 3 systemd user lifecycle with a unique temporary unit.
 The container boundary and tool requirements are documented in
 [`../../docs/container-boundary.md`](../../docs/container-boundary.md).
 
+## Native or container launch
+
+Use `dearmachine up --foreground --project /absolute/repository` for the native
+path after completing native setup. To select the container path, follow the
+isolated environment below and use `nix run .#dearmachine-stack -- up`.
+`DEARMACHINE_PROJECT_DIR` names the explicit host mount. For a tree containing
+several repositories, set `DEARMACHINE_PROJECT_SUBDIR` to the intended entry-point
+repository, relative to that mount. The container uses that repository as both
+its working directory and its `--project` path. Native and container state and
+inboxes must be separate; launch checks reject overlap.
+
 ## Credential-free lifecycle check
 
 Run from the DearMachine repository root. Every durable writable location is
