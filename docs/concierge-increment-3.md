@@ -55,6 +55,11 @@ saved approval is never proof of success. Failed or incomplete observation is
 `unknown`. Unit files follow `XDG_CONFIG_HOME` or `$HOME/.config`, beneath
 `systemd/user/`. An unrelated/substituted unit is not overwritten.
 
+Human-readable native status explains unknown persistence directly: saved false
+consent and an unavailable user manager do not prove that automatic startup is
+disabled. This explanation does not change probes, consent, or machine-readable
+state. Both absent and explicitly false consent records have regression coverage.
+
 The unit runs the same Go `_supervise` owner, with `Restart=no` and
 `KillMode=control-group`. Go alone owns daemon retries. The same socket handles
 up/down/restart. A resident owner must be stopped through its existing lifecycle

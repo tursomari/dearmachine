@@ -72,6 +72,9 @@ func TestCLIReportsAndControlsSupervisor(t *testing.T) {
 	if !strings.Contains(output.String(), "Supervisor: running") || !strings.Contains(output.String(), "Persistence: unknown") {
 		t.Fatalf("status: %s", output.String())
 	}
+	if !strings.Contains(output.String(), unknownPersistenceExplanation) {
+		t.Fatalf("unknown persistence lacks interpretation: %s", output.String())
+	}
 	if err := run([]string{"down"}, os.Getenv, deps); err != nil {
 		t.Fatal(err)
 	}

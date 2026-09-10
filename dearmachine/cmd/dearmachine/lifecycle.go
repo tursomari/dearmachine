@@ -42,6 +42,11 @@ func runStatus(args []string, deps dependencies) error {
 		if err != nil {
 			return err
 		}
+		if s.Persistence == "unknown" {
+			if _, err := fmt.Fprintln(outputOrDiscard(deps.stdout), unknownPersistenceExplanation); err != nil {
+				return err
+			}
+		}
 		if s.RetryInMs != nil {
 			if _, err := fmt.Fprintf(outputOrDiscard(deps.stdout), "Retry in %d ms.\n", *s.RetryInMs); err != nil {
 				return err

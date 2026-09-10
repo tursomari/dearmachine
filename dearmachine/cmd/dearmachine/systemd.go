@@ -19,6 +19,8 @@ import (
 const conciergeUnit = "dearmachine-concierge.service"
 const unitMarker = "# Managed by dearmachine concierge v1\n"
 
+const unknownPersistenceExplanation = "Automatic startup after logout or reboot is unknown, not disabled. Saved consent records permission, not observed service configuration; false consent or an unavailable user manager does not establish whether automatic startup is configured."
+
 type supervisionConsent struct {
 	Version     int  `json:"version"`
 	UseSystemd  bool `json:"useSystemd"`
@@ -261,7 +263,17 @@ func runSupervisionChoice(kind string, args []string, deps dependencies) error {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(outputOrDiscard(deps.stdout), "Systemd user manager available: %t. Saved systemd consent: %t. Saved reboot/linger consent: %t. Observed persistence: %s.\nInspect: systemctl --user status %s; systemctl --user is-enabled %s; loginctl show-user --property=Linger\nDisable: dearmachine persistence off (retains account-wide lingering); loginctl disable-linger removes account-wide lingering if no other services need it.\n", m.usable(), consent.UseSystemd, consent.Persistence, m.persistence(), conciergeUnit, conciergeUnit)
+		persistence := m.persistence()
+		_, err = fmt.Fprintf(outputOrDiscard(deps.stdout), "Systemd user manager available: %t. Saved systemd consent: %t. Saved reboot/linger consent: %t. Observed persistence: %s.\n", m.usable(), consent.UseSystemd, consent.Persistence, persistence)
+		if err != nil {
+			return err
+		}
+		if persistence == "unknown" {
+			if _, err = fmt.Fprintln(outputOrDiscard(deps.stdout), unknownPersistenceExplanation); err != nil {
+				return err
+			}
+		}
+		_, err = fmt.Fprintf(outputOrDiscard(deps.stdout), "Inspect: systemctl --user status %s; systemctl --user is-enabled %s; loginctl show-user --property=Linger\nDisable: dearmachine persistence off (retains account-wide lingering); loginctl disable-linger removes account-wide lingering if no other services need it.\n", conciergeUnit, conciergeUnit)
 		return err
 	}
 	if err := m.configure(kind, args[0]); err != nil {

@@ -167,6 +167,42 @@ func TestSystemdCLIWithMockExecutables(t *testing.T) {
 	}
 }
 
+func TestSystemdStatusExplainsUnknownWithoutChangingConsent(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
+			deps := testDependencies(t, &fakeApplication{})
+			home, _ := deps.userHomeDir()
+			t.Setenv("PATH", t.TempDir()) // No usable systemd manager.
+			m := serviceManager{home: home}
+			if saved {
+				if err := os.MkdirAll(m.root(), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := m.save(supervisionConsent{Version: 1}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, beforeErr := os.ReadFile(m.consentPath())
+			for _, command := range []string{"systemd", "persistence"} {
+				var output strings.Builder
+				deps.stdout = &output
+				if err := run([]string{command, "status"}, os.Getenv, deps); err != nil {
+					t.Fatal(err)
+				}
+				for _, want := range []string{"Saved systemd consent: false", "Observed persistence: unknown", unknownPersistenceExplanation} {
+					if !strings.Contains(output.String(), want) {
+						t.Fatalf("missing %q: %s", want, output.String())
+					}
+				}
+			}
+			after, afterErr := os.ReadFile(m.consentPath())
+			if string(before) != string(after) || os.IsNotExist(beforeErr) != os.IsNotExist(afterErr) {
+				t.Fatal("status changed saved consent")
+			}
+		})
+	}
+}
+
 func TestSystemdStartUsesOneNativeOwner(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, ".dearmachine")
