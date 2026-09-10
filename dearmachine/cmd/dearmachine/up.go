@@ -566,6 +566,9 @@ func printRegistry(output io.Writer, registry client.PairRegistry) error {
 		_, err := fmt.Fprintln(output, "No pairs are registered.")
 		return err
 	}
+	if _, err := fmt.Fprintln(output, "Pair UUID\tAuthorized sender\tDear Machine inbox\tTransport"); err != nil {
+		return err
+	}
 	inboxes := make(map[string]client.Inbox, len(registry.Inboxes))
 	for _, inbox := range registry.Inboxes {
 		inboxes[inbox.ID] = inbox

@@ -103,6 +103,9 @@ func TestStatusAndDownUseCanonicalDaemonState(t *testing.T) {
 	if !strings.Contains(output.String(), "running (PID 6789)") || !strings.Contains(output.String(), "lifecycle@example.test") {
 		t.Fatalf("status output = %q", output.String())
 	}
+	if !strings.Contains(output.String(), "Pair UUID\tAuthorized sender\tDear Machine inbox\tTransport\n") {
+		t.Fatalf("status lacks self-describing pair columns: %q", output.String())
+	}
 	output.Reset()
 	if err := run([]string{"down"}, func(string) string { return "" }, deps); err != nil {
 		t.Fatal(err)
