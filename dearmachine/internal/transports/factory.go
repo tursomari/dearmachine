@@ -26,7 +26,11 @@ var constructors = map[string]constructor{
 func NewRaw(id, inboxID string) (client.Transport, error) {
 	build, ok := constructors[id]
 	if ok {
-		return build(inboxID)
+		transport, err := build(inboxID)
+		if err != nil {
+			return nil, err
+		}
+		return client.WithTransportRetries(transport), nil
 	}
 	if _, cataloged := Lookup(id); cataloged {
 		return nil, fmt.Errorf("transport %q is not implemented", id)

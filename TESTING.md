@@ -150,3 +150,19 @@ production path.
 Add a new runnable suite or LSE here in the same change that introduces it.
 Keep detailed operational instructions in the nearest specialized runbook,
 and link them here rather than creating another competing entrypoint.
+
+### Transient transport failures
+
+The production transport factory wraps read operations and idempotent message
+acknowledgements with at most six retries. Delays grow exponentially from one
+second to a 30-second cap, with jitter between half and all of each delay.
+Every new operation starts at the initial delay; successful polling carries no
+failure penalty. Cancellation interrupts waits. Authentication, authorization,
+validation, and other permanent failures return immediately. Exhausted retries
+return the original failure to the existing daemon recovery policy.
+
+Reply sends are attempted once. A response lost after delivery must pass through
+the durable pending-message and receipt-recovery flow before another send is
+considered; transport retries never blindly repeat a reply. The normal Go suite
+covers classifications for all three providers, growth/cap/jitter, reset,
+exhaustion, cancellation, and receipt recovery after an uncertain send.
