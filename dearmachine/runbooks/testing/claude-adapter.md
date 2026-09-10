@@ -25,10 +25,8 @@ stdout before checking the CLI exit status.
 
 ## Credential-free checks
 
-From `dearmachine/`, run `umask 022; go test ./...`. The normal suite includes
+From `dearmachine/`, run `go test ./...`. The normal suite includes
 parser, launch/model/resume, catalog, and fake-CLI auth-failure lifecycle tests.
-The explicit umask is needed because existing tests create public files to
-verify permission rejection; a restrictive inherited umask masks those modes.
 
 ## One containerized OpenRouter call
 
@@ -37,20 +35,24 @@ the real CLI once with a one-turn limit, and consumes its stdout with the adapte
 It requires a successful terminal reply, an exit code of zero, and a session ID.
 This is a focused adapter integration test, not an email or tool-use exercise.
 
-Set the three paths below to the checkout, resolved Linux CLI binary, and key
-file. No credential values are passed in Docker arguments or printed. The key
+Set `CLAUDE_BINARY` to the resolved Linux CLI binary and `CLAUDE_KEY_FILE`
+to a private mode-`0600` file containing only the test API key. From the
+repository root, export a committed source snapshot on the host; never mount
+the checkout or its Git metadata into the container. No credential values are passed in Docker arguments or printed. The key
 file is mounted read-only and the test adds its value only to the CLI child's
 environment. Run as the key file's owner, with an isolated temporary home.
 
 ```bash
-claude_worktree=/tmp/wt-claude-adapter
-claude_binary=$(readlink -f "$HOME/.local/bin/claude")
-claude_key_file="$HOME/BusinessMachine/.secrets/openrouter/work-api-key.txt"
+: "${CLAUDE_BINARY:?set an absolute path to the Linux CLI binary}"
+: "${CLAUDE_KEY_FILE:?set an absolute path to the private test key file}"
+claude_source=$(mktemp -d "${TMPDIR:-/tmp}/claude-source.XXXXXX")
+trap 'rm -rf -- "$claude_source"' EXIT
+git archive HEAD | tar -x -C "$claude_source"
 docker run --rm --user "$(id -u):$(id -g)" \
   --cap-drop ALL --security-opt no-new-privileges \
-  --mount "type=bind,src=$claude_worktree,dst=/src,readonly" \
-  --mount "type=bind,src=$claude_binary,dst=/usr/local/bin/claude,readonly" \
-  --mount "type=bind,src=$claude_key_file,dst=/run/secrets/openrouter-key,readonly" \
+  --mount "type=bind,src=$claude_source,dst=/src,readonly" \
+  --mount "type=bind,src=$CLAUDE_BINARY,dst=/usr/local/bin/claude,readonly" \
+  --mount "type=bind,src=$CLAUDE_KEY_FILE,dst=/run/secrets/openrouter-key,readonly" \
   -e HOME=/tmp/claude-test-home -e GOCACHE=/tmp/go-cache -e GOPATH=/tmp/go \
   -e GOFLAGS=-buildvcs=false \
   -e DEARMACHINE_CLAUDE_LIVE_KEY_FILE=/run/secrets/openrouter-key \

@@ -123,6 +123,7 @@ That shared file is a reference, not a standalone test.
 | [`multi-pair.md`](dearmachine/runbooks/testing/multi-pair.md) | Pair routing, isolation, allow sets, and provider-ID overlap |
 | [`queued-grace-preemption.md`](dearmachine/runbooks/testing/queued-grace-preemption.md) | Same-poll queued work and grace-period preemption |
 | [`stop-and-resume-preemption.md`](dearmachine/runbooks/testing/stop-and-resume-preemption.md) | New-message interruption and session continuation |
+| [`claude-adapter.md`](dearmachine/runbooks/testing/claude-adapter.md) | Claude Code parser, ticket resume, and opt-in containerized provider probe |
 | [`live-backends.md`](dearmachine/runbooks/testing/live-backends.md) | Forge, Codex, OMP, and ordered backend fallback |
 | [`apple-mail-html-fallback.md`](dearmachine/runbooks/testing/apple-mail-html-fallback.md) | HTML-only Apple Mail normalization through the production container path |
 | [`openmail-transport.md`](dearmachine/runbooks/testing/openmail-transport.md) | Isolated OpenMail provisioning, polling, reply, and acknowledgement |
