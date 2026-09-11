@@ -30,16 +30,28 @@ type Session struct {
 }
 
 type PendingMessage struct {
-	MessageID           string
-	ThreadID            string
-	Session             Session
-	CheckpointSessionID string
-	State               string
-	Prompt              string
-	ResultKind          ResultKind
-	ResultText          string
-	ResultManifest      string
-	MagnificaHumanitas  *MagnificaHumanitas
+	MessageID            string
+	ThreadID             string
+	Session              Session
+	CheckpointSessionID  string
+	State                string
+	Prompt               string
+	ResultKind           ResultKind
+	ResultText           string
+	ResultManifest       string
+	MagnificaHumanitas   *MagnificaHumanitas
+	ForkedFromSessionID  string
+	ForkedFromThreadID   string
+	PreserveOriginalBody bool
+}
+
+type ForwardRequest struct {
+	RequestMessageID string
+	ExternalThreadID string
+	CandidateIDs     []string
+	SelectedID       string
+	State            string
+	PromptMessageID  string
 }
 
 type MessageRef struct {
@@ -75,6 +87,8 @@ const (
 	messageReceived              = "received"
 	messageRunning               = "running"
 	messageResultReady           = "result_ready"
+	forwardAwaitingSelection     = "awaiting_selection"
+	forwardAwaitingConfirmation  = "awaiting_confirmation"
 	sessionReferenceInsertTrials = 10
 )
 
@@ -164,6 +178,9 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     result_manifest TEXT NOT NULL DEFAULT '',
     magnifica_humanitas TEXT NOT NULL DEFAULT '',
     checkpoint_session_id TEXT NOT NULL DEFAULT '',
+    forked_from_session_id TEXT NOT NULL DEFAULT '',
+    forked_from_thread_id TEXT NOT NULL DEFAULT '',
+    preserve_original_body INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(thread_id, sequence)
@@ -179,6 +196,17 @@ CREATE TABLE IF NOT EXISTS skipped_messages (
 CREATE TABLE IF NOT EXISTS thread_aliases (
     external_thread_id TEXT PRIMARY KEY,
     canonical_thread_id TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS forward_requests (
+	request_message_id TEXT PRIMARY KEY,
+	external_thread_id TEXT NOT NULL UNIQUE,
+	candidate_session_ids TEXT NOT NULL,
+	selected_session_id TEXT NOT NULL DEFAULT '',
+	state TEXT NOT NULL,
+	prompt_message_id TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
@@ -197,6 +225,24 @@ CREATE TABLE IF NOT EXISTS thread_aliases (
 			 ADD COLUMN magnifica_humanitas TEXT NOT NULL DEFAULT ''`,
 		); err != nil {
 			return fmt.Errorf("add Magnifica Humanitas result storage: %w", err)
+		}
+	}
+	for _, column := range []struct {
+		name string
+		ddl  string
+	}{
+		{"forked_from_session_id", `ALTER TABLE pending_messages ADD COLUMN forked_from_session_id TEXT NOT NULL DEFAULT ''`},
+		{"forked_from_thread_id", `ALTER TABLE pending_messages ADD COLUMN forked_from_thread_id TEXT NOT NULL DEFAULT ''`},
+		{"preserve_original_body", `ALTER TABLE pending_messages ADD COLUMN preserve_original_body INTEGER NOT NULL DEFAULT 0`},
+	} {
+		hasColumn, err := sqliteTableHasColumn(s.db, "pending_messages", column.name)
+		if err != nil {
+			return fmt.Errorf("inspect SQLite store schema: %w", err)
+		}
+		if !hasColumn {
+			if _, err := s.db.Exec(column.ddl); err != nil {
+				return fmt.Errorf("add %s storage: %w", column.name, err)
+			}
 		}
 	}
 	return nil
@@ -673,7 +719,11 @@ func (s *Store) SkippedMessages() ([]SkippedMessage, error) {
 func (s *Store) Seen(messageID string) (bool, error) {
 	var found int
 	err := s.db.QueryRow(
-		`SELECT 1 FROM processed_messages WHERE message_id = ?`,
+		`SELECT 1 FROM (
+			SELECT message_id FROM processed_messages
+			UNION ALL
+			SELECT request_message_id AS message_id FROM forward_requests
+		) WHERE message_id = ? LIMIT 1`,
 		messageID,
 	).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -683,6 +733,340 @@ func (s *Store) Seen(messageID string) (bool, error) {
 		return false, fmt.Errorf("query processed message: %w", err)
 	}
 	return true, nil
+}
+
+func (s *Store) KnownThread(externalThreadID string) (bool, error) {
+	var found int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM thread_aliases WHERE external_thread_id = ?`,
+		externalThreadID,
+	).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query external thread: %w", err)
+	}
+	return true, nil
+}
+
+func (s *Store) ResolveConversationReferences(references []string) ([]Session, error) {
+	resolved := make([]Session, 0, len(references))
+	seen := make(map[string]struct{}, len(references))
+	for _, candidate := range references {
+		reference := canonicalInboundReference(candidate)
+		if reference == "" {
+			continue
+		}
+		if _, duplicate := seen[reference]; duplicate {
+			continue
+		}
+		seen[reference] = struct{}{}
+		var session Session
+		err := scanSession(s.db.QueryRow(
+			`SELECT thread_id, session_id, sequence, status, response_tier
+			   FROM thread_sessions WHERE session_id = ?`,
+			reference,
+		), &session)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolve conversation reference: %w", err)
+		}
+		resolved = append(resolved, session)
+	}
+	return resolved, nil
+}
+
+func (s *Store) BeginForwardRequest(messageID, externalThreadID string, candidates []Session) (ForwardRequest, bool, error) {
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if !isCanonicalConversationReference(candidate.SessionID) {
+			return ForwardRequest{}, false, fmt.Errorf("forward candidate session ID is invalid")
+		}
+		ids = append(ids, candidate.SessionID)
+	}
+	if len(ids) == 0 {
+		return ForwardRequest{}, false, fmt.Errorf("forward request requires a candidate session")
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return ForwardRequest{}, false, fmt.Errorf("encode forward candidates: %w", err)
+	}
+	state := forwardAwaitingConfirmation
+	selected := ids[0]
+	if len(ids) > 1 {
+		state = forwardAwaitingSelection
+		selected = ""
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.Exec(
+		`INSERT INTO forward_requests
+		     (request_message_id, external_thread_id, candidate_session_ids,
+		      selected_session_id, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(request_message_id) DO NOTHING`,
+		messageID, externalThreadID, string(encoded), selected, state, now, now,
+	)
+	if err != nil {
+		return ForwardRequest{}, false, fmt.Errorf("persist forward request: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return ForwardRequest{}, false, fmt.Errorf("check forward request claim: %w", err)
+	}
+	request, found, err := s.ForwardRequestForThread(externalThreadID)
+	if err != nil {
+		return ForwardRequest{}, false, err
+	}
+	if !found {
+		return ForwardRequest{}, false, fmt.Errorf("forward request disappeared after claim")
+	}
+	return request, changed == 0, nil
+}
+
+func (s *Store) ForwardRequestForThread(externalThreadID string) (ForwardRequest, bool, error) {
+	var request ForwardRequest
+	var candidatesJSON string
+	err := s.db.QueryRow(
+		`SELECT request_message_id, external_thread_id, candidate_session_ids,
+		        selected_session_id, state, prompt_message_id
+		   FROM forward_requests WHERE external_thread_id = ?`,
+		externalThreadID,
+	).Scan(
+		&request.RequestMessageID,
+		&request.ExternalThreadID,
+		&candidatesJSON,
+		&request.SelectedID,
+		&request.State,
+		&request.PromptMessageID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ForwardRequest{}, false, nil
+	}
+	if err != nil {
+		return ForwardRequest{}, false, fmt.Errorf("query forward request: %w", err)
+	}
+	if err := json.Unmarshal([]byte(candidatesJSON), &request.CandidateIDs); err != nil {
+		return ForwardRequest{}, false, fmt.Errorf("decode forward candidates: %w", err)
+	}
+	return request, true, nil
+}
+
+func (s *Store) SetForwardPromptReceipt(requestMessageID, outboundMessageID string) error {
+	_, err := s.db.Exec(
+		`UPDATE forward_requests SET prompt_message_id = ?, updated_at = ?
+		  WHERE request_message_id = ?`,
+		outboundMessageID, time.Now().UTC().Format(time.RFC3339Nano), requestMessageID,
+	)
+	if err != nil {
+		return fmt.Errorf("record forward confirmation receipt: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) SelectForwardCandidate(requestMessageID, controlMessageID, selectedID, outboundMessageID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin forward selection: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.Exec(
+		`UPDATE forward_requests
+		    SET selected_session_id = ?, state = ?, prompt_message_id = ?, updated_at = ?
+		  WHERE request_message_id = ? AND state = ?`,
+		selectedID, forwardAwaitingConfirmation, outboundMessageID, now,
+		requestMessageID, forwardAwaitingSelection,
+	)
+	if err != nil {
+		return fmt.Errorf("select forward candidate: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return fmt.Errorf("select forward candidate: request is not awaiting selection")
+	}
+	if err := recordProcessedTx(tx, controlMessageID, "", outboundMessageID, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RecordControlMessage(messageID, threadID, outboundMessageID string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO processed_messages
+		     (message_id, thread_id, outbound_message_id, processed_at)
+		 VALUES (?, ?, ?, ?)`,
+		messageID, threadID, outboundMessageID, now,
+	)
+	if err != nil {
+		return fmt.Errorf("record forward control message: %w", err)
+	}
+	return nil
+}
+
+func recordProcessedTx(tx *sql.Tx, messageID, threadID, outboundMessageID, now string) error {
+	_, err := tx.Exec(
+		`INSERT OR IGNORE INTO processed_messages
+		     (message_id, thread_id, outbound_message_id, processed_at)
+		 VALUES (?, ?, ?, ?)`,
+		messageID, threadID, outboundMessageID, now,
+	)
+	if err != nil {
+		return fmt.Errorf("record forward control message: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) MaterializeForwardRequest(
+	externalThreadID, controlMessageID string,
+	fork bool,
+	responseTier ResponseTier,
+) (PendingMessage, error) {
+	if responseTier == "" {
+		responseTier = TierPlain
+	}
+	tier, err := ParseResponseTier(string(responseTier))
+	if err != nil {
+		return PendingMessage{}, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("begin forward decision: %w", err)
+	}
+	defer tx.Rollback()
+
+	var request ForwardRequest
+	var candidatesJSON string
+	err = tx.QueryRow(
+		`SELECT request_message_id, external_thread_id, candidate_session_ids,
+		        selected_session_id, state, prompt_message_id
+		   FROM forward_requests WHERE external_thread_id = ?`,
+		externalThreadID,
+	).Scan(
+		&request.RequestMessageID,
+		&request.ExternalThreadID,
+		&candidatesJSON,
+		&request.SelectedID,
+		&request.State,
+		&request.PromptMessageID,
+	)
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("load forward decision: %w", err)
+	}
+	if fork && request.State != forwardAwaitingConfirmation {
+		return PendingMessage{}, fmt.Errorf("forward request is not awaiting confirmation")
+	}
+	if !fork && request.State != forwardAwaitingConfirmation && request.State != forwardAwaitingSelection {
+		return PendingMessage{}, fmt.Errorf("forward request cannot be processed normally")
+	}
+
+	forkedFromThreadID := ""
+	forkedFromSessionID := ""
+	if fork {
+		forkedFromSessionID = canonicalInboundReference(request.SelectedID)
+		if forkedFromSessionID == "" {
+			return PendingMessage{}, fmt.Errorf("selected forward session is invalid")
+		}
+		if err := tx.QueryRow(
+			`SELECT thread_id FROM thread_sessions WHERE session_id = ?`,
+			forkedFromSessionID,
+		).Scan(&forkedFromThreadID); err != nil {
+			return PendingMessage{}, fmt.Errorf("resolve selected forward session: %w", err)
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	session := Session{
+		ThreadID:     request.ExternalThreadID,
+		Sequence:     0,
+		Status:       "active",
+		IsNew:        !fork,
+		ResponseTier: tier,
+	}
+	session.SessionID, err = s.insertThreadSession(tx, session, now)
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("create forwarded conversation: %w", err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO thread_aliases (external_thread_id, canonical_thread_id) VALUES (?, ?)`,
+		request.ExternalThreadID, request.ExternalThreadID,
+	); err != nil {
+		return PendingMessage{}, fmt.Errorf("bind forwarded conversation thread: %w", err)
+	}
+	pending := PendingMessage{
+		MessageID: request.RequestMessageID,
+		ThreadID:  request.ExternalThreadID,
+		Session: Session{
+			ThreadID:     request.ExternalThreadID,
+			SessionID:    session.SessionID,
+			Sequence:     1,
+			Status:       session.Status,
+			IsNew:        !fork,
+			ResponseTier: tier,
+		},
+		State:                messageReceived,
+		ForkedFromSessionID:  forkedFromSessionID,
+		ForkedFromThreadID:   forkedFromThreadID,
+		PreserveOriginalBody: !fork,
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO pending_messages
+		     (message_id, thread_id, sequence, state, forked_from_session_id,
+		      forked_from_thread_id, preserve_original_body, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		pending.MessageID, pending.ThreadID, pending.Session.Sequence, pending.State,
+		pending.ForkedFromSessionID, pending.ForkedFromThreadID, pending.PreserveOriginalBody, now, now,
+	); err != nil {
+		return PendingMessage{}, fmt.Errorf("queue forwarded request: %w", err)
+	}
+	if err := recordProcessedTx(tx, controlMessageID, externalThreadID, "", now); err != nil {
+		return PendingMessage{}, err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM forward_requests WHERE request_message_id = ?`,
+		request.RequestMessageID,
+	); err != nil {
+		return PendingMessage{}, fmt.Errorf("finish forward decision: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return PendingMessage{}, fmt.Errorf("commit forward decision: %w", err)
+	}
+	return pending, nil
+}
+
+func (s *Store) CancelForwardRequest(externalThreadID, controlMessageID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin forward cancellation: %w", err)
+	}
+	defer tx.Rollback()
+	var requestMessageID string
+	if err := tx.QueryRow(
+		`SELECT request_message_id FROM forward_requests WHERE external_thread_id = ?`,
+		externalThreadID,
+	).Scan(&requestMessageID); err != nil {
+		return fmt.Errorf("load forward cancellation: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := recordProcessedTx(tx, requestMessageID, externalThreadID, "", now); err != nil {
+		return err
+	}
+	if err := recordProcessedTx(tx, controlMessageID, externalThreadID, "", now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM forward_requests WHERE request_message_id = ?`,
+		requestMessageID,
+	); err != nil {
+		return fmt.Errorf("cancel forward request: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit forward cancellation: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CountProcessedSince(since time.Time) (int, error) {
@@ -931,6 +1315,25 @@ func (s *Store) PendingByID(messageID string) (PendingMessage, bool, error) {
 	return pending, true, nil
 }
 
+func (s *Store) PreservePendingOriginalBody(messageID string) error {
+	result, err := s.db.Exec(
+		`UPDATE pending_messages SET preserve_original_body = 1, updated_at = ?
+		  WHERE message_id = ? AND state = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), messageID, messageReceived,
+	)
+	if err != nil {
+		return fmt.Errorf("preserve original forwarded body: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check forwarded body preservation: %w", err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("preserve original forwarded body: message is not received")
+	}
+	return nil
+}
+
 func (s *Store) MarkRunning(messageID, prompt string) error {
 	return s.MarkRunningWithCheckpoint(messageID, prompt, "")
 }
@@ -1115,6 +1518,9 @@ SELECT p.message_id,
        p.result_text,
        p.result_manifest,
        p.magnifica_humanitas,
+	   p.forked_from_session_id,
+	   p.forked_from_thread_id,
+	   p.preserve_original_body,
        t.sequence
   FROM pending_messages p
   JOIN thread_sessions t ON t.thread_id = p.thread_id`
@@ -1128,6 +1534,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 	var committedSequence int
 	var storedTier string
 	var storedMagnificaHumanitas sql.NullString
+	var preserveOriginalBody int
 	err := row.Scan(
 		&pending.MessageID,
 		&pending.ThreadID,
@@ -1142,6 +1549,9 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.ResultText,
 		&pending.ResultManifest,
 		&storedMagnificaHumanitas,
+		&pending.ForkedFromSessionID,
+		&pending.ForkedFromThreadID,
+		&preserveOriginalBody,
 		&committedSequence,
 	)
 	if err != nil {
@@ -1168,8 +1578,12 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 			pending.CheckpointSessionID,
 		)
 	}
+	if pending.ForkedFromSessionID != "" && !isCanonicalConversationReference(pending.ForkedFromSessionID) {
+		return PendingMessage{}, fmt.Errorf("stored fork source session ID %q is invalid", pending.ForkedFromSessionID)
+	}
 	pending.Session.ThreadID = pending.ThreadID
-	pending.Session.IsNew = committedSequence == 0
+	pending.PreserveOriginalBody = preserveOriginalBody != 0
+	pending.Session.IsNew = committedSequence == 0 && pending.ForkedFromSessionID == ""
 	pending.Session.ResponseTier = tier
 	if storedMagnificaHumanitas.Valid && strings.TrimSpace(storedMagnificaHumanitas.String) != "" {
 		var magnificaHumanitas MagnificaHumanitas

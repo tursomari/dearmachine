@@ -196,6 +196,27 @@ func TestReplyFooterRendersFreshMagnificaHumanitasQuote(t *testing.T) {
 	}
 }
 
+func TestMinimalFooterKeepsOnlySessionReference(t *testing.T) {
+	rig := newTestRig(t)
+	rig.app.SetMinimalFooter(true)
+	rig.mail.add(testMessage("msg-minimal-footer", "thread-minimal-footer", "Answer briefly."))
+	rig.setAnswer("A brief answer.")
+	rig.setStatus(`{"status":"success","magnifica_humanitas":{"paragraph":1,"line":1,"quote":"Hidden quote."}}`)
+
+	mustProcess(t, rig)
+
+	reply := rig.mail.sentReplies()[0].Text
+	want := "A brief answer.\n\n" + minimalConversationFooter(rig.session("thread-minimal-footer").SessionID)
+	if reply != want {
+		t.Fatalf("minimal reply = %q, want %q", reply, want)
+	}
+	for _, hidden := range []string{"Dear Machine:", conversationFooterRule, conversationFooterMotto, "Hidden quote"} {
+		if strings.Contains(reply, hidden) {
+			t.Fatalf("minimal footer retained %q: %q", hidden, reply)
+		}
+	}
+}
+
 func TestClaimSkipsOwnOutboundReply(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-001", "thread-001", "Request."))
@@ -287,7 +308,7 @@ func TestFollowUpResumesExistingSession(t *testing.T) {
 	assertReplyText(t, replies[len(replies)-1].Text, "Here is the regional breakdown.")
 }
 
-func TestShortSessionFooterContinuesSessionWhenTransportThreadAndAncestryChange(t *testing.T) {
+func TestShortSessionFooterWithoutAncestryRequiresForkConfirmation(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-short-footer-1", "provider-thread-short-a", "Start the report."))
 	rig.setAnswer("Initial report.")
@@ -312,11 +333,25 @@ func TestShortSessionFooterContinuesSessionWhenTransportThreadAndAncestryChange(
 	rig.setAnswer("Regional breakdown added.")
 	mustProcess(t, rig)
 
-	continued := rig.session("provider-thread-short-b")
-	if continued.SessionID != first.SessionID || continued.Sequence != 2 {
-		t.Fatalf("short-footer reply did not continue session: first=%+v continued=%+v", first, continued)
+	if got := rig.capture("count"); got != "1" {
+		t.Fatalf("forward detection invoked agent: count=%q", got)
 	}
-	assertArg(t, rig.captureLines("args-2"), "--resume", first.SessionID)
+	if replies := rig.mail.sentReplies(); len(replies) != 2 || !strings.Contains(replies[1].Text, "Reply with only") {
+		t.Fatalf("forward confirmation replies = %+v", replies)
+	}
+
+	decision := testMessage("msg-short-footer-confirm", "provider-thread-short-b", "Yes!")
+	rig.mail.add(decision)
+	mustProcess(t, rig)
+
+	continued := rig.session("provider-thread-short-b")
+	if continued.SessionID == first.SessionID || continued.Sequence != 1 {
+		t.Fatalf("confirmed forward did not create child session: first=%+v continued=%+v", first, continued)
+	}
+	assertArg(t, rig.captureLines("args-2"), "--resume", continued.SessionID)
+	if got := strings.TrimSpace(rig.capture("forked-sessions")); got != first.SessionID {
+		t.Fatalf("fork source = %q, want %q", got, first.SessionID)
+	}
 }
 
 func TestFollowUpCheckpointFailureLeavesMessageReceived(t *testing.T) {

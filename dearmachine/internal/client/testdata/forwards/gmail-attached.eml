@@ -1,0 +1,18 @@
+From: Dear Machine <machine@example.com>
+To: User <user@example.com>
+Subject: Re: plan
+Date: Fri, 11 Sep 2026 10:00:00 -0600
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="fixture-boundary"
+
+--fixture-boundary
+Content-Type: text/plain; charset=UTF-8
+
+Earlier answer.
+
+session dm1-kyf1e-4cze7x
+--fixture-boundary
+Content-Type: text/html; charset=UTF-8
+
+<html><body><p>Earlier answer.</p><p>session dm1-kyf1e-4cze7x</p></body></html>
+--fixture-boundary--

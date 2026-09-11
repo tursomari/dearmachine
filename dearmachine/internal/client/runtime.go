@@ -28,6 +28,7 @@ type RuntimeConfig struct {
 	MaintenanceMinTurns    int    `toml:"maintenance_min_turns"`
 	MaintenanceMinTurnsSet bool   `toml:"maintenance_min_turns_set"`
 	MagnificaHumanitas     bool   `toml:"magnifica_humanitas"`
+	MinimalFooter          bool   `toml:"minimal_footer"`
 	Verbose                bool   `toml:"verbose"`
 }
 

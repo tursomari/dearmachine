@@ -332,6 +332,7 @@ func TestUpCreatePersistsRuntimeSettingsForLaterPlainUp(t *testing.T) {
 		"--concurrency", "4",
 		"--maintenance-min-turns", "9",
 		"--magnifica-humanitas",
+		"--minimal-footer",
 		"--verbose",
 		"--once",
 	}, func(string) string { return "" }, deps); err != nil {
@@ -372,7 +373,7 @@ func TestUpCreatePersistsRuntimeSettingsForLaterPlainUp(t *testing.T) {
 		persisted.EntryPointPrompt != prompt || persisted.Model != "selected-model" ||
 		persisted.AgentBinary != "/test/machtiani" || persisted.PollInterval != "7s" ||
 		persisted.Concurrency != 4 || persisted.MaintenanceMinTurns != 9 ||
-		!persisted.MaintenanceMinTurnsSet || !persisted.MagnificaHumanitas || !persisted.Verbose {
+		!persisted.MaintenanceMinTurnsSet || !persisted.MagnificaHumanitas || !persisted.MinimalFooter || !persisted.Verbose {
 		t.Fatalf("persisted runtime profile = %+v", persisted)
 	}
 }
@@ -392,6 +393,7 @@ func TestExplicitRunFlagsOverridePersistedRuntimeSettings(t *testing.T) {
 		Concurrency:         4,
 		MaintenanceMinTurns: 9,
 		MagnificaHumanitas:  true,
+		MinimalFooter:       true,
 		Verbose:             true,
 	})
 	if err != nil {
@@ -404,7 +406,7 @@ func TestExplicitRunFlagsOverridePersistedRuntimeSettings(t *testing.T) {
 		merged.entryPointRepo != "/persisted/entry-point" ||
 		merged.entryPointPrompt != "/persisted/prompt.md" ||
 		merged.concurrency != 4 || merged.maintenanceMinTurns != 9 ||
-		!merged.magnificaHumanitas || !merged.verbose {
+		!merged.magnificaHumanitas || !merged.minimalFooter || !merged.verbose {
 		t.Fatalf("persisted defaults not merged: %+v", merged)
 	}
 }

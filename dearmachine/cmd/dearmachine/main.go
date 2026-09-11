@@ -51,6 +51,7 @@ type config struct {
 	once                   bool
 	verbose                bool
 	magnificaHumanitas     bool
+	minimalFooter          bool
 	setFlags               map[string]bool
 }
 
@@ -245,11 +246,20 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 		false,
 		"pass --magnifica-humanitas to machtiani run and parse the selected quote",
 	)
+	flags.BoolVar(
+		&cfg.minimalFooter,
+		"minimal-footer",
+		false,
+		"keep only the session reference in reply footers",
+	)
 	flags.BoolVar(&cfg.once, "once", false, "poll once, process available messages, and exit")
 	flags.BoolVar(&cfg.verbose, "verbose", false, "log every mail transport poll cycle")
 	for _, arg := range args {
 		if arg == "-magnifica-humanitas" || strings.HasPrefix(arg, "-magnifica-humanitas=") {
 			return config{}, fmt.Errorf("flag provided but not defined: -magnifica-humanitas")
+		}
+		if arg == "-minimal-footer" || strings.HasPrefix(arg, "-minimal-footer=") {
+			return config{}, fmt.Errorf("flag provided but not defined: -minimal-footer")
 		}
 	}
 	if err := flags.Parse(args); err != nil {

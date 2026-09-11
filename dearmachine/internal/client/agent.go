@@ -507,6 +507,18 @@ func (r *AgentRunner) ForkSession(
 	return forkedID, nil
 }
 
+// EnsureForkSession makes the explicit-destination fork safe to retry after a
+// process stops between the filesystem fork and the SQLite state transition.
+func (r *AgentRunner) EnsureForkSession(ctx context.Context, sourceID, destinationID string) error {
+	if _, err := r.ForkSession(ctx, sourceID, destinationID); err != nil {
+		if _, showErr := r.showSession(ctx, destinationID); showErr == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func isValidOpaqueSessionID(sessionID string) bool {
 	return sessionID != "" &&
 		sessionID == strings.TrimSpace(sessionID) &&

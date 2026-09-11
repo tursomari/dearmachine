@@ -553,6 +553,13 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 	if strings.TrimSpace(body) == "" {
 		body = message.Preview
 	}
+	rawBody := message.Text
+	if strings.TrimSpace(rawBody) == "" {
+		rawBody = htmlToText(message.HTML)
+	}
+	if strings.TrimSpace(rawBody) == "" {
+		rawBody = body
+	}
 	body, bodyReferences := stripConversationFooters(body)
 	conversationReferences := mergeConversationReferences(
 		bodyReferences,
@@ -581,6 +588,7 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 		CreatedAt:              message.CreatedAt,
 		Subject:                message.Subject,
 		Body:                   body,
+		RawBody:                rawBody,
 		InReplyTo:              message.InReplyTo,
 		References:             append([]string(nil), message.References...),
 		ConversationReferences: conversationReferences,

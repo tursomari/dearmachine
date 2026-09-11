@@ -28,6 +28,7 @@ func TestRuntimeConfigRoundTripIsPrivate(t *testing.T) {
 		MaintenanceMinTurns:    9,
 		MaintenanceMinTurnsSet: true,
 		MagnificaHumanitas:     true,
+		MinimalFooter:          true,
 		Verbose:                true,
 	}
 	if err := SaveRuntimeConfig(path, want); err != nil {

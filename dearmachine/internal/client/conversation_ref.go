@@ -88,13 +88,24 @@ func conversationFooter(reference string) string {
 	return conversationFooterRule + "\nDear Machine:\nsession " + shortConversationReference(reference)
 }
 
+func minimalConversationFooter(reference string) string {
+	return "session " + shortConversationReference(reference)
+}
+
 func appendConversationFooter(text, reference string, quotes ...*MagnificaHumanitas) string {
+	return appendConversationFooterMode(text, reference, false, quotes...)
+}
+
+func appendConversationFooterMode(text, reference string, minimal bool, quotes ...*MagnificaHumanitas) string {
 	footer := conversationFooter(reference)
+	if minimal {
+		footer = minimalConversationFooter(reference)
+	}
 	var quote *MagnificaHumanitas
 	if len(quotes) > 0 {
 		quote = quotes[0]
 	}
-	if quoteText := magnificaHumanitasQuoteText(quote); quoteText != "" {
+	if quoteText := magnificaHumanitasQuoteText(quote); quoteText != "" && !minimal {
 		footer += "\n\n" + conversationFooterMotto + " " + conversationFooterQuoteLabel + ":\n\"" + quoteText + `"`
 	}
 	return strings.TrimRight(text, "\r\n") + "\n\n" + footer
@@ -143,6 +154,26 @@ func stripConversationFooters(body string) (string, []string) {
 			references = append(references, reference)
 		}
 		index = end - 1
+	}
+	for index := range lines {
+		if remove[index] {
+			continue
+		}
+		if index > 0 && emailQuoteDepth(lines[index-1]) == emailQuoteDepth(lines[index]) &&
+			strings.TrimSpace(footerLine(lines[index-1])) != "" {
+			continue
+		}
+		session, found := strings.CutPrefix(footerLine(lines[index]), "session ")
+		if !found || !isCanonicalConversationReference(session) {
+			continue
+		}
+		remove[index] = true
+		validReferences[session] = struct{}{}
+		validReferenceLines = append(validReferenceLines, index)
+		if _, exists := seen[session]; !exists {
+			seen[session] = struct{}{}
+			references = append(references, session)
+		}
 	}
 	if len(validReferences) == 1 && hasUnquotedContribution(lines, remove) {
 		for _, index := range validReferenceLines {
@@ -334,6 +365,9 @@ func mailHeaderSeparator(line string) bool {
 }
 
 func prepareInboundMessage(message Message) (Message, string) {
+	if message.RawBody == "" {
+		message.RawBody = message.Body
+	}
 	_, historyReferences := stripConversationFooters(message.Body)
 	clean, bodyReferences := stripConversationFooters(stripReplyHistory(message.Body))
 	message.Body = clean

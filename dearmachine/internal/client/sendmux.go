@@ -465,6 +465,7 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 	if strings.TrimSpace(body) == "" {
 		body = htmlToText(raw.HTML)
 	}
+	rawBody := body
 	body, bodyReferences := stripConversationFooters(body)
 	conversationReferences := mergeConversationReferences(
 		bodyReferences,
@@ -495,7 +496,7 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 	return Message{
 		MessageID: raw.ID, ThreadID: raw.ThreadID, From: strings.ToLower(raw.From), To: to,
 		Timestamp: firstNonZeroTime(raw.ReceivedAt, raw.SentAt), CreatedAt: firstNonZeroTime(raw.ReceivedAt, raw.SentAt),
-		Subject: raw.Subject, Body: body, InReplyTo: raw.InReplyTo,
+		Subject: raw.Subject, Body: body, RawBody: rawBody, InReplyTo: raw.InReplyTo,
 		References:             append([]string(nil), raw.References...),
 		ConversationReferences: conversationReferences, Labels: labels, Attachments: attachments,
 	}

@@ -29,12 +29,19 @@ type App struct {
 	verbose          bool
 	pidfile          string
 	responseTier     ResponseTier
+	minimalFooter    bool
 	preemptionNow    func() time.Time
 	preemptionAfter  func(time.Duration) <-chan time.Time
 	statsMu          sync.Mutex
 	processed        int
 	threads          map[string]struct{}
 	workerGate       chan struct{}
+}
+
+// SetMinimalFooter keeps the session reference while suppressing DearMachine
+// branding and the optional Magnifica Humanitas quote.
+func (a *App) SetMinimalFooter(enabled bool) {
+	a.minimalFooter = enabled
 }
 
 func New(
@@ -220,6 +227,8 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		a.logger.Printf("poll: %d unread messages", len(messages))
 	}
 	for _, message := range messages {
+		original := message
+		preserveForward := false
 		message, conversationReference := prepareInboundMessage(message)
 		if containsFold(message.Labels, "sent") {
 			if a.verbose {
@@ -227,6 +236,16 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			}
 			if err := a.transport.MarkProcessed(ctx, message.MessageID); err != nil {
 				a.logger.Printf("poll: clear own outbound message=%s thread=%s: %v", message.MessageID, message.ThreadID, err)
+			}
+			continue
+		}
+		forwardRequest, hasForwardRequest, err := a.store.ForwardRequestForThread(message.ThreadID)
+		if err != nil {
+			return err
+		}
+		if hasForwardRequest {
+			if err := a.handleForwardRequest(ctx, original, forwardRequest, work); err != nil {
+				return err
 			}
 			continue
 		}
@@ -254,6 +273,44 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			}
 			continue
 		}
+		knownThread, err := a.store.KnownThread(message.ThreadID)
+		if err != nil {
+			return err
+		}
+		if !knownThread && strings.TrimSpace(original.InReplyTo) == "" && len(original.References) == 0 {
+			forwardReferences, detectionErr := forwardedConversationReferences(ctx, a.transport, original)
+			if detectionErr != nil {
+				a.logger.Printf("forward detection skipped message=%s: %v", message.MessageID, detectionErr)
+			} else if len(forwardReferences) > 0 {
+				preserveForward = true
+				candidates, err := a.store.ResolveConversationReferences(forwardReferences)
+				if err != nil {
+					return err
+				}
+				if len(candidates) > 0 {
+					request, _, err := a.store.BeginForwardRequest(
+						message.MessageID,
+						message.ThreadID,
+						candidates,
+					)
+					if err != nil {
+						return err
+					}
+					if err := a.ensureForwardPrompt(ctx, original, request); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+			preserveForward = preserveForward || hasForwardStructure(original)
+		}
+		if preserveForward {
+			conversationReference = ""
+			message.ConversationReferences = nil
+			if message.RawBody != "" {
+				message.Body = message.RawBody
+			}
+		}
 		pending, existed, err := a.store.BeginMessageWithReference(
 			message.MessageID,
 			message.ThreadID,
@@ -273,9 +330,179 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		if err != nil {
 			return fmt.Errorf("claim message %s: %w", message.MessageID, err)
 		}
+		if preserveForward {
+			if err := a.store.PreservePendingOriginalBody(message.MessageID); err != nil {
+				return err
+			}
+			pending.PreserveOriginalBody = true
+		}
 		work.enqueue(messageWork{message: message, pending: pending, recovering: existed})
 	}
 	return nil
+}
+
+func (a *App) ensureForwardPrompt(ctx context.Context, message Message, request ForwardRequest) error {
+	if request.PromptMessageID == "" {
+		outboundMessageID, found, err := a.transport.ReplyReceipt(ctx, message)
+		if err != nil {
+			return err
+		}
+		if !found {
+			outboundMessageID, err = a.transport.Reply(
+				ctx,
+				message.MessageID,
+				ReplyPayload{Text: initialForwardPrompt(request)},
+				controlIdempotencyKey("forward-prompt", message.MessageID),
+			)
+			if err != nil {
+				return err
+			}
+		}
+		if err := a.store.SetForwardPromptReceipt(request.RequestMessageID, outboundMessageID); err != nil {
+			return err
+		}
+	}
+	return a.transport.MarkProcessed(ctx, message.MessageID)
+}
+
+func (a *App) handleForwardRequest(
+	ctx context.Context,
+	message Message,
+	request ForwardRequest,
+	work *threadWorkQueue,
+) error {
+	if message.MessageID == request.RequestMessageID {
+		return a.ensureForwardPrompt(ctx, message, request)
+	}
+	seen, err := a.store.Seen(message.MessageID)
+	if err != nil {
+		return err
+	}
+	if seen {
+		return a.transport.MarkProcessed(ctx, message.MessageID)
+	}
+	control := parseForwardControl(authoredControlBody(message))
+	if request.State == forwardAwaitingSelection {
+		switch control.Kind {
+		case forwardControlNo:
+			return a.resolveForwardRequest(ctx, message, request, false, work)
+		case forwardControlCancel:
+			if err := a.store.CancelForwardRequest(request.ExternalThreadID, message.MessageID); err != nil {
+				return err
+			}
+			return a.transport.MarkProcessed(ctx, message.MessageID)
+		case forwardControlSelection:
+			if control.Selection <= len(request.CandidateIDs) {
+				selected := request.CandidateIDs[control.Selection-1]
+				outbound, err := a.replyForwardControl(
+					ctx,
+					message,
+					forwardConfirmationPrompt(selected),
+					"forward-selection",
+				)
+				if err != nil {
+					return err
+				}
+				if err := a.store.SelectForwardCandidate(
+					request.RequestMessageID,
+					message.MessageID,
+					selected,
+					outbound,
+				); err != nil {
+					return err
+				}
+				return a.transport.MarkProcessed(ctx, message.MessageID)
+			}
+		}
+		return a.repeatForwardPrompt(ctx, message, request)
+	}
+
+	switch control.Kind {
+	case forwardControlYes:
+		return a.resolveForwardRequest(ctx, message, request, true, work)
+	case forwardControlNo:
+		return a.resolveForwardRequest(ctx, message, request, false, work)
+	case forwardControlCancel:
+		if err := a.store.CancelForwardRequest(request.ExternalThreadID, message.MessageID); err != nil {
+			return err
+		}
+		return a.transport.MarkProcessed(ctx, message.MessageID)
+	default:
+		return a.repeatForwardPrompt(ctx, message, request)
+	}
+}
+
+func (a *App) repeatForwardPrompt(ctx context.Context, message Message, request ForwardRequest) error {
+	outbound, err := a.replyForwardControl(
+		ctx,
+		message,
+		invalidForwardPrompt(request),
+		"forward-invalid",
+	)
+	if err != nil {
+		return err
+	}
+	if err := a.store.RecordControlMessage(message.MessageID, message.ThreadID, outbound); err != nil {
+		return err
+	}
+	return a.transport.MarkProcessed(ctx, message.MessageID)
+}
+
+func (a *App) replyForwardControl(
+	ctx context.Context,
+	message Message,
+	text, kind string,
+) (string, error) {
+	outbound, found, err := a.transport.ReplyReceipt(ctx, message)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		return outbound, nil
+	}
+	return a.transport.Reply(
+		ctx,
+		message.MessageID,
+		ReplyPayload{Text: text},
+		controlIdempotencyKey(kind, message.MessageID),
+	)
+}
+
+func (a *App) resolveForwardRequest(
+	ctx context.Context,
+	control Message,
+	request ForwardRequest,
+	fork bool,
+	work *threadWorkQueue,
+) error {
+	pending, err := a.store.MaterializeForwardRequest(
+		request.ExternalThreadID,
+		control.MessageID,
+		fork,
+		a.responseTier,
+	)
+	if err != nil {
+		return err
+	}
+	original, err := a.transport.Message(ctx, request.RequestMessageID)
+	if err != nil {
+		return err
+	}
+	if pending.PreserveOriginalBody {
+		if original.RawBody != "" {
+			original.Body = original.RawBody
+		}
+		original.ConversationReferences = nil
+	} else {
+		original = prepareForwardForkMessage(original)
+	}
+	work.enqueuePriority(messageWork{message: original, pending: pending})
+	return a.transport.MarkProcessed(ctx, control.MessageID)
+}
+
+func controlIdempotencyKey(kind, messageID string) string {
+	sum := sha256.Sum256([]byte(kind + "\x00" + messageID))
+	return fmt.Sprintf("dearmachine-control-%x", sum[:])
 }
 
 func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {
@@ -305,7 +532,7 @@ func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {
 		if err != nil {
 			return err
 		}
-		message, _ = prepareInboundMessage(message)
+		message = prepareMessageForPending(message, pending)
 		work.enqueue(messageWork{message: message, pending: pending, recovering: true})
 	}
 	return nil
@@ -347,6 +574,7 @@ func (a *App) processPending(
 	recovering bool,
 	started func(),
 ) error {
+	message = prepareMessageForPending(message, pending)
 	if recovering {
 		outboundMessageID, found, err := a.transport.ReplyReceipt(ctx, message)
 		if err != nil {
@@ -383,7 +611,17 @@ func (a *App) processPending(
 		}
 	}
 
-	prompt := formatPrompt(message, pending.Session)
+	if pending.State == messageReceived && pending.ForkedFromSessionID != "" {
+		if err := a.runner.EnsureForkSession(
+			ctx,
+			pending.ForkedFromSessionID,
+			pending.Session.SessionID,
+		); err != nil {
+			return fmt.Errorf("fork referenced session: %w", err)
+		}
+		pending.Session.IsNew = false
+	}
+	prompt := formatPromptMode(message, pending.Session, pending.PreserveOriginalBody)
 	finalPath := recoveryResultPath(pending.Session.SessionID, message.MessageID)
 	tc, err := a.turnContext(ctx, pending)
 	if err != nil {
@@ -411,7 +649,7 @@ func (a *App) processPending(
 	switch pending.State {
 	case messageReceived:
 		checkpointSessionID := ""
-		if !pending.Session.IsNew {
+		if !pending.Session.IsNew && pending.ForkedFromSessionID == "" {
 			checkpointSessionID, err = a.runner.ForkSession(ctx, pending.Session.SessionID, "")
 			if err != nil {
 				return fmt.Errorf("checkpoint committed agent session before follow-up: %w", err)
@@ -474,7 +712,12 @@ func (a *App) processPending(
 	if footerQuote == nil {
 		footerQuote = pending.MagnificaHumanitas
 	}
-	replyText := appendConversationFooter(result.Text, pending.Session.SessionID, footerQuote)
+	replyText := appendConversationFooterMode(
+		result.Text,
+		pending.Session.SessionID,
+		a.minimalFooter,
+		footerQuote,
+	)
 	payload := ReplyPayload{Text: replyText}
 	tier := a.tierFor(pending)
 	if tier != TierPlain {
@@ -683,7 +926,17 @@ func formatPrompt(
 	message Message,
 	session Session,
 ) string {
-	message, _ = prepareInboundMessage(message)
+	return formatPromptMode(message, session, false)
+}
+
+func formatPromptMode(message Message, session Session, preserveOriginalBody bool) string {
+	if preserveOriginalBody {
+		if message.RawBody != "" {
+			message.Body = message.RawBody
+		}
+	} else {
+		message, _ = prepareInboundMessage(message)
+	}
 	var prompt strings.Builder
 	fmt.Fprintf(
 		&prompt,
@@ -721,6 +974,21 @@ func formatPrompt(
 	prompt.WriteString(messageBody(message))
 	prompt.WriteString("\n\n[End of email]")
 	return prompt.String()
+}
+
+func prepareMessageForPending(message Message, pending PendingMessage) Message {
+	if pending.PreserveOriginalBody {
+		if message.RawBody != "" {
+			message.Body = message.RawBody
+		}
+		message.ConversationReferences = nil
+		return message
+	}
+	if pending.ForkedFromSessionID != "" {
+		return prepareForwardForkMessage(message)
+	}
+	message, _ = prepareInboundMessage(message)
+	return message
 }
 
 func (a *App) pollTarget() string {

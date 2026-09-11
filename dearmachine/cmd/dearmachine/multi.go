@@ -144,6 +144,9 @@ func runPairStates(cfg config, getenv func(string) string, deps dependencies, st
 		if err != nil {
 			return err
 		}
+		if configurable, ok := app.(interface{ SetMinimalFooter(bool) }); ok {
+			configurable.SetMinimalFooter(cfg.minimalFooter)
+		}
 		applications = append(applications, app)
 	}
 	lockPath, err := client.DefaultDaemonLockPath(deps.userHomeDir)

@@ -661,6 +661,7 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 	if strings.TrimSpace(body) == "" {
 		body = htmlToText(message.BodyHTML)
 	}
+	rawBody := body
 	body, bodyReferences := stripConversationFooters(body)
 	conversationReferences := mergeConversationReferences(
 		bodyReferences,
@@ -675,6 +676,7 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 		CreatedAt:              message.CreatedAt,
 		Subject:                message.Subject,
 		Body:                   body,
+		RawBody:                rawBody,
 		ConversationReferences: conversationReferences,
 		Labels:                 labels,
 		Attachments:            attachments,

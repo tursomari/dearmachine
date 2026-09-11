@@ -13,6 +13,13 @@ type messageWork struct {
 	recovering bool
 }
 
+func (work messageWork) lane() string {
+	if work.pending.ForkedFromThreadID != "" {
+		return work.pending.ForkedFromThreadID
+	}
+	return work.pending.ThreadID
+}
+
 type threadWorkQueue struct {
 	mu        sync.Mutex
 	items     []messageWork
@@ -45,14 +52,35 @@ func (q *threadWorkQueue) enqueue(work messageWork) {
 	}
 }
 
+func (q *threadWorkQueue) enqueuePriority(work messageWork) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if _, exists := q.messageID[work.pending.MessageID]; exists {
+		return
+	}
+	q.messageID[work.pending.MessageID] = struct{}{}
+	q.items = append([]messageWork{work}, q.items...)
+	select {
+	case q.added <- struct{}{}:
+	default:
+	}
+}
+
 func (q *threadWorkQueue) take() (messageWork, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	// Scan in enqueue order so concurrency one remains globally FIFO. A busy
 	// thread stays queued while later independent threads can use other workers.
 	for index, work := range q.items {
-		threadID := work.pending.ThreadID
+		threadID := work.lane()
 		if _, busy := q.inFlight[threadID]; busy {
+			continue
+		}
+		if work.pending.ForkedFromThreadID != "" && q.hasRecoveringSource(work.pending.ForkedFromThreadID) {
+			continue
+		}
+		if work.pending.ForkedFromThreadID == "" && work.pending.State == messageReceived &&
+			q.hasConfirmedFork(threadID) {
 			continue
 		}
 		q.inFlight[threadID] = struct{}{}
@@ -61,6 +89,26 @@ func (q *threadWorkQueue) take() (messageWork, bool) {
 		return work, true
 	}
 	return messageWork{}, false
+}
+
+func (q *threadWorkQueue) hasConfirmedFork(sourceThreadID string) bool {
+	for _, candidate := range q.items {
+		if candidate.pending.ForkedFromThreadID == sourceThreadID {
+			return true
+		}
+	}
+	return false
+}
+
+func (q *threadWorkQueue) hasRecoveringSource(sourceThreadID string) bool {
+	for _, candidate := range q.items {
+		if candidate.pending.ThreadID == sourceThreadID &&
+			candidate.pending.ForkedFromThreadID == "" &&
+			candidate.pending.State != messageReceived {
+			return true
+		}
+	}
+	return false
 }
 
 func (q *threadWorkQueue) finish(threadID string) {
@@ -83,7 +131,7 @@ func (q *threadWorkQueue) supersededActive() []messageWork {
 	seen := make(map[string]struct{})
 	var superseded []messageWork
 	for _, queued := range q.items {
-		threadID := queued.pending.ThreadID
+		threadID := queued.lane()
 		if _, found := seen[threadID]; found {
 			continue
 		}
@@ -267,7 +315,7 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 			active--
 			delete(startedAt, result.work.pending.MessageID)
 			delete(resolved, result.work.pending.MessageID)
-			work.finish(result.work.pending.ThreadID)
+			work.finish(result.work.lane())
 			if result.err != nil && firstErr == nil {
 				operation := "process"
 				if result.work.recovering {
@@ -281,7 +329,7 @@ func (a *App) dispatch(ctx context.Context, work *threadWorkQueue) error {
 				)
 			}
 		case event := <-started:
-			activeWork, found := work.inFlightWork(event.work.pending.ThreadID)
+			activeWork, found := work.inFlightWork(event.work.lane())
 			if found && activeWork.pending.MessageID == event.work.pending.MessageID {
 				startedAt[event.work.pending.MessageID] = event.at
 			}

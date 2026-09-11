@@ -12,14 +12,18 @@ var ErrAttachmentTooLarge = errors.New("attachment too large")
 
 // Message is the transport-neutral representation of an email message.
 type Message struct {
-	MessageID              string
-	ThreadID               string
-	From                   string
-	To                     []string
-	Timestamp              time.Time
-	CreatedAt              time.Time
-	Subject                string
-	Body                   string
+	MessageID string
+	ThreadID  string
+	From      string
+	To        []string
+	Timestamp time.Time
+	CreatedAt time.Time
+	Subject   string
+	Body      string
+	// RawBody preserves the transport-normalized message before DearMachine
+	// removes reply history and its own footer metadata. It is used when a
+	// forwarded message must be delivered to the agent as ordinary content.
+	RawBody                string
 	InReplyTo              string
 	References             []string
 	ConversationReferences []string

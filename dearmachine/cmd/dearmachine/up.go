@@ -292,6 +292,9 @@ func mergeRuntimeConfig(cfg config, persisted client.RuntimeConfig) (config, err
 	if !cfg.setFlags["magnifica-humanitas"] {
 		cfg.magnificaHumanitas = persisted.MagnificaHumanitas
 	}
+	if !cfg.setFlags["minimal-footer"] {
+		cfg.minimalFooter = persisted.MinimalFooter
+	}
 	if !cfg.setFlags["verbose"] {
 		cfg.verbose = persisted.Verbose
 	}
@@ -352,6 +355,7 @@ func runtimeConfigFrom(cfg config, userHomeDir func() (string, error)) (client.R
 		MaintenanceMinTurns:    cfg.maintenanceMinTurns,
 		MaintenanceMinTurnsSet: cfg.maintenanceMinTurnsSet,
 		MagnificaHumanitas:     cfg.magnificaHumanitas,
+		MinimalFooter:          cfg.minimalFooter,
 		Verbose:                cfg.verbose,
 	}, nil
 }

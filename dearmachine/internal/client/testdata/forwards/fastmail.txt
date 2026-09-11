@@ -1,0 +1,12 @@
+Please continue this work.
+
+Forwarded message from Dear Machine <machine@example.com>:
+
+From: Dear Machine <machine@example.com>
+Date: Fri, 11 Sep 2026 10:00:00 -0600
+To: User <user@example.com>
+Subject: Re: plan
+
+Earlier answer.
+
+session dm1-kyf1e-4cze7x
