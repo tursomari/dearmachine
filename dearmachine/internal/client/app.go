@@ -405,6 +405,7 @@ func (a *App) handleForwardRequest(
 				}
 				if err := a.store.SelectForwardCandidate(
 					request.RequestMessageID,
+					request.ExternalThreadID,
 					message.MessageID,
 					selected,
 					outbound,

@@ -67,7 +67,12 @@ func inlineForwardReferences(body string) []string {
 		if !found || !isCanonicalConversationReference(session) {
 			continue
 		}
-		if emailQuoteDepth(line) > 0 || forwardContextBefore(lines, index) {
+		fullFooter := index >= 2 &&
+			emailQuoteDepth(lines[index-2]) == emailQuoteDepth(line) &&
+			emailQuoteDepth(lines[index-1]) == emailQuoteDepth(line) &&
+			footerLine(lines[index-2]) == conversationFooterRule &&
+			footerLine(lines[index-1]) == "Dear Machine:"
+		if emailQuoteDepth(line) > 0 || fullFooter || forwardContextBefore(lines, index) {
 			references = mergeConversationReferences(references, []string{session})
 		}
 	}

@@ -63,6 +63,14 @@ func TestInlineForwardReferencesRejectsAuthoredSessionMention(t *testing.T) {
 	}
 }
 
+func TestUnknownClientFullFooterStillRequestsConfirmation(t *testing.T) {
+	body := "Please continue this imported email.\n\nUnrecognized client heading\nEarlier answer.\n\n" +
+		conversationFooter(testCanonicalConversationReference)
+	if got := inlineForwardReferences(body); !slices.Equal(got, []string{testCanonicalConversationReference}) {
+		t.Fatalf("references = %v", got)
+	}
+}
+
 func TestForwardedEMLFindsNestedHTMLFooter(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "forwards", "gmail-attached.eml"))
 	if err != nil {

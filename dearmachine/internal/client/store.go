@@ -855,7 +855,7 @@ func (s *Store) ForwardRequestForThread(externalThreadID string) (ForwardRequest
 }
 
 func (s *Store) SetForwardPromptReceipt(requestMessageID, outboundMessageID string) error {
-	_, err := s.db.Exec(
+	result, err := s.db.Exec(
 		`UPDATE forward_requests SET prompt_message_id = ?, updated_at = ?
 		  WHERE request_message_id = ?`,
 		outboundMessageID, time.Now().UTC().Format(time.RFC3339Nano), requestMessageID,
@@ -863,10 +863,14 @@ func (s *Store) SetForwardPromptReceipt(requestMessageID, outboundMessageID stri
 	if err != nil {
 		return fmt.Errorf("record forward confirmation receipt: %w", err)
 	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return fmt.Errorf("record forward confirmation receipt: request does not exist")
+	}
 	return nil
 }
 
-func (s *Store) SelectForwardCandidate(requestMessageID, controlMessageID, selectedID, outboundMessageID string) error {
+func (s *Store) SelectForwardCandidate(requestMessageID, externalThreadID, controlMessageID, selectedID, outboundMessageID string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin forward selection: %w", err)
@@ -887,7 +891,7 @@ func (s *Store) SelectForwardCandidate(requestMessageID, controlMessageID, selec
 	if err != nil || changed != 1 {
 		return fmt.Errorf("select forward candidate: request is not awaiting selection")
 	}
-	if err := recordProcessedTx(tx, controlMessageID, "", outboundMessageID, now); err != nil {
+	if err := recordProcessedTx(tx, controlMessageID, externalThreadID, outboundMessageID, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -939,16 +943,14 @@ func (s *Store) MaterializeForwardRequest(
 	defer tx.Rollback()
 
 	var request ForwardRequest
-	var candidatesJSON string
 	err = tx.QueryRow(
-		`SELECT request_message_id, external_thread_id, candidate_session_ids,
+		`SELECT request_message_id, external_thread_id,
 		        selected_session_id, state, prompt_message_id
 		   FROM forward_requests WHERE external_thread_id = ?`,
 		externalThreadID,
 	).Scan(
 		&request.RequestMessageID,
 		&request.ExternalThreadID,
-		&candidatesJSON,
 		&request.SelectedID,
 		&request.State,
 		&request.PromptMessageID,
