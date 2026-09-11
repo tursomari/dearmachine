@@ -8,6 +8,10 @@ services:
     environment:
       AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY:-}
       AGENTMAIL_API_KEY_FILE: ${AGENTMAIL_API_KEY_FILE:-}
+      OPENMAIL_API_KEY: ${OPENMAIL_API_KEY:-}
+      OPENMAIL_API_KEY_FILE: ${OPENMAIL_API_KEY_FILE:-}
+      SENDMUX_API_KEY: ${SENDMUX_API_KEY:-}
+      SENDMUX_API_KEY_FILE: ${SENDMUX_API_KEY_FILE:-}
       DEARMACHINE_HOME: /home/dearmachine/.dearmachine
       DEARMACHINE_PIDFILE: /home/dearmachine/.dearmachine/run/dearmachine.pid
       HOME: /home/dearmachine

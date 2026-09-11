@@ -119,4 +119,9 @@ if grep -F 'disable: true' "$PROJECT_ROOT/deploy/compose/compose.test.yaml"; the
   exit 1
 fi
 
+for credential in AGENTMAIL_API_KEY_FILE OPENMAIL_API_KEY_FILE SENDMUX_API_KEY_FILE; do
+  grep -F "$credential: /run/secrets/dearmachine_agentmail_api_key" \
+    "$PROJECT_ROOT/deploy/compose/compose.production.yaml" >/dev/null
+done
+
 printf 'runbook contract tests passed\n'
