@@ -263,6 +263,10 @@
             assert production["services"]["dearmachine"]["environment"] == {
                 "AGENTMAIL_API_KEY": "",
                 "AGENTMAIL_API_KEY_FILE": "/run/secrets/dearmachine_agentmail_api_key",
+                "OPENMAIL_API_KEY": "",
+                "OPENMAIL_API_KEY_FILE": "/run/secrets/dearmachine_agentmail_api_key",
+                "SENDMUX_API_KEY": "",
+                "SENDMUX_API_KEY_FILE": "/run/secrets/dearmachine_agentmail_api_key",
                 "DEARMACHINE_BACKEND_ENVIRONMENT_FILE": "/home/dearmachine/.config/dearmachine/backends.env",
             }
             assert production["services"]["dearmachine"]["secrets"] == [
