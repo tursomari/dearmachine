@@ -100,10 +100,10 @@ func TestSystemdRefusesResidentOwner(t *testing.T) {
 	}
 }
 
-func TestSystemdUnitOwnsSupervisorWithoutSecondRestartLoop(t *testing.T) {
+func TestSystemdUnitKeepsSupervisorAliveAfterWorkerOOM(t *testing.T) {
 	manager := serviceManager{home: filepath.Join(t.TempDir(), "home with spaces%"), executable: "/test/bin/dearmachine"}
 	unit := manager.unit()
-	for _, want := range []string{"_supervise", "up", "--foreground", "Restart=no", "KillMode=control-group", "%%"} {
+	for _, want := range []string{"_supervise", "up", "--foreground", "OOMPolicy=continue", "Restart=on-failure", "RestartSec=5s", "KillMode=control-group", "%%"} {
 		if !strings.Contains(unit, want) {
 			t.Fatalf("missing %s: %s", want, unit)
 		}

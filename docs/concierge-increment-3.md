@@ -88,8 +88,10 @@ The configuration interpretation follows systemd's
 Deterministic tests cover observation failures and consent independence, output
 states, multiple pairs, CLI details, and real supervisor retry diagnostics.
 
-The unit runs the same Go `_supervise` owner, with `Restart=no` and
-`KillMode=control-group`. Go alone owns daemon retries. The same socket handles
+The unit runs the same Go `_supervise` owner, with `OOMPolicy=continue`,
+`Restart=on-failure`, and `KillMode=control-group`. Go owns daemon retries, while
+systemd leaves the supervisor running if one of its workers is killed for memory
+and restarts the unit if the supervisor itself fails. The same socket handles
 up/down/restart. A resident owner must be stopped through its existing lifecycle
 before changing supervision; this increment deliberately refuses automatic
 transfer. For a systemd owner use `systemctl --user stop dearmachine-concierge.service`.

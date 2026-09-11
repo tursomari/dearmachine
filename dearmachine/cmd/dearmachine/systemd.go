@@ -127,7 +127,7 @@ func systemdQuote(value string) string {
 	return strconv.Quote(strings.ReplaceAll(strings.ReplaceAll(value, "%", "%%"), "$", "$$"))
 }
 func (m serviceManager) unit() string {
-	return unitMarker + "[Unit]\nDescription=Dear Machine native supervisor\n[Service]\nType=simple\nExecStart=" + systemdQuote(m.executable) + " _supervise --state-dir " + systemdQuote(m.root()) + " -- " + systemdQuote(m.executable) + " up --foreground\nEnvironment=" + strconv.Quote(strings.ReplaceAll("HOME="+m.home, "%", "%%")) + "\nRestart=no\nKillMode=control-group\nTimeoutStopSec=5\n[Install]\nWantedBy=default.target\n"
+	return unitMarker + "[Unit]\nDescription=Dear Machine native supervisor\n[Service]\nType=simple\nExecStart=" + systemdQuote(m.executable) + " _supervise --state-dir " + systemdQuote(m.root()) + " -- " + systemdQuote(m.executable) + " up --foreground\nEnvironment=" + strconv.Quote(strings.ReplaceAll("HOME="+m.home, "%", "%%")) + "\nOOMPolicy=continue\nRestart=on-failure\nRestartSec=5s\nKillMode=control-group\nTimeoutStopSec=5\n[Install]\nWantedBy=default.target\n"
 }
 func (m serviceManager) unitPath() string {
 	config := m.configDir
