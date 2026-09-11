@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -69,7 +70,7 @@ func TestStartupObservationIndependentOfConsent(t *testing.T) {
 							return "", fail
 						}
 						return "", nil
-					case "loginctl show-user --property=Linger --value":
+					case "loginctl show-user " + strconv.Itoa(os.Getuid()) + " --property=Linger --value":
 						if tc.lingerFails {
 							return "", fail
 						}

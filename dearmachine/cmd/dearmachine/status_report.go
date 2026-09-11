@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -47,7 +49,8 @@ func (m serviceManager) observeStartup() startupObservation {
 		o.reason = "service enablement is runtime-only and does not survive reboot"
 	case "enabled":
 		o.login = "enabled"
-		linger, err := m.run("loginctl", "show-user", "--property=Linger", "--value")
+		// An omitted user can produce empty output outside a login session.
+		linger, err := m.run("loginctl", "show-user", strconv.Itoa(os.Getuid()), "--property=Linger", "--value")
 		if err != nil {
 			o.reason = "service enabled; user lingering could not be inspected"
 			return o
