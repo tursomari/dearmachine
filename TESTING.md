@@ -166,3 +166,13 @@ the durable pending-message and receipt-recovery flow before another send is
 considered; transport retries never blindly repeat a reply. The normal Go suite
 covers classifications for all three providers, growth/cap/jitter, reset,
 exhaustion, cancellation, and receipt recovery after an uncertain send.
+
+## Coordinated Nix updates
+
+`cmd/dearmachine` tests the noninteractive updater handoff and stopped-client
+inspection. `internal/supervisor` tests that update shutdown acknowledges the
+request and releases ownership before replacement. The complete coordinated
+release manager and source snapshot container test lives in the sibling
+installer's `tests/managed-nix/run.sh`, documented in its `TESTING.md`.
+The container uses an explicitly supplied candidate native CLI, never a command
+resolved from the host installation.

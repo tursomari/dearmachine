@@ -308,3 +308,20 @@ func TestTSShapedControlRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestShutdownReleasesSupervisorForUpdate(t *testing.T) {
+	root := serveTest(t, Config{Command: []string{testExecutable(t, "sleep"), "60"}})
+	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })
+	s, err := Request(root, "shutdown", time.Second)
+	if err != nil || s.Daemon != "stopped" {
+		t.Fatalf("shutdown: %+v %v", s, err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if err := CheckAvailable(root); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("shutdown retained supervisor ownership")
+}

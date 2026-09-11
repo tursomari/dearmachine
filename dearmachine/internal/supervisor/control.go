@@ -49,6 +49,7 @@ type operation struct {
 	argv      []string
 	directory string
 	reply     chan Response
+	delivered chan struct{}
 }
 
 // Config paths are all relative to StateDir. Ready must be a fast, read-only
@@ -196,6 +197,13 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	respond := func(op operation, ok bool, message string) {
 		op.reply <- Response{Version: 1, OK: ok, Status: snapshot(), Error: message}
+		if op.command == "shutdown" {
+			// Flush the acknowledgement before cancellation closes all sockets.
+			select {
+			case <-op.delivered:
+			case <-time.After(time.Second):
+			}
+		}
 	}
 	finish := func(ok bool, message string) {
 		for _, op := range pending {
@@ -274,7 +282,10 @@ func Run(ctx context.Context, cfg Config) error {
 				continue
 			}
 			switch op.command {
-			case "down":
+			case "down", "shutdown":
+				if op.command == "shutdown" {
+					quitting = true
+				}
 				if !wanted && child != nil {
 					pending = append(pending, op)
 					continue
@@ -382,7 +393,8 @@ func handle(ctx context.Context, conn net.Conn, requests chan<- operation) {
 	var req request
 	reply := Response{Version: 1, Error: "invalid control request"}
 	if err == nil && json.Unmarshal(line, &req) == nil && req.Version == 1 && validCommand(req.Command) && (len(req.Argv) == 0 || (req.Command == "up" && filepath.IsAbs(req.Argv[0]))) && (req.Directory == "" || (req.Command == "up" && filepath.IsAbs(req.Directory))) {
-		op := operation{command: req.Command, argv: req.Argv, directory: req.Directory, reply: make(chan Response, 1)}
+		op := operation{command: req.Command, argv: req.Argv, directory: req.Directory, reply: make(chan Response, 1), delivered: make(chan struct{})}
+		defer close(op.delivered)
 		timer := time.NewTimer(3500 * time.Millisecond)
 		defer timer.Stop()
 		select {
@@ -404,7 +416,7 @@ func handle(ctx context.Context, conn net.Conn, requests chan<- operation) {
 }
 
 func validCommand(command string) bool {
-	return command == "status" || command == "up" || command == "down" || command == "restart"
+	return command == "status" || command == "up" || command == "down" || command == "shutdown" || command == "restart"
 }
 
 // Request sends exactly one v1 operation, with a total deadline and size bound.

@@ -12,6 +12,25 @@ No bots. No dashboards. No new messaging app to learn.
 
 ---
 
+## Coordinated installation updates
+
+Installations created by the guided Nix installer update Dear Machine, Agent
+Manager, Machtiani, the concierge and model host together:
+
+```bash
+dearmachine update --check
+dearmachine update
+```
+
+The installer retains the matching umbrella source and pinned submodules under
+`${XDG_DATA_HOME:-$HOME/.local/share}/dearmachine/sources/<revision>/`. Updates
+refresh this snapshot and the concierge's source reference, preserve user data
+and configuration, and restart a previously running client. A stopped client
+stays stopped. `dearmachine update --recover` restores the previous release
+after interrupted activation; an active update lock must not be removed.
+Existing standalone Nix profile installations and Standard releases are not
+silently adopted by this updater.
+
 ## Current Alpha Quick Start
 
 Nix packages the DearMachine Client and Agent Manager together. Install

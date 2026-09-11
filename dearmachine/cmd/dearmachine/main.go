@@ -278,6 +278,12 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 }
 
 func run(args []string, getenv func(string) string, deps dependencies) error {
+	if len(args) > 0 && args[0] == "update" {
+		return runUpdate(args[1:], getenv, deps)
+	}
+	if len(args) > 0 && args[0] == "_update-control" {
+		return runUpdateControl(args[1:], deps)
+	}
 	if len(args) > 0 && (args[0] == "systemd" || args[0] == "persistence") {
 		return runSupervisionChoice(args[0], args[1:], deps)
 	}
@@ -319,6 +325,7 @@ func globalHelp(output io.Writer) error {
 	_, err := fmt.Fprintln(output, `Usage: dearmachine <command> [options]
 
 Commands:
+  update [--check] check or update the coordinated Nix installation
   up            create pairs or start registered pairs
   down          stop the background client and cancel retries
   restart       restart through the existing supervisor
