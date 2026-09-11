@@ -18,11 +18,12 @@ func runUpdate(args []string, getenv func(string) string, deps dependencies) err
 	flags.SetOutput(outputOrDiscard(deps.flagOutput))
 	check := flags.Bool("check", false, "check the coordinated release without changing the installation")
 	recover := flags.Bool("recover", false, "restore the previous release after interrupted activation")
+	jsonOutput := flags.Bool("json", false, "write a versioned machine-readable result")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || (*check && *recover) {
-		return errors.New("usage: dearmachine update [--check | --recover]")
+	if flags.NArg() != 0 || (*check && *recover) || (*recover && *jsonOutput) {
+		return errors.New("usage: dearmachine update [--check | --recover] [--json]")
 	}
 	home, err := deps.userHomeDir()
 	if err != nil {

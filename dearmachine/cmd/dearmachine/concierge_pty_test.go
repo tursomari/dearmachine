@@ -34,6 +34,14 @@ func TestConciergeProcess(t *testing.T) {
 		case "signal":
 			syscall.Kill(os.Getpid(), syscall.SIGTERM)
 			select {}
+		case "relaunch":
+			os.Exit(conciergeRelaunchExitCode)
+		case "updated":
+			if os.Getenv("DEARMACHINE_NATIVE_BIN") != "" || os.Getenv("DEARMACHINE_CONCIERGE_BIN") != "" || os.Getenv("DEARMACHINE_SOURCE_ROOT") != "" {
+				os.Exit(94)
+			}
+			fmt.Println("updated release " + strings.Repeat("b", 40))
+			os.Exit(0)
 		}
 		interrupts := make(chan os.Signal, 2)
 		signal.Notify(interrupts, os.Interrupt)
@@ -58,12 +66,29 @@ func TestConciergeForegroundPTY(t *testing.T) {
 	for _, mode := range []struct {
 		name string
 		code int
-	}{{"zero", 0}, {"nonzero", 37}, {"signal", 143}, {"interrupts", 37}} {
+	}{{"zero", 0}, {"nonzero", 37}, {"signal", 143}, {"interrupts", 37}, {"relaunch", 0}} {
 		t.Run(mode.name, func(t *testing.T) {
 			home := t.TempDir()
 			binary := filepath.Join(home, "concierge with spaces")
 			if err := os.WriteFile(binary, []byte("#!/bin/sh\nCONCIERGE_TEST_CHILD=1 exec \"$CONCIERGE_TEST_EXE\" -test.run=^TestConciergeProcess$ -- \"$@\"\n"), 0700); err != nil {
 				t.Fatal(err)
+			}
+			if mode.name == "relaunch" {
+				target := filepath.Join(home, ".local", "share", "dearmachine", "current", "bin", "dearmachine")
+				if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+					t.Fatal(err)
+				}
+				updated := "#!/bin/sh\nunset CONCIERGE_TEST_PARENT\nCONCIERGE_TEST_CHILD=1 CONCIERGE_TEST_EXIT=updated exec \"$CONCIERGE_TEST_EXE\" -test.run=^TestConciergeProcess$\n"
+				if err := os.WriteFile(target, []byte(updated), 0700); err != nil {
+					t.Fatal(err)
+				}
+				launcher := filepath.Join(home, ".local", "bin", "dearmachine")
+				if err := os.MkdirAll(filepath.Dir(launcher), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, launcher); err != nil {
+					t.Fatal(err)
+				}
 			}
 			master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY, 0)
 			if err != nil {
@@ -122,6 +147,9 @@ func TestConciergeForegroundPTY(t *testing.T) {
 			}
 			if mode.name == "interrupts" && !strings.Contains(text, "first interrupt received") {
 				t.Fatalf("parent broke first Ctrl+C: %s", text)
+			}
+			if mode.name == "relaunch" && !strings.Contains(text, "updated release "+strings.Repeat("b", 40)) {
+				t.Fatalf("updated release identity missing: %s", text)
 			}
 		})
 	}

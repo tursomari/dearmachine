@@ -242,3 +242,75 @@ func TestConciergePinsLaunchingNativeBinary(t *testing.T) {
 		t.Fatalf("native discovery: %v", env)
 	}
 }
+
+func TestConciergeRelaunchesOnlyThroughValidatedManagedLauncher(t *testing.T) {
+	t.Setenv("DEARMACHINE_NATIVE_BIN", "/old/native")
+	t.Setenv("DEARMACHINE_CONCIERGE_BIN", "/old/concierge")
+	t.Setenv("DEARMACHINE_SOURCE_ROOT", "/old/source")
+	deps := testDependencies(t, &fakeApplication{})
+	home, err := deps.userHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeUpTestPair(t, deps, "concierge-relaunch")
+	deps.outputInteractive = func(io.Writer) bool { return true }
+	deps.isInteractive = func(io.Reader) bool { return true }
+	var output strings.Builder
+	deps.stdout, deps.flagOutput = &output, &output
+	deps.lookPath = func(name string) (string, error) { return name, nil }
+	deps.launchConcierge = func(string, []string, io.Reader, io.Writer, io.Writer) error {
+		return &conciergeExitError{code: conciergeRelaunchExitCode, cause: errors.New("relaunch")}
+	}
+	root := filepath.Join(home, ".local", "share", "dearmachine")
+	target := filepath.Join(root, "current", "bin", "dearmachine")
+	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(home, ".local", "bin", "dearmachine")
+	if err := os.MkdirAll(filepath.Dir(launcher), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, launcher); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	deps.execProcess = func(path string, args, environment []string) error {
+		called = true
+		if path != launcher || !reflect.DeepEqual(args, []string{launcher}) {
+			t.Fatalf("unexpected relaunch: %q %q", path, args)
+		}
+		for _, value := range environment {
+			if strings.HasPrefix(value, "DEARMACHINE_NATIVE_BIN=") || strings.HasPrefix(value, "DEARMACHINE_CONCIERGE_BIN=") || strings.HasPrefix(value, "DEARMACHINE_SOURCE_ROOT=") {
+				t.Fatalf("stale release identity leaked into relaunch: %q", value)
+			}
+		}
+		return nil
+	}
+	env := func(key string) string {
+		if key == "DEARMACHINE_CONCIERGE_BIN" {
+			return "/old/concierge"
+		}
+		return ""
+	}
+	if err := runBare(env, deps); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("updated launcher was not executed")
+	}
+
+	if err := os.Remove(launcher); err != nil {
+		t.Fatal(err)
+	}
+	called = false
+	output.Reset()
+	if err := runBare(env, deps); err != nil {
+		t.Fatal(err)
+	}
+	if called || !strings.Contains(output.String(), "could not be validated") {
+		t.Fatalf("unsafe relaunch result: called=%v output=%q", called, output.String())
+	}
+}

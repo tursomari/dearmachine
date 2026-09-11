@@ -31,11 +31,21 @@ func TestUpdateDelegatesWithoutTerminalAndRejectsAmbiguousFlags(t *testing.T) {
 		t.Fatalf("unexpected handoff: %q", output.String())
 	}
 	output.Reset()
+	if err := run([]string{"update", "--check", "--json"}, env, deps); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "update\n--check\n--json\n" {
+		t.Fatalf("unexpected JSON handoff: %q", output.String())
+	}
+	output.Reset()
 	if err := run([]string{"update", "--check", "--recover"}, env, deps); err == nil {
 		t.Fatal("contradictory flags accepted")
 	}
 	if strings.Contains(output.String(), "update\n") {
 		t.Fatal("invalid command reached installer")
+	}
+	if err := run([]string{"update", "--recover", "--json"}, env, deps); err == nil {
+		t.Fatal("JSON recovery accepted without a structured recovery contract")
 	}
 }
 

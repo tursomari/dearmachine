@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -90,6 +91,7 @@ type dependencies struct {
 	stdout            io.Writer
 	lookPath          func(string) (string, error)
 	launchConcierge   func(string, []string, io.Reader, io.Writer, io.Writer) error
+	execProcess       func(string, []string, []string) error
 	userHomeDir       func() (string, error)
 	isInteractive     func(io.Reader) bool
 	outputInteractive func(io.Writer) bool
@@ -153,6 +155,7 @@ func defaultDependencies() dependencies {
 		stdout:          os.Stdout,
 		lookPath:        exec.LookPath,
 		launchConcierge: launchConciergeForeground,
+		execProcess:     syscall.Exec,
 		userHomeDir:     os.UserHomeDir,
 		isInteractive: func(input io.Reader) bool {
 			file, ok := input.(*os.File)
@@ -338,7 +341,7 @@ func globalHelp(output io.Writer) error {
 	_, err := fmt.Fprintln(output, `Usage: dearmachine <command> [options]
 
 Commands:
-  update [--check] check or update the coordinated Nix installation
+  update [--check | --recover] [--json] check or update the coordinated Nix installation
   up            create pairs or start registered pairs
   down          stop the background client and cancel retries
   restart       restart through the existing supervisor

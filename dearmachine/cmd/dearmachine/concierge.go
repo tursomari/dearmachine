@@ -17,6 +17,8 @@ import (
 	"github.com/dearmachine/dearmachine/internal/supervisor"
 )
 
+const conciergeRelaunchExitCode = 75
+
 // Detection is deliberately independent of daemon liveness. A partial or
 // inaccessible installation must never route into a fresh setup implicitly.
 func detectInstallation(home string) string {
@@ -117,10 +119,62 @@ func runBare(getenv func(string) string, deps dependencies) error {
 	}
 	err = launch(resolved, args, deps.stdin, deps.stdout, deps.flagOutput)
 	var childExit *conciergeExitError
+	if errors.As(err, &childExit) && childExit.code == conciergeRelaunchExitCode {
+		launcher, validateErr := managedRelaunchPath(home, getenv)
+		if validateErr != nil {
+			_, _ = fmt.Fprintln(output, "The update is active, but the managed launcher could not be validated. Run ~/.local/bin/dearmachine to open the updated concierge.")
+			return nil
+		}
+		execProcess := deps.execProcess
+		if execProcess == nil {
+			execProcess = syscall.Exec
+		}
+		return execProcess(launcher, []string{launcher}, cleanRelaunchEnvironment(os.Environ()))
+	}
 	if err != nil && !errors.As(err, &childExit) {
 		guidance()
 	}
 	return err
+}
+
+func managedRelaunchPath(home string, getenv func(string) string) (string, error) {
+	launcher := filepath.Join(home, ".local", "bin", "dearmachine")
+	dataHome := getenv("DEARMACHINE_MANAGED_DATA_HOME")
+	if dataHome == "" {
+		dataHome = getenv("XDG_DATA_HOME")
+	}
+	if dataHome == "" {
+		dataHome = filepath.Join(home, ".local", "share")
+	}
+	if !filepath.IsAbs(dataHome) {
+		return "", errors.New("managed data home is not absolute")
+	}
+	expected := filepath.Join(dataHome, "dearmachine", "current", "bin", "dearmachine")
+	info, err := os.Lstat(launcher)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", errors.New("managed launcher is not a symbolic link")
+	}
+	target, err := os.Readlink(launcher)
+	if err != nil || target != expected {
+		return "", errors.New("managed launcher target is unexpected")
+	}
+	resolved, err := os.Stat(launcher)
+	if err != nil || !resolved.Mode().IsRegular() || resolved.Mode().Perm()&0111 == 0 {
+		return "", errors.New("managed launcher target is not executable")
+	}
+	return launcher, nil
+}
+
+func cleanRelaunchEnvironment(environment []string) []string {
+	result := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, "DEARMACHINE_NATIVE_BIN=") || strings.HasPrefix(entry, "DEARMACHINE_CONCIERGE_BIN=") ||
+			strings.HasPrefix(entry, "DEARMACHINE_SOURCE_ROOT=") {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return result
 }
 
 type conciergeExitError struct {
