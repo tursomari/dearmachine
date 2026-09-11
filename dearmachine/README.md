@@ -157,15 +157,26 @@ session owns prior conversation context, so DearMachine Client does not replay
 the email thread.
 
 Every outbound answer and AskUser response ends with a stable, opaque Dear
-Machine conversation reference. The reference maps to local SQLite state and
-does not expose the machtiani session ID. On inbound mail the adapters recover
+Machine conversation reference. Pass `--minimal-footer` to suppress the rule,
+Dear Machine label, and optional Magnifica Humanitas quote while retaining the
+single `session dm1-...` line needed for continuity. The reference is resolved
+only inside the paired user's local state. On inbound mail the adapters recover
 the reference from full text or HTML even when they separately provide a clean
 new-message extract. DearMachine removes the footer before prompt construction.
 If a provider assigns a legitimate reply a new thread ID, one valid reference
 associates that ID as another alias of the existing conversation. A known
 thread mapping takes precedence over quoted references, and multiple distinct
-references never cause an automatic association. Forward/fork classification
-is intentionally separate from this continuity rule.
+references never cause an automatic association.
+
+When a new email thread contains a Dear Machine footer inside an inline or
+attached forwarded message, DearMachine asks before using it. `Yes`, `No`, and
+`Cancel` are case-insensitive and accept one trailing period, comma, or
+exclamation mark. Yes forks the referenced session's current committed state;
+No processes the complete forward as ordinary content; Cancel discards the
+request. These control emails are never sent to machtiani. If several local
+session references appear, DearMachine asks which numbered session to use
+before asking for confirmation. References belonging to another pair are
+treated as ordinary forwarded content.
 
 The first poll runs immediately. Later polls start 60 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single

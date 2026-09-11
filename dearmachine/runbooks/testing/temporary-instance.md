@@ -21,6 +21,8 @@ Current protocols include:
   ordered fallback; and
 - [`apple-mail-html-fallback.md`](./apple-mail-html-fallback.md) for the live
   HTML-only normalization regression; and
+- [`forward-session-fork.md`](./forward-session-fork.md) for forwarded-message
+  confirmation, attached EML parsing, and session-fork ancestry; and
 - [`update-sync.md`](./update-sync.md) for rolling
   session checkpoints and internal-README update sync.
 
