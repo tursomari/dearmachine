@@ -263,13 +263,27 @@ func TestAttachedEMLTriggersConfirmation(t *testing.T) {
 	raw := strings.ReplaceAll(string(mustReadTestFile(t, filepath.Join("testdata", "forwards", "gmail-attached.eml"))), testCanonicalConversationReference, session.SessionID)
 	forward := Message{
 		MessageID: "eml-forward", ThreadID: "eml-forward-thread", From: "user@example.com", Body: "Please use the attached email.",
-		Attachments: []AttachmentRef{{AttachmentID: "attached-eml", Filename: "message.eml", ContentType: "message/rfc822", SizeBytes: int64(len(raw))}},
+		Attachments: []AttachmentRef{
+			{AttachmentID: "attached-eml", Filename: "message.eml", ContentType: "message/rfc822", SizeBytes: int64(len(raw))},
+			{AttachmentID: "new-notes", Filename: "new-notes.txt", ContentType: "text/plain", SizeBytes: 12},
+		},
 	}
 	transport.attachments["attached-eml"] = []byte(raw)
 	transport.setPoll([]Message{forward})
 	mustProcess(t, rig)
 	if got := transport.replies[len(transport.replies)-1].Text; !strings.Contains(got, session.SessionID) || !strings.Contains(got, "Reply with only") {
 		t.Fatalf("EML confirmation = %q", got)
+	}
+
+	rig.setAnswer("Attached fork answer.")
+	transport.setPoll([]Message{{MessageID: "eml-yes", ThreadID: forward.ThreadID, From: forward.From, Body: "Yes!"}})
+	mustProcess(t, rig)
+	prompt := rig.capture("text-2")
+	if !strings.Contains(prompt, "Please use the attached email.") || !strings.Contains(prompt, "new-notes.txt") {
+		t.Fatalf("EML fork prompt omitted authored content or new attachment:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "message.eml") || strings.Contains(prompt, "Attached source answer") {
+		t.Fatalf("EML fork prompt retained forwarded attachment:\n%s", prompt)
 	}
 }
 

@@ -103,6 +103,13 @@ func hasForwardStructure(message Message) bool {
 }
 
 func prepareForwardForkMessage(message Message) Message {
+	attachments := make([]AttachmentRef, 0, len(message.Attachments))
+	for _, attachment := range message.Attachments {
+		if !isEMLAttachment(attachment) {
+			attachments = append(attachments, attachment)
+		}
+	}
+	message.Attachments = attachments
 	body := message.RawBody
 	if body == "" {
 		body = message.Body
