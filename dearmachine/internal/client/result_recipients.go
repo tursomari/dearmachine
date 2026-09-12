@@ -154,7 +154,11 @@ func (a *App) resultReplyReceipt(ctx context.Context, message Message) (string, 
 				seen = true
 				continue
 			}
-			repliesToOriginal := candidate.InReplyTo == message.MessageID || (candidate.InReplyTo == "" && seen)
+			parentID := message.MessageID
+			if message.RFCMessageID != "" {
+				parentID = message.RFCMessageID
+			}
+			repliesToOriginal := candidate.InReplyTo == parentID || (candidate.InReplyTo == "" && seen)
 			sender, senderErr := canonicalMessageAddress(candidate.From)
 			if senderErr == nil && sender == e.router.inbox.Address && repliesToOriginal && candidate.ThreadID == message.ThreadID && containsFold(candidate.Labels, "sent") && sameRecipientSet(candidate.To, envelope.To) && sameRecipientSet(candidate.CC, envelope.CC) && len(candidate.BCC) == 0 {
 				return candidate.MessageID, true, nil

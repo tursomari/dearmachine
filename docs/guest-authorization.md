@@ -49,11 +49,26 @@ Authentication-Results verdicts are never sufficient.
 The same check applies to owner instructions, invitations, guest requests,
 approvals and removal commands. A signature that omits a present authorization
 header is insufficient even if an email provider accepts it normally.
-**OpenMail and Sendmux currently reject all inbound work, including owner
-messages**, because their adapters lack supported raw-message evidence. Sendmux's
-raw-body API supplies parsed text/HTML, not the original RFC822 message. Provider
-permission synchronization and native guest inspection/revocation remain
-available. Daemon startup and `guest list` report authentication support.
+**OpenMail supports a restricted plain-text subset.** Its live message responses
+include an ordered header list in `raw.message-headers`, along with
+`rfcMessageId`, `inReplyTo` and `references`. The adapter reconstructs a
+single-part `text/plain` message with no transfer encoding, `7bit`, or `8bit`,
+and requires the same exact-domain DKIM and signed-header checks as AgentMail.
+Only UTF-8 and US-ASCII bodies are supported. HTML, multipart, attachments,
+encoded bodies, missing evidence and reconstruction failures are rejected.
+The header field is currently undocumented; if its shape changes, verification
+fails closed. A provider verdict never substitutes for the signature.
+
+OpenMail's API message IDs remain distinct from signed Internet Message-IDs.
+Approval replies resolve signed references against outbound records in the same
+inbox/thread before looking up the exact private approval prompt. Provider
+inbox/thread metadata and that ID mapping remain trusted.
+
+**Sendmux still rejects all inbound work, including owner messages.** Its REST
+raw-body API supplies parsed text/HTML. IMAP may supply the original message,
+but that route has not yet been verified with a valid mailbox credential.
+Provider permission synchronization and native guest inspection/revocation
+remain available. Daemon startup and `guest list` report authentication support.
 
 ## Remove and reinvite
 

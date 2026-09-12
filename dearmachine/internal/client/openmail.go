@@ -42,6 +42,7 @@ type OpenMailTransport struct {
 	resolveMu       sync.Mutex
 	resolvedInboxID string
 	resolvedAddress string
+	authLookupTXT   func(context.Context, string) ([]string, error)
 }
 
 type openMailTransportConfig struct {
@@ -193,6 +194,11 @@ type openMailAttachment struct {
 }
 
 type openMailMessage struct {
+	InboxID      string               `json:"inboxId"`
+	RFCMessageID string               `json:"rfcMessageId"`
+	InReplyTo    string               `json:"inReplyTo"`
+	References   []string             `json:"references"`
+	Raw          json.RawMessage      `json:"raw"`
 	ID           string               `json:"id"`
 	ThreadID     string               `json:"threadId"`
 	Direction    string               `json:"direction"`
@@ -693,12 +699,15 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 		readState = MessageReadStateRead
 	}
 	return Message{
-		MessageID: message.ID,
-		ThreadID:  message.ThreadID,
-		From:      from,
-		To:        to,
-		CC:        append([]string(nil), message.CC...),
-		BCC:       append([]string(nil), message.BCC...),
+		MessageID:    message.ID,
+		RFCMessageID: message.RFCMessageID,
+		InReplyTo:    message.InReplyTo,
+		References:   append([]string(nil), message.References...),
+		ThreadID:     message.ThreadID,
+		From:         from,
+		To:           to,
+		CC:           append([]string(nil), message.CC...),
+		BCC:          append([]string(nil), message.BCC...),
 		Delivery: normalizeMessageDelivery(
 			transport.resolvedInboxID, transport.resolvedAddress,
 			to, message.CC, message.BCC, message.DeliveryRole, readState,

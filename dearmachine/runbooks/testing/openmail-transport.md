@@ -147,3 +147,28 @@ account-level policy is unchanged. Remove the exact temporary runtime root,
 including copied runtime credentials and session artifacts. Finally confirm
 the normal DearMachine process still has its original command, inbox, database,
 and PID file.
+
+## Sender evidence and MIME coverage
+
+The production adapter verifies only unencoded single-part plain text. Use
+UTF-8 or US-ASCII with absent, `7bit`, or `8bit` Content-Transfer-Encoding for
+positive authentication cases. HTML, multipart, attachments and encoded text
+are negative cases: they must be rejected, never authorized by a provider
+verdict. Signed parent and References headers must survive plain-text replies.
+
+For a direct API diagnostic, send synthetic fixtures from an explicitly
+authorized external mailbox into a disposable OpenMail receiver. This avoids
+OpenMail outbound new-recipient limits. Disable the receiver webhook, permit
+only the exact sender on its scoped inbound policy, and retain no credentials.
+Match the received fixture by its unique subject and verified sender; a sending
+provider may replace the submitted Message-ID. Record the received
+`rfcMessageId`, the distinct API `id`, and the original reply headers.
+
+Check the live `raw.message-headers` ordered header list with local DKIM
+verification, then alter body and recipient bytes and require failure. Run the
+actual adapter against privately retained API fixtures with DNS verification.
+Include forged From, unsigned CC/parent headers, absent evidence and wrong
+inbox IDs in credential-free tests. Test approval correlation using distinct
+Internet and provider IDs. Delete exact scoped rules with their `inboxId` query
+parameter before deleting the receiver, and verify account policy is unchanged.
+These diagnostics prove evidence handling, not a deployed agent round trip.

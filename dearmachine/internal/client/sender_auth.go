@@ -27,6 +27,9 @@ func SenderAuthenticationStatus(transport string) string {
 	if transport == "agentmail" {
 		return "enabled: locally verified exact-domain DKIM, signed author and routing headers; trusts the sender domain's mailbox controls"
 	}
+	if transport == "openmail" {
+		return "limited: locally verified exact-domain DKIM for unencoded plain text; HTML, multipart, attachments and unsupported evidence are rejected"
+	}
 	return "disabled: transport lacks supported sender evidence; inbound work is rejected"
 }
 
@@ -207,9 +210,6 @@ func verifySignedMessage(ctx context.Context, raw []byte, expected Message, look
 	return ErrMessageUnauthenticated
 }
 
-func (*OpenMailTransport) AuthenticateMessage(context.Context, Message) error {
-	return ErrSenderAttributionUnsupported
-}
 func (*SendmuxTransport) AuthenticateMessage(context.Context, Message) error {
 	return ErrSenderAttributionUnsupported
 }

@@ -117,7 +117,11 @@ or the human account holder. This assumption supplies the model's authenticated
 mailbox fact; the TLA+ code does not establish it. Provider body/MIME extraction,
 attachment mapping, inbox/thread scope and outbound labels remain trusted.
 No raw From match or supplied Authentication-Results verdict replaces verification.
-OpenMail and Sendmux reject all inbound work until suitable evidence exists.
+OpenMail verifies the same signature contract for reconstructable, unencoded
+single-part plain text. Unsupported MIME formats and missing evidence are
+rejected. Its provider IDs are mapped separately from signed Internet
+Message-IDs using scoped outbound records. Sendmux remains disabled pending a
+verified evidence path. The model does not prove these provider adapters.
 
 The explicit native `guest allow` path instead carries trusted local operator
 authorization, with provider-resolved visible invitation facts. It cannot bypass

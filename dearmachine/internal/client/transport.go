@@ -16,17 +16,19 @@ type Message struct {
 	// and email headers cannot supply this authorization fact.
 	authenticated bool
 	fingerprint   string
-	MessageID     string
-	ThreadID      string
-	From          string
-	To            []string
-	CC            []string
-	BCC           []string
-	Delivery      MessageDelivery
-	Timestamp     time.Time
-	CreatedAt     time.Time
-	Subject       string
-	Body          string
+	// RFCMessageID is set when the provider uses a different opaque MessageID.
+	RFCMessageID string
+	MessageID    string
+	ThreadID     string
+	From         string
+	To           []string
+	CC           []string
+	BCC          []string
+	Delivery     MessageDelivery
+	Timestamp    time.Time
+	CreatedAt    time.Time
+	Subject      string
+	Body         string
 	// RawBody preserves the transport-normalized message before DearMachine
 	// removes reply history and its own footer metadata. It is used when a
 	// forwarded message must be delivered to the agent as ordinary content.

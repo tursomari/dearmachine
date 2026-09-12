@@ -99,6 +99,12 @@ func TestResultReceiptRequiresTheSubmittedRecipientEnvelope(t *testing.T) {
 	if id, found, err := rig.app.resultReplyReceipt(context.Background(), m); err != nil || !found || id != "answer" {
 		t.Fatalf("answer recovery: %s %v %v", id, found, err)
 	}
+	m.RFCMessageID = "<request@sender.test>"
+	answer.InReplyTo = m.RFCMessageID
+	raw.setThread("thread", []Message{answer, m, private})
+	if id, found, err := rig.app.resultReplyReceipt(context.Background(), m); err != nil || !found || id != "answer" {
+		t.Fatalf("Internet Message-ID answer recovery: %s %v %v", id, found, err)
+	}
 }
 
 func snapshotReplyFixture(t *testing.T, router *InboxRouter, pair Pair, m Message) {

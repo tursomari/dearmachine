@@ -97,9 +97,13 @@ The impedance is real and remains visible in the adapter:
   address; an address is resolved through the paginated inbox list, while an ID
   is verified with the inbox endpoint. The resolved address is also checked on
   every message.
-- Sends have native 24-hour idempotency, but messages do not expose an
-  `In-Reply-To` field. Receipt recovery conservatively selects the first allowed
-  outbound message later in the same thread than the inbound message.
+- Sends have native 24-hour idempotency. Live responses expose signed Internet
+  Message-IDs and reply headers separately from opaque API IDs. Approval
+  correlation resolves those IDs within the same inbox and thread.
+- Sender authentication supports only reconstructable, unencoded single-part
+  plain text through `raw.message-headers` and local DKIM verification. HTML,
+  multipart messages and attachments cannot currently be authenticated. See
+  [the authentication contract](guest-authorization.md#sender-authentication).
 - There is no single-message get endpoint. Recovery scans the paginated inbox
   message list for the requested ID.
 - Attachments are addressed by message ID and filename. The adapter exposes an

@@ -307,8 +307,9 @@ func messageFingerprint(m Message) string {
 		ID, Thread, From, Subject, Body, RawBody, Parent string
 		To, CC, References, ConversationReferences       []string
 		Attachments                                      []AttachmentRef
+		RFCMessageID                                     string `json:",omitempty"`
 	}{m.MessageID, m.ThreadID, m.From, m.Subject, m.Body, m.RawBody, m.InReplyTo,
-		m.To, m.CC, m.References, m.ConversationReferences, m.Attachments})
+		m.To, m.CC, m.References, m.ConversationReferences, m.Attachments, m.RFCMessageID})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }

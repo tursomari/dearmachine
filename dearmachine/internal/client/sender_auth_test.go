@@ -170,7 +170,7 @@ func TestAgentMailAuthenticationUsesScopedRawBytesAndCachesOnlyExactContent(t *t
 }
 
 func TestUnsupportedProviderAuthenticationFailsClosed(t *testing.T) {
-	for _, adapter := range []MessageAuthenticator{&OpenMailTransport{}, &SendmuxTransport{}} {
+	for _, adapter := range []MessageAuthenticator{&SendmuxTransport{}} {
 		if err := adapter.AuthenticateMessage(context.Background(), signedFixtureMessage()); !errors.Is(err, ErrSenderAttributionUnsupported) {
 			t.Fatalf("unsupported evidence was accepted: %v", err)
 		}

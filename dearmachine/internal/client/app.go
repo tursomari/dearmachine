@@ -299,7 +299,11 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			continue
 		}
 		if participantBoundaryEnabled {
-			request, expectedState, correlated, err := a.store.ParticipantRequestForControl(original)
+			control, err := a.participantControlReferences(ctx, original)
+			if err != nil {
+				return err
+			}
+			request, expectedState, correlated, err := a.store.ParticipantRequestForControl(control)
 			if err != nil {
 				return err
 			}
