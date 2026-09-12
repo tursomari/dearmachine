@@ -27,7 +27,8 @@ AgentMail's adapter fetches the scoped message's
 [raw RFC822 bytes](https://docs.agentmail.to/api-reference/inboxes/messages/get-raw)
 and verifies DKIM locally with DNS keys. One valid signature from the **exact
 From domain** must cover every present author, recipient, message-ID, subject,
-reply-correlation and MIME interpretation header. The body must verify in full;
+reply-correlation and MIME interpretation header, including every `Content-*`
+field. The body must verify in full;
 duplicate authorization headers, missing evidence, unsigned CC or reply headers,
 invalid signatures and provider `unauthenticated` labels are rejected. Parsed
 sender, recipients, subject, message ID and reply correlation must match the
@@ -35,6 +36,7 @@ provider's normalized message. API credentials are never sent to the raw-message
 download URL. Positive caching binds the immutable normalized message content.
 
 This policy **trusts the From domain's mail operator to enforce mailbox ownership**.
+DNS key resolution and the signing key's custody are also trusted.
 DKIM proves signing-domain authority and integrity, not the identity of a human
 or independent control of a mailbox local part. A malicious/compromised domain
 operator or signing key can impersonate mailboxes in that domain. There is no
@@ -65,8 +67,8 @@ The owner replies in that thread with the actual command from the footer.
 The random token binds the exact pair, inbox, guest, thread and grant generation.
 It is not included in shared answers. Local revocation blocks subsequent guest
 execution starts, including queued, held and recovered work. Already-started work
-can still have effects, and submitted email cannot be recalled. Replaying a completed removal
-command is harmless; an old token cannot revoke a later grant generation.
+can still have effects, and submitted email cannot be recalled. Replaying a
+completed removal command is harmless; an old token cannot revoke a later grant generation.
 
 Ordinary reply-all and replayed invitations cannot restore a revoked grant.
 Explicitly reinvite using the native CLI, then send a **new guest request** and

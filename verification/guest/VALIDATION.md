@@ -30,7 +30,9 @@ pending guest decision, removal and stale approvals, explicit reinvitation,
 request-content substitution and historical recipient exclusion. Authentication
 tests use real ephemeral signatures and the AgentMail SDK over loopback TLS;
 forged author fields, altered bodies, unsigned routing/correlation fields and
-fabricated verdicts are rejected. Two existing received messages were checked
+fabricated verdicts are rejected. Failing-first regressions also reject added
+unsigned MIME disposition/length headers; every present Content-* field must be
+signed, including extensions. Two existing received messages were checked
 read-only with the candidate verifier and passed; their private content and
 identifiers are excluded from version control. No mail was sent by that check.
 

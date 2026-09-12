@@ -138,7 +138,15 @@ func verifySignedMessage(ctx context.Context, raw []byte, expected Message, look
 	if err != nil {
 		return ErrMessageUnauthenticated
 	}
-	for _, field := range authenticatedHeaderFields {
+	fields := append([]string(nil), authenticatedHeaderFields...)
+	for field := range parsed.Header {
+		// Bind all MIME metadata, including disposition, attachment names and
+		// extension fields that a provider's MIME parser may interpret.
+		if strings.HasPrefix(field, "Content-") && !containsFold(fields, field) {
+			fields = append(fields, field)
+		}
+	}
+	for _, field := range fields {
 		if len(parsed.Header[field]) > 1 {
 			return ErrMessageUnauthenticated
 		}
@@ -186,7 +194,7 @@ func verifySignedMessage(ctx context.Context, raw []byte, expected Message, look
 			continue
 		}
 		covered := true
-		for _, field := range authenticatedHeaderFields {
+		for _, field := range fields {
 			if len(parsed.Header[field]) > 0 && !containsFold(result.HeaderKeys, field) {
 				covered = false
 				break

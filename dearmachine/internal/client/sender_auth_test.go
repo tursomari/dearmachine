@@ -20,7 +20,7 @@ import (
 	"github.com/emersion/go-msgauth/dkim"
 )
 
-func signedMailFixture(t *testing.T, message Message, domain string, signedHeaders []string) ([]byte, func(context.Context, string) ([]string, error)) {
+func signedMailFixture(t *testing.T, message Message, domain string, signedHeaders []string, extraHeaders ...string) ([]byte, func(context.Context, string) ([]string, error)) {
 	t.Helper()
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -35,6 +35,9 @@ func signedMailFixture(t *testing.T, message Message, domain string, signedHeade
 	}
 	if len(message.References) > 0 {
 		raw += "References: " + strings.Join(message.References, " ") + "\r\n"
+	}
+	for _, header := range extraHeaders {
+		raw += header + "\r\n"
 	}
 	raw += "\r\n" + message.Body + "\r\n"
 	var signed bytes.Buffer
@@ -58,7 +61,7 @@ func signedFixtureMessage() Message {
 }
 
 func TestSenderSignatureBindsAuthorRecipientsAndApprovalCorrelation(t *testing.T) {
-	for _, mode := range []string{"valid", "spoof-from", "unsigned-cc", "unsigned-parent", "unsigned-mime", "body-tampering", "wrong-domain", "subdomain", "duplicate-from", "duplicate-to", "changed-api-cc", "changed-api-parent", "changed-api-id", "fake-authentication-results", "missing-signature", "dns-failure"} {
+	for _, mode := range []string{"valid", "valid-content-headers", "spoof-from", "unsigned-cc", "unsigned-parent", "unsigned-mime", "unsigned-content-disposition", "unsigned-content-length", "body-tampering", "wrong-domain", "subdomain", "duplicate-from", "duplicate-to", "changed-api-cc", "changed-api-parent", "changed-api-id", "fake-authentication-results", "missing-signature", "dns-failure"} {
 		t.Run(mode, func(t *testing.T) {
 			message := signedFixtureMessage()
 			domain := "sender.test"
@@ -79,8 +82,16 @@ func TestSenderSignatureBindsAuthorRecipientsAndApprovalCorrelation(t *testing.T
 			} else if mode == "subdomain" {
 				domain = "sub.sender.test"
 			}
-			raw, lookup := signedMailFixture(t, message, domain, headers)
+			var extraHeaders []string
+			if mode == "valid-content-headers" {
+				extraHeaders = []string{"Content-Disposition: inline", "Content-X-Extension: signed", fmt.Sprintf("Content-Length: %d", len(message.Body)+2)}
+			}
+			raw, lookup := signedMailFixture(t, message, domain, headers, extraHeaders...)
 			switch mode {
+			case "unsigned-content-disposition":
+				raw = append([]byte("Content-Disposition: attachment; filename=changed.txt\r\n"), raw...)
+			case "unsigned-content-length":
+				raw = append([]byte("Content-Length: 0\r\n"), raw...)
 			case "spoof-from":
 				raw = bytes.ReplaceAll(raw, []byte("owner@sender.test"), []byte("other@sender.test"))
 				message.From = "other@sender.test"
@@ -106,7 +117,7 @@ func TestSenderSignatureBindsAuthorRecipientsAndApprovalCorrelation(t *testing.T
 				lookup = func(context.Context, string) ([]string, error) { return nil, errors.New("DNS unavailable") }
 			}
 			err := verifySignedMessage(context.Background(), raw, message, lookup)
-			if (err == nil) != (mode == "valid") {
+			if (err == nil) != (mode == "valid" || mode == "valid-content-headers") {
 				t.Fatalf("signature acceptance for %s: %v", mode, err)
 			}
 		})
