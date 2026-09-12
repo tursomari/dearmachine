@@ -1,5 +1,48 @@
 # Guest authorization validation
 
+## Implemented participation workflow, 2026-09-12
+
+The current implementation enables authenticated AgentMail owner To/CC
+invitations, independent private approvals, shared guest answers, private owner
+continuations, automatic provider synchronization and scoped removal commands.
+OpenMail and Sendmux fail closed for inbound work because supported authentication
+evidence is unavailable. Exact-domain DKIM relies on the domain operator to
+enforce mailbox ownership; see the [trusted boundary](README.md#trusted-boundary-and-implementation-evidence).
+
+Gobra verified all four production Boolean bodies with zero errors. TLC exhausted:
+
+| Configuration | Distinct states | Generated states | Maximum depth |
+| --- | ---: | ---: | ---: |
+| Guest: one scope | 484 | 3,684 | 9 |
+| Guest: shared provider entry | 24,004 | 328,576 | 15 |
+| Guest: sparse scope matrix | 3,748,096 | 53,248,000 | 17 |
+| Participation: repeated guest requests | 13,576 | 95,479 | 16 |
+| Participation: two scopes | 2,119,936 | 27,503,841 | 23 |
+
+All four reconciliation mutations and seventeen participation mutations produced
+the required Safety counterexample. All three successful-workflow reachability
+checks produced their expected counterexamples. These are bounded safety and
+reachability results, not complete Go/SQLite refinement or provider proofs.
+
+The deterministic tests cover automatic grants and every permission direction,
+per-request approval without admission/trust shortcuts, owner privacy with a
+pending guest decision, removal and stale approvals, explicit reinvitation,
+request-content substitution and historical recipient exclusion. Authentication
+tests use real ephemeral signatures and the AgentMail SDK over loopback TLS;
+forged author fields, altered bodies, unsigned routing/correlation fields and
+fabricated verdicts are rejected. Two existing received messages were checked
+read-only with the candidate verifier and passed; their private content and
+identifiers are excluded from version control. No mail was sent by that check.
+
+A fresh production-container guest exchange and backend authority evaluation
+have not been run for this implementation. The read-only signature samples and
+offline tests do not substitute for those live evaluations.
+
+## Historical validation before automatic participation
+
+The remaining sections record earlier revisions and their limitations; their
+automatic-invitation/admission statements do not describe the implementation above.
+
 The implementation has deterministic and finite-model coverage. It is **not a
 completed live participant evaluation**. Current adapters cannot authenticate
 the exact controller mailbox required for automatic invitations, and therefore

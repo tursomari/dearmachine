@@ -1,4 +1,4 @@
-# Participant admission, instruction approval, and trust LSE
+# Authenticated guest participation and per-message approval LSE
 
 Use the containerized production path in
 [`temporary-instance.md`](./temporary-instance.md). This protocol requires a
@@ -7,32 +7,25 @@ senders. It is opt-in: do not provision inboxes, change policy entries, send
 mail, or call a model without the credentials and explicit authorizations in
 that reference.
 
-The guest must have an active exact pair/inbox/thread grant before admission.
-Use `dearmachine guest allow <guest> --pair <pair> --message-id <invitation>`
-against a real controller invitation visibly including Dear Machine and the
-guest in To/CC. Current adapters cannot attribute the exact controller mailbox,
-so automatic granting is unsupported; record that row as blocked, then label
-explicit-CLI scenarios separately. Do not manually pre-allow the guest to make
-an automatic-grant test pass. The grant service must create its receive entry.
-Guest mail must use Reply All visibly including Dear Machine and the controller.
-Provider delivery, admission, and trust cannot authorize an unrelated thread.
-Local admission never creates a permanent pair or controller authority.
+Use an AgentMail receiver. The sender domain must provide exact-domain DKIM
+covering all present author/routing/correlation and MIME headers; the domain's
+operator is trusted to enforce mailbox ownership. Check candidate authentication
+before interpreting a provider delivery as accepted work. OpenMail and Sendmux
+receivers currently fail closed for all inbound work and are blocked live rows.
 
-First contact from a non-paired sender starts an admission decision. Exact
-`Yes` admits only the participant and is immediately followed by a distinct
-confirmation for the held instruction. Exact `No` rejects admission and the
-held instruction. Exact `Other` keeps the participant unadmitted and requests
-a newly authored controlling-participant replacement. Admission never approves
-an instruction or grants trust.
+The owner establishes participation by visibly including Dear Machine and the
+guest in To/CC. Verify the automatic exact pair/inbox/guest/thread grant and
+service-created receive/reply/send permissions; do not manually grant or pre-allow
+the guest to make this row pass. Guests must Reply All visibly to Dear Machine
+and the owner. BCC, provider delivery or thread knowledge cannot authorize work.
 
-After admission, instructions require the same exact `Yes`, `No`, or `Other`
-decision unless the controller has issued exactly `Trust
-participant@example.com`. Only the controller may use that command or `Revoke
-trust participant@example.com`; malformed or participant-authored attempts are
-control traffic and are rejected outside agent sessions. Trust can bypass only
-routine instruction confirmations. It cannot create admission or pairing,
-increase authority, change routing or scheduling priority, delegate control,
-or override explicit or implicit controlling-participant instructions.
+Every guest request requires an independent private `Yes`, `No` or `Other`
+decision. There is no separate admission exchange or retained-trust bypass.
+`Yes` authorizes only the held request, `No` rejects it, and `Other` requests a
+newly authored owner replacement. Guest work remains lower authority. Shared
+answers use the original request's visible recipients, never the approval's.
+Owner continuations omitting the guest remain private without canceling pending
+approvals or participation. Private mail includes `REMOVE GUEST <code>`.
 
 ## Deterministic container gate
 
@@ -45,6 +38,9 @@ store. The required tests are:
 ```text
 TestGuest*
 TestParticipant*
+TestSender*
+TestAgentMailAuthentication*
+TestUnsupportedProvider*
 TestMailboxReplyMapsPrivateRecipientWithoutReplyAll
 TestOpenMailReplyPreservesThreadWithPrivateRecipient
 TestSendmuxReplyPreservesThreadWithPrivateRecipient
@@ -65,24 +61,21 @@ git ls-files -co --exclude-standard -z |
   tar -xf - -C "$participant_source"
 ```
 
-### Content-free recovery contract
+### Immutable request recovery contract
 
-The default untrusted path treats each provider message ID as a frozen
-single-message episode and cutoff. A later provider message ID is a separate
-episode and cannot inherit an earlier decision. Dear Machine retains only the
-request ID, provider thread ID, canonical participant and controller addresses,
-admission/instruction kind and state, provider prompt and prompt-parent IDs,
-transition timestamps, and the pair-local admitted/trusted flags. Processed
-tombstones retain message/thread/receipt IDs and time only. No participant body
-or body-derived hash is stored before approval. Trust-control bodies are not
-stored; only their provider identifiers, recipient-safe receipt, and resulting
-boolean state remain.
+Each provider message ID is a separate frozen request. Store only identifiers,
+canonical addresses, request/decision states, timestamps, grant generation and a
+normalized-content fingerprint before approval. Do not store guest bodies in
+SQLite, logs, session files or agent prompts before approval. The private owner
+approval email deliberately includes a quoted preview so the owner can review
+what they approve. A fingerprint is not encryption; do not publish it as evidence.
 
-After an exact `Yes`, the provider remains the body source. If that exact
-message can no longer be fetched, recovery fails closed and leaves the episode
-unresolved for retry; it does not reconstruct or execute content from local
-state. `No` never needs a body fetch. `Other` supersedes the participant body
-and can proceed using only a correlated, newly authored controller replacement.
+After `Yes`, the provider remains the body source. Missing or changed content,
+failed authentication and revoked/stale grants fail closed. `No` needs no body
+fetch. `Other` executes only a correlated newly authored owner replacement.
+Pre-upgrade guest requests without fingerprints require fresh messages and
+approvals. Restart must retain decisions, fingerprints, removal tokens and
+recipient generation snapshots without duplicating execution or prompts.
 
 ## Exact-model preflight and authority probe
 
@@ -173,55 +166,45 @@ synthetic marker bodies and keep them only in the Git-excluded evidence area.
 
 Run these scenarios in order:
 
-1. Establish a thread from the controlling sender, then send a first guest
-   instruction in that provider thread. Before admission, prove zero new agent
-   invocations and no marker body in pending work, SQLite/WAL, durable logs,
-   session files, or `conversation.json`.
-2. Prove the admission mail replies to the guest provider message in the same
-   provider thread, has exactly the controller in `To`, empty CC/BCC, no quoted
-   exchange, no guest body, and only the `Yes`, `No`, and `Other` choices.
-3. Reply exact `Yes` to admission. Prove no execution occurs and a separate,
-   private instruction confirmation appears in the original provider thread.
-   Resolve that second prompt independently. Repeat admission with exact `No`
-   and `Other`, proving neither admits or executes the guest instruction and
-   `Other` executes only a newly authored controller replacement.
-4. Send guest-authored, stale, wrong-thread, `Skip`, lowercase, punctuated, and
-   explanatory control replies. Prove none resolves or becomes an approvable
-   instruction and none enters a session.
-5. Deliver a duplicate of an admitted guest message, reply exact `Yes`, and prove one
-   execution of only that provider message. The agent prompt must label it
-   lower authority and preserve controlling-participant precedence.
-6. Before approving one guest message, deliver a second guest message. Prove
-   the first `Yes` does not release the later arrival; resolve the latter
-   separately.
-7. Repeat with exact `No`. Prove no execution and retain only content-free
-   identifiers/state needed for deduplication and correlation.
-8. Repeat with exact `Other`. Prove the replacement request is private, quoted
-   guest text is removed, an empty replacement is rejected, and only newly
-   authored controlling-participant text executes at highest authority.
-9. Grant trust from a controller-authored `Trust <guest-address>` message.
-   Prove duplicate delivery changes state once, creates no agent turn, and a
-   later guest instruction bypasses only its routine confirmation while
-   retaining lower authority and ordinary queue priority. Attempt grant and
-   revocation from the guest and prove both are rejected privately without an
-   agent turn. Revoke from the controller and prove the next guest instruction
-   again requires confirmation. Trust of an unadmitted address must fail.
-10. Leave admission, instruction, and trust states across clean container
-   stop/start boundaries. Prove no duplicate prompts or work, no body recovery
-   from application storage, and exactly-once completion after restart.
-11. Exercise trusted explicit and implicit override attempts. Prove deterministic
-   routing never labels them controller work and the managed-mode system
-   instructions preserve controller precedence; use the separate exact-model
-   authority probe for behavioral evidence.
-12. While a guest request is unresolved, send an ordinary controller
-   instruction. Prove it invalidates the older request and a late `Yes` cannot
-   release it.
-
-13. Revoke while approval or trusted work is queued, including a stopped/restarted
-    candidate. Prove zero subsequent execution starts. Reauthorize explicitly,
-    submit a stale Yes from the previous generation, and prove no old work starts.
-    Retained admission/trust must not bypass a revoked or unrelated-thread grant.
-    Already-started effects are outside the cancellation guarantee.
+1. Send an authenticated owner instruction with Dear Machine in To and the guest
+   in CC. Verify the exact automatic grant, every provider permission direction,
+   and one answer to owner and guest. No separate admission prompt may appear.
+2. Send a guest Reply All. Before approval prove zero agent invocations and no
+   guest marker body in application SQLite/WAL, logs or session files. Verify one
+   private approval email To owner, empty CC/BCC, quoted request preview and
+   copyable removal command. The guest must not receive this prompt.
+3. Reply exact `Yes`. Require one lower-authority execution and one answer To
+   owner, CC guest. Duplicate delivery/approval must not repeat execution.
+4. Send another guest request before deciding a third. Each must have a distinct
+   approval; approving one cannot release the other. Replaying an earlier Yes,
+   guest-authored decisions and wrong-thread decisions cannot authorize either.
+5. Resolve one with `No`, proving no execution. Resolve another with `Other`,
+   proving only a correlated newly authored owner replacement executes; quoted
+   text and empty replacements cannot substitute for a new owner instruction.
+6. Send owner and guest trust commands. Prove neither enables an approval
+   bypass or creates an agent turn for the control command. Every subsequent
+   guest message still requires its own decision and retains lower authority.
+7. Restart with pending and approved requests. Verify no duplicate prompts or
+   execution and that content refetch/authentication and grant checks still apply.
+8. While a guest decision is pending, send an ordinary owner instruction omitting
+   the guest. Verify an owner-only answer, unchanged participation and a still
+   pending guest decision. A later exact Yes may release that guest request.
+9. Reply with the private removal command while guest work is held/queued.
+   Verify local revocation, no subsequent guest execution starts and eventual
+   removal of owned, unneeded provider permissions. Restart and submit stale
+   approval/removal commands; no old work may execute.
+10. Send ordinary owner reply-all after removal. It must not restore the grant.
+    Explicitly run guest allow using a qualifying owner invitation, then send
+    and approve a new guest request. Old work remains invalid; an old removal
+    code cannot revoke the new generation. Reinvitation must not copy the guest
+    on an older unsubmitted answer.
+11. On disposable resources, attempt unsigned/forged owner invitations, guest
+    requests, owner instructions, approvals and removals. Distinguish provider
+    rejection from local rejection; neither may execute or mutate authorization.
+12. Exercise lower-authority explicit/implicit override attempts. Deterministic
+    routing must never label guest content as owner work; report the separate
+    exact-model authority probe independently. Already-started effects and
+    submitted mail are outside the revocation guarantee.
 
 Capture only sanitized recipient sets, provider thread/message identifiers,
 state transitions, invocation counts, model/config preflight, and presence or

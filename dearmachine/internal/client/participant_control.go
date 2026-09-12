@@ -10,6 +10,11 @@ type participantTransport interface {
 	isControllingParticipant(Message) bool
 }
 
+func (a *App) threadGuestFlow() bool {
+	_, ok := a.transport.(*pairEndpoint)
+	return ok
+}
+
 func participantBoundary(transport Transport, message Message) (string, bool, bool) {
 	boundary, ok := transport.(participantTransport)
 	if !ok {

@@ -11,12 +11,27 @@ import (
 var _ Transport = (*fakeTransport)(nil)
 
 type fakeTransportErrors struct {
+	Authenticate  error
 	Poll          error
 	Thread        error
 	Message       error
 	Reply         error
 	ReplyReceipt  error
 	MarkProcessed error
+}
+
+// These fixtures model a trusted adapter assertion. Cryptographic evidence and
+// missing/negative authentication are tested separately at the adapter seam.
+func (f *fakeTransport) AuthenticateMessage(_ context.Context, m Message) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.errors.Authenticate != nil {
+		return f.errors.Authenticate
+	}
+	if containsFold(m.Labels, "unauthenticated") {
+		return ErrMessageUnauthenticated
+	}
+	return nil
 }
 
 type fakeTransportReply struct {
@@ -42,6 +57,7 @@ type fakeTransport struct {
 	attachments      map[string][]byte
 	attachmentErrors map[string]error
 	errors           fakeTransportErrors
+	senderAddress    string
 }
 
 func newFakeTransport() *fakeTransport {
@@ -50,6 +66,7 @@ func newFakeTransport() *fakeTransport {
 		messages:         make(map[string]Message),
 		attachments:      make(map[string][]byte),
 		attachmentErrors: make(map[string]error),
+		senderAddress:    "device@example.com",
 	}
 }
 
@@ -162,7 +179,7 @@ func (f *fakeTransport) Reply(
 	outbound := Message{
 		MessageID: receiptID,
 		ThreadID:  inbound.ThreadID,
-		From:      "device@example.com",
+		From:      f.senderAddress,
 		To:        recipients,
 		CC:        append([]string(nil), payload.CC...),
 		BCC:       append([]string(nil), payload.BCC...),

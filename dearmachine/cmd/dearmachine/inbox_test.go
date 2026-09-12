@@ -17,6 +17,10 @@ import (
 
 const testCheckpointSessionID = "agent-20260821T141425-8795"
 
+func (inboxTestTransport) AuthenticateMessage(context.Context, client.Message) error {
+	return nil // Provider assertion supplied by this isolated fixture.
+}
+
 func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	for _, test := range []struct {
 		args  []string

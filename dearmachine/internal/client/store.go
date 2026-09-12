@@ -868,6 +868,15 @@ func (s *Store) BeginParticipantRequest(message Message, controller string) (Par
 	return s.beginParticipantRequest(message, controller, participantRequestInstruction, participantAwaitingDecision)
 }
 
+func (s *Store) guestInstructionApproved(messageID, address, threadID, owner string) (bool, error) {
+	var approved bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM participant_requests WHERE
+ request_message_id=? AND participant_address=? AND external_thread_id=? AND
+ controlling_participant=? AND kind=? AND state=?)`, messageID, address,
+		threadID, owner, participantRequestInstruction, participantResolvedYes).Scan(&approved)
+	return approved, err
+}
+
 func (s *Store) BeginParticipantAdmission(message Message, controller string) (ParticipantRequest, bool, error) {
 	return s.beginParticipantRequest(message, controller, participantRequestAdmission, participantAwaitingAdmission)
 }

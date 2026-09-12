@@ -9,12 +9,17 @@ func guestInvitationEligible(controller, authenticated, machineVisible, guestVis
 	return controller && authenticated && machineVisible && guestVisible && distinct && exactInbox
 }
 
-// @ ensures result == (active && exactScope && machineVisible && controllerVisible)
-func guestDeliveryEligible(active, exactScope, machineVisible, controllerVisible bool) (result bool) {
-	return active && exactScope && machineVisible && controllerVisible
+// @ ensures result == (active && authenticated && exactScope && machineVisible && controllerVisible)
+func guestDeliveryEligible(active, authenticated, exactScope, machineVisible, controllerVisible bool) (result bool) {
+	return active && authenticated && exactScope && machineVisible && controllerVisible
 }
 
-// @ ensures result == (active && exactScope && currentGeneration && admitted && decided && controllerDecision)
-func guestExecutionEligible(active, exactScope, currentGeneration, admitted, decided, controllerDecision bool) (result bool) {
-	return active && exactScope && currentGeneration && admitted && decided && controllerDecision
+// @ ensures result == (active && exactScope && currentGeneration && authenticated && decided && controllerDecision)
+func guestExecutionEligible(active, exactScope, currentGeneration, authenticated, decided, controllerDecision bool) (result bool) {
+	return active && exactScope && currentGeneration && authenticated && decided && controllerDecision
+}
+
+// @ ensures result == (active && exactScope && visible && currentGeneration)
+func guestRecipientEligible(active, exactScope, visible, currentGeneration bool) (result bool) {
+	return active && exactScope && visible && currentGeneration
 }

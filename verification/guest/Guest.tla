@@ -13,7 +13,7 @@ Keys == IF Sparse THEN {k \in AllKeys:
 VARIABLES grant, seen, work, remote, owned, intent, violation, permanent
 vars == <<grant, seen, work, remote, owned, intent, violation, permanent>>
 EmptyGrant == [active |-> FALSE, generation |-> 0]
-EmptyWork == [generation |-> 0, admitted |-> FALSE, approved |-> FALSE]
+EmptyWork == [generation |-> 0, authenticated |-> FALSE, approved |-> FALSE]
 Init == /\ grant = [k \in Keys |-> EmptyGrant]
         /\ seen = [k \in Keys |-> {}]
         /\ work = [k \in Keys |-> EmptyWork]
@@ -27,6 +27,7 @@ Needed(e) == e \in permanent \/ (\E k \in Keys: Entry(k) = e /\ grant[k].active)
 Invite(k, m, explicit, authenticated, visible, paired) ==
   /\ authenticated /\ visible /\ ~paired
   /\ explicit \/ m \notin seen[k] \/ ReplayInvitation
+  /\ explicit \/ grant[k].active \/ grant[k].generation = 0 \/ ReplayInvitation
   /\ grant[k].active \/ grant[k].generation < MaxGeneration
   /\ grant' = [grant EXCEPT ![k] =
        [active |-> TRUE, generation |-> IF @.active THEN @.generation ELSE @.generation + 1]]
@@ -40,25 +41,20 @@ Revoke(k) ==
   /\ grant' = [grant EXCEPT ![k].active = FALSE]
   /\ intent' = intent \cup {Entry(k)}
   /\ UNCHANGED <<seen, work, remote, owned, violation, permanent>>
-Receive(k, visible) ==
-  /\ visible /\ (grant[k].active \/ KnownOnly)
+Receive(k, authenticated, visible) ==
+  /\ authenticated /\ visible /\ (grant[k].active \/ KnownOnly)
   /\ work[k].generation = 0
   /\ work' = [work EXCEPT ![k] =
-       [generation |-> grant[k].generation, admitted |-> FALSE, approved |-> FALSE]]
+       [generation |-> grant[k].generation, authenticated |-> TRUE, approved |-> FALSE]]
   /\ violation' = (violation \/ ~grant[k].active)
   /\ UNCHANGED <<grant, seen, remote, owned, intent, permanent>>
-Admit(k, controller) ==
-  /\ controller /\ work[k].generation > 0
-  /\ grant[k].active /\ work[k].generation = grant[k].generation
-  /\ work' = [work EXCEPT ![k].admitted = TRUE]
-  /\ UNCHANGED <<grant, seen, remote, owned, intent, violation, permanent>>
 Approve(k, controller) ==
-  /\ controller /\ work[k].admitted
+  /\ controller /\ work[k].authenticated
   /\ grant[k].active /\ work[k].generation = grant[k].generation
   /\ work' = [work EXCEPT ![k].approved = TRUE]
   /\ UNCHANGED <<grant, seen, remote, owned, intent, violation, permanent>>
 Start(k) ==
-  /\ work[k].approved /\ work[k].admitted
+  /\ work[k].approved /\ work[k].authenticated
   /\ grant[k].active
   /\ StaleDecision \/ work[k].generation = grant[k].generation
   /\ violation' = (violation \/ work[k].generation # grant[k].generation)
@@ -87,8 +83,8 @@ Restart == UNCHANGED vars
 Next == (\E k \in Keys:
            (\E m \in Evidence, explicit, authenticated, visible, paired \in BOOLEAN:
               Invite(k, m, explicit, authenticated, visible, paired))
-           \/ Revoke(k) \/ (\E v \in BOOLEAN: Receive(k, v))
-           \/ (\E c \in BOOLEAN: Admit(k, c) \/ Approve(k, c)) \/ Start(k))
+           \/ Revoke(k) \/ (\E a, v \in BOOLEAN: Receive(k, a, v))
+           \/ (\E c \in BOOLEAN: Approve(k, c)) \/ Start(k))
         \/ (\E e \in Inboxes \X Guests:
               (\E response \in BOOLEAN: Add(e, response)) \/ Remove(e) \/ Inspect(e))
         \/ Restart

@@ -20,21 +20,30 @@ func guestHelp(output io.Writer) error {
   dearmachine guest revoke <address> --pair <pair> --thread-id <thread>
   dearmachine guest revoke <address> --pair <pair> --all
 
-Guest authorization persists for the exact pair, inbox and provider thread.
-Allow is an explicit local operator authorization using a provider-resolved
-controller message with Dear Machine and the guest visibly in To or CC.
-Current adapters lack exact mailbox-owner attribution, so automatic invitations
-are disabled. From matching or SPF/DKIM/DMARC alone does not authenticate an owner.
+Guest grants persist for the exact pair, inbox, guest and provider thread.
+On AgentMail, an authenticated owner's To or CC automatically invites guests.
+DearMachine locally verifies exact-domain DKIM and signed author/routing headers;
+this trusts the sender domain's operator to control its mailboxes. Raw From or
+SPF/DKIM/DMARC verdicts alone are insufficient. OpenMail and Sendmux currently
+lack supported evidence and reject all inbound work, including owner messages.
 
-Guests must Reply All to Dear Machine and the controller. Delivery authorization,
-participant admission, instruction approval and trust are separate gates.
-Task answers go To the owner and CC active thread guests visible in the original
-request's From/To/CC. Owner continuations without the guest stay private.
-Admission and instruction approval prompts remain private to the owner.
-Revocation blocks subsequent guest execution starts, including queued/recovered
-work. It does not roll back already-started work or erase pairing/admission/trust.
-Provider errors leave synchronization pending; local revocation still applies.
-Commands may run while the daemon is active. List reports grants and pending sync.
+Guests must Reply All to Dear Machine and the owner. Every guest instruction
+requires its own private owner approval; there is no separate admission exchange
+and retained trust never bypasses approval. Answers go To the owner and CC active
+thread guests visible in the original request. Owner continuations omitting the
+guest stay private and leave participation and pending approvals intact.
+
+Private approval prompts and owner-only answers include REMOVE GUEST <code>.
+Reply with that command to revoke the exact guest/thread grant. Revocation blocks
+new starts, pending approvals and old work after reinvitation; it cannot recall
+already-started effects or submitted mail. Ordinary reply-all cannot restore a
+revoked grant. Explicit local allow restores it using a provider-resolved owner
+message with Dear Machine and the guest visibly in To or CC. Send a new guest
+instruction afterward. Allow is trusted operator authorization, not sender proof.
+
+Provider address lists synchronize automatically. Provider errors leave sync
+pending; local revocation still applies. Commands work while the daemon runs.
+List reports grants, provider synchronization and sender authentication support.
 `)
 	return err
 }
@@ -110,7 +119,7 @@ func runGuest(args []string, deps dependencies) error {
 			Grants      []client.GuestGrant            `json:"grants"`
 			Permissions []client.GuestPermissionStatus `json:"permissions"`
 			Automatic   string                         `json:"automatic"`
-		}{grants, permissions, "disabled: current adapters lack exact mailbox-owner attribution"})
+		}{grants, permissions, client.SenderAuthenticationStatus(state.Inbox.Transport)})
 	}
 	if command == "revoke" {
 		if err = guests.RevokeGuest(state.Pair, state.Inbox, address, *threadID, *all); err != nil {

@@ -121,7 +121,7 @@ That shared file is a reference, not a standalone test.
 | [`concurrent-sessions.md`](dearmachine/runbooks/testing/concurrent-sessions.md) | Sequential compatibility and concurrent independent threads |
 | [`continuous-intake.md`](dearmachine/runbooks/testing/continuous-intake.md) | Intake during active work and turn-gated maintenance |
 | [`multi-pair.md`](dearmachine/runbooks/testing/multi-pair.md) | Pair routing, isolation, allow sets, and provider-ID overlap |
-| [`participant-approval.md`](dearmachine/runbooks/testing/participant-approval.md) | Participant admission, private instruction approval, controller-only trust, exact-model authority, and recovery |
+| [`participant-approval.md`](dearmachine/runbooks/testing/participant-approval.md) | Authenticated guest invitations, independent private approvals, revocation, exact-model authority, and recovery |
 | [`recipient-delivery.md`](dearmachine/runbooks/testing/recipient-delivery.md) | Cross-version multi-recipient delivery, provider-filter recovery, recipient roles, and adapter-neutral routing |
 | [`forward-session-fork.md`](dearmachine/runbooks/testing/forward-session-fork.md) | Forward detection, confirmation, and clean session forks across provider threading behavior |
 | [`queued-grace-preemption.md`](dearmachine/runbooks/testing/queued-grace-preemption.md) | Same-poll queued work and grace-period preemption |
@@ -183,7 +183,7 @@ resolved from the host installation.
 ## Guest authorization verification
 
 [Guest operations](docs/guest-authorization.md) documents the supported commands
-and current automatic-invitation limitation.
+and the authentication policy and supported-provider limits.
 
 [The guest verification guide](verification/guest/README.md) documents the
 pinned Gobra/TLC runner, finite model, intentional counterexamples, production
@@ -214,3 +214,12 @@ encoding for AgentMail, OpenMail JSON/multipart, and both Sendmux sending APIs.
 `guest_permission_test.go` additionally covers migration from receive-only state,
 per-direction ownership, shared references and uncertain outbound responses.
 The recipient-delivery runbook owns the corresponding disposable live probes.
+
+`guest_participation_test.go` exercises automatic To/CC grants, all managed
+provider directions, repeated independent approvals, private owner continuations,
+removal-token scope/replay, revocation/reinvitation and immutable request content.
+`sender_auth_test.go` verifies real signatures with ephemeral keys and the real
+AgentMail SDK over loopback TLS. It rejects spoofed or unsigned author/routing
+fields, body tampering, fake verdicts, missing evidence and unsupported adapters.
+The four Gobra contracts cover invitation, delivery, execution and recipient
+eligibility; `Participation.tla` checks the abstract per-message workflow.

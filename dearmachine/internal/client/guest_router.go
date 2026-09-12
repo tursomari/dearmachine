@@ -6,16 +6,26 @@ import (
 	"fmt"
 )
 
-var ErrSenderAttributionUnsupported = errors.New("automatic guest invitations are disabled: transport cannot attribute the exact controller mailbox")
+var ErrMessageUnauthenticated = errors.New("message sender or authorization headers could not be authenticated")
 
-// ControllerAttributor is a trusted adapter capability, never an email field.
-// Implementations must authenticate the exact outer From mailbox and bind the
-// evidence to this inbox and message ID. SPF/DKIM/DMARC domain success alone,
-// message headers supplied by the sender, and provider delivery do not suffice.
-// None of the current production adapters can establish this contract.
-type ControllerAttributor interface {
-	AuthenticatedSender(context.Context, string) (string, error)
+func (r *InboxRouter) authenticateMessage(ctx context.Context, message Message) (Message, error) {
+	message.authenticated = false
+	if containsFold(message.Labels, "unauthenticated") {
+		return Message{}, ErrMessageUnauthenticated
+	}
+	auth, ok := r.raw.(MessageAuthenticator)
+	if !ok {
+		return Message{}, ErrSenderAttributionUnsupported
+	}
+	if err := auth.AuthenticateMessage(ctx, message); err != nil {
+		return Message{}, err
+	}
+	message.authenticated = true
+	message.fingerprint = messageFingerprint(message)
+	return message, nil
 }
+
+var ErrSenderAttributionUnsupported = errors.New("inbound sender authentication is unsupported by this transport")
 
 // ConfigureGuests includes all registered inbox pairs, even unselected workers.
 func (r *InboxRouter) ConfigureGuests(store *GuestStore, allPairs []Pair) error {
@@ -63,7 +73,7 @@ func (r *InboxRouter) guestAllowed(pair Pair, message Message) error {
 	if err != nil {
 		return err
 	}
-	if !guestDeliveryEligible(g.Active, r.deliveredToInbox(message), visibleRecipient(message, r.inbox.Address), visibleRecipient(message, pair.UserEmail)) {
+	if !guestDeliveryEligible(g.Active, message.authenticated, r.deliveredToInbox(message), visibleRecipient(message, r.inbox.Address), visibleRecipient(message, pair.UserEmail)) {
 		return ErrGuestUnauthorized
 	}
 	// Existing work is immutable across generations. History which was never
@@ -74,7 +84,10 @@ func (r *InboxRouter) guestAllowed(pair Pair, message Message) error {
 		return err
 	}
 	if exists {
-		return r.guests.CheckWork(key, message.MessageID)
+		if err := r.guests.CheckWork(key, message.MessageID); err != nil {
+			return err
+		}
+		return r.guests.checkFingerprint(key, message.MessageID, message.fingerprint)
 	}
 	return nil
 }
@@ -82,7 +95,7 @@ func (r *InboxRouter) guestAllowed(pair Pair, message Message) error {
 // Invite validates provider-resolved outer headers. Explicit CLI invocation is
 // an operator authorization of this exact visible invitation, not a claim that
 // From was cryptographically authenticated. Automatic detection additionally
-// requires the adapter's exact-mailbox attribution capability.
+// requires the adapter's message-authentication contract.
 func (r *InboxRouter) Invite(ctx context.Context, pairID, messageID, address string) (GuestGrant, error) {
 	message, err := r.raw.Message(ctx, messageID)
 	if err != nil {
@@ -114,15 +127,7 @@ func (r *InboxRouter) allowInvitation(ctx context.Context, pairID string, messag
 	}
 	attributed := explicit
 	if !explicit {
-		attributor, ok := r.raw.(ControllerAttributor)
-		if !ok {
-			return GuestGrant{}, ErrSenderAttributionUnsupported
-		}
-		sender, err := attributor.AuthenticatedSender(ctx, message.MessageID)
-		if err != nil {
-			return GuestGrant{}, err
-		}
-		attributed = sender == pair.UserEmail
+		attributed = message.authenticated
 	}
 	distinct := guest != r.inbox.Address && guest != pair.UserEmail && !r.controllers[guest]
 	if !guestInvitationEligible(from == pair.UserEmail, attributed, visibleRecipient(message, r.inbox.Address), visibleRecipient(message, guest), distinct, r.deliveredToInbox(message)) {
@@ -166,6 +171,14 @@ func (e *pairEndpoint) checkGuestRequest(request ParticipantRequest) error {
 	if e.router.guests == nil {
 		return ErrGuestUnauthorized
 	}
+	var bound bool
+	err := e.router.guests.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM guest_message_fingerprints WHERE pair_id=? AND inbox_id=? AND message_id=? AND fingerprint<>'')`, e.pairID, guestInboxKey(e.router.inbox), request.RequestMessageID).Scan(&bound)
+	if err != nil {
+		return err
+	}
+	if !bound {
+		return ErrGuestUnauthorized // Pre-upgrade requests need a fresh approval episode.
+	}
 	return e.router.guests.CheckWork(GuestKey{e.pairID, guestInboxKey(e.router.inbox), request.ParticipantAddress, request.ExternalThreadID}, request.RequestMessageID)
 }
 
@@ -174,6 +187,9 @@ type guestStartGuard func(func() error) error
 
 func (e *pairEndpoint) guestExecutionContext(ctx context.Context, message Message, pending PendingMessage) (context.Context, error) {
 	r := e.router
+	if !message.authenticated {
+		return ctx, ErrGuestUnauthorized
+	}
 	if e.isControllingParticipant(message) {
 		if r.guests == nil {
 			return ctx, nil
@@ -205,22 +221,22 @@ func (e *pairEndpoint) guestExecutionContext(ctx context.Context, message Messag
 	if store == nil {
 		return ctx, ErrGuestUnauthorized
 	}
-	admitted, trusted, err := store.ParticipantStatus(key.Address)
+	approved, err := store.guestInstructionApproved(message.MessageID, key.Address, key.ThreadID, r.pairs[e.pairID].UserEmail)
 	if err != nil {
 		return ctx, err
 	}
-	decided := pending.Authority == authorityParticipant || (pending.Authority == authorityTrustedParticipant && trusted)
-	if !guestExecutionEligible(true, true, true, admitted, decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
+	decided := pending.Authority == authorityParticipant && approved
+	if !guestExecutionEligible(true, true, true, message.authenticated, decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
 		return ctx, ErrGuestUnauthorized
 	}
 	guard := guestStartGuard(func(start func() error) error {
 		return r.guests.WithWorkStart(key, message.MessageID, func() error {
-			admitted, trusted, err := store.ParticipantStatus(key.Address)
+			approved, err := store.guestInstructionApproved(message.MessageID, key.Address, key.ThreadID, r.pairs[e.pairID].UserEmail)
 			if err != nil {
 				return err
 			}
-			decided := pending.Authority == authorityParticipant || (pending.Authority == authorityTrustedParticipant && trusted)
-			if !guestExecutionEligible(true, true, true, admitted, decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
+			decided := pending.Authority == authorityParticipant && approved
+			if !guestExecutionEligible(true, true, true, message.authenticated, decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
 				return ErrGuestUnauthorized
 			}
 			return start()

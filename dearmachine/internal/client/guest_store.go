@@ -2,7 +2,10 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -69,6 +72,19 @@ func OpenGuestStore(path string) (*GuestStore, error) {
  CREATE TABLE IF NOT EXISTS guest_work (
  pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL, message_id TEXT NOT NULL, address TEXT NOT NULL, thread_id TEXT NOT NULL,
  generation INTEGER NOT NULL, PRIMARY KEY(pair_id,inbox_id,message_id));
+ CREATE TABLE IF NOT EXISTS guest_message_fingerprints (
+ pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL, message_id TEXT NOT NULL,
+ fingerprint TEXT NOT NULL, PRIMARY KEY(pair_id,inbox_id,message_id));
+ CREATE TABLE IF NOT EXISTS guest_recipient_grants (
+ pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL, message_id TEXT NOT NULL,
+ generations TEXT NOT NULL, PRIMARY KEY(pair_id,inbox_id,message_id));
+ CREATE TABLE IF NOT EXISTS guest_removal_tokens (
+ token TEXT PRIMARY KEY, pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL,
+ address TEXT NOT NULL, thread_id TEXT NOT NULL, generation INTEGER NOT NULL,
+ UNIQUE(pair_id,inbox_id,address,thread_id,generation));
+ CREATE TABLE IF NOT EXISTS guest_removal_receipts (
+ pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL, message_id TEXT NOT NULL,
+ token TEXT NOT NULL, PRIMARY KEY(pair_id,inbox_id,message_id));
  CREATE TABLE IF NOT EXISTS receive_permissions (
  inbox_id TEXT NOT NULL,address TEXT NOT NULL,direction TEXT NOT NULL DEFAULT 'receive',permanent INTEGER NOT NULL DEFAULT 0,
  pending INTEGER NOT NULL DEFAULT 1,owned INTEGER NOT NULL DEFAULT 0,token TEXT NOT NULL DEFAULT '',
@@ -150,7 +166,7 @@ func (s *GuestStore) Allow(k GuestKey, evidence string, explicit bool) (GuestGra
 	if err != nil {
 		return g, err
 	}
-	if n == 0 && !explicit {
+	if (n == 0 && !explicit) || (!g.Active && g.Generation > 0 && !explicit) {
 		return g, tx.Commit()
 	}
 	// New evidence for an already-active grant does not invalidate ongoing work.
@@ -228,6 +244,10 @@ func (s *GuestStore) CheckWork(k GuestKey, messageID string) error {
 	return checkGuestWork(s.db, k, messageID)
 }
 func (s *GuestStore) BindWork(k GuestKey, messageID string) error {
+	return s.bindWork(k, messageID, "")
+}
+
+func (s *GuestStore) bindWork(k GuestKey, messageID, fingerprint string) error {
 	if messageID == "" {
 		return ErrGuestUnauthorized
 	}
@@ -253,7 +273,44 @@ func (s *GuestStore) BindWork(k GuestKey, messageID string) error {
 	if err = checkGuestWork(tx, k, messageID); err != nil {
 		return err
 	}
+	if fingerprint != "" {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO guest_message_fingerprints VALUES(?,?,?,?)`, k.PairID, k.InboxID, messageID, fingerprint); err != nil {
+			return err
+		}
+		var stored string
+		if err := tx.QueryRow(`SELECT fingerprint FROM guest_message_fingerprints WHERE pair_id=? AND inbox_id=? AND message_id=?`, k.PairID, k.InboxID, messageID).Scan(&stored); err != nil {
+			return err
+		}
+		if stored != fingerprint {
+			return ErrGuestUnauthorized
+		}
+	}
 	return tx.Commit()
+}
+
+func (s *GuestStore) checkFingerprint(k GuestKey, messageID, fingerprint string) error {
+	var valid bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM guest_message_fingerprints WHERE pair_id=? AND inbox_id=? AND message_id=? AND fingerprint=?)`, k.PairID, k.InboxID, messageID, fingerprint).Scan(&valid)
+	if err != nil {
+		return err
+	}
+	if !valid || fingerprint == "" {
+		return ErrGuestUnauthorized
+	}
+	return nil
+}
+
+func messageFingerprint(m Message) string {
+	// Exclude mutable delivery/read labels. Bind all content and routing fields
+	// used to prepare the instruction, including attachment identities.
+	data, _ := json.Marshal(struct {
+		ID, Thread, From, Subject, Body, RawBody, Parent string
+		To, CC, References, ConversationReferences       []string
+		Attachments                                      []AttachmentRef
+	}{m.MessageID, m.ThreadID, m.From, m.Subject, m.Body, m.RawBody, m.InReplyTo,
+		m.To, m.CC, m.References, m.ConversationReferences, m.Attachments})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // WithWorkStart orders revocation against the actual subprocess Start call.

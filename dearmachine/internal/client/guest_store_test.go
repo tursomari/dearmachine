@@ -27,6 +27,10 @@ func TestGuestGrantReplayGenerationAndRestart(t *testing.T) {
 		t.Fatalf("replayed invitation restored access: %+v %v", g, err)
 	}
 	g, err = s.Allow(key, "invite-2", false)
+	if err != nil || g.Active {
+		t.Fatalf("ordinary reply-all restored access: %+v %v", g, err)
+	}
+	g, err = s.Allow(key, "invite-2", true)
 	if err != nil || !g.Active || g.Generation != 2 {
 		t.Fatalf("fresh invite = %+v %v", g, err)
 	}

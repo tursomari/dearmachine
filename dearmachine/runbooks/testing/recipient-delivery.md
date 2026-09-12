@@ -12,7 +12,8 @@ Adapters preserve `To`, `CC`, and `BCC` separately. They attach the exact
 provider inbox used for retrieval, the provider inbox address when available,
 the delivery role, and an explicit read state. The shared polling seam performs
 final unread selection and message-ID deduplication. The inbox router authorizes
-paired delivery by the trusted provider inbox identity. Guest delivery additionally
+paired delivery using authenticated sender/headers and trusted provider inbox
+identity. Guest delivery additionally
 requires an active exact grant and visible Reply All recipients. To/CC visibility
 is distinct from provider inbox attribution; BCC never qualifies as an invitation.
 
@@ -41,8 +42,8 @@ closed, and a duplicate candidate is emitted once.
 
 1. Record the candidate revision and its immediate pre-participant predecessor.
    Build separate OCI images from both exact source snapshots.
-2. Provision a disposable AgentMail receiver and two disposable OpenMail
-   senders. Register the first sender as the controller. Add only exact,
+2. Provision a disposable AgentMail receiver and two disposable authenticated
+   senders whose signatures meet the candidate header-coverage policy. Register the first sender as the controller. Add only exact,
    inbox-scoped provider policy rules required by this run.
 3. Start the predecessor image through the isolated production Compose path.
    Send one ordinary controller message and wait for one reply, thereby
@@ -51,7 +52,7 @@ closed, and a duplicate candidate is emitted once.
    disposable provider inbox and persistent test state. Record the new image
    revision and container ID.
 5. From the controller, continue the established thread with the receiver in
-   `To` and the second OpenMail address in `CC`. Verify directly through
+   `To` and the guest address in `CC`. Verify directly through
    AgentMail that the message is present, received, and unread. Record whether
    `labels=unread` omits it; omission is expected evidence, not a reason to
    alter provider state.
@@ -60,21 +61,20 @@ closed, and a duplicate candidate is emitted once.
    there is no duplicate claim, turn, or reply.
 7. Repeat with the controller in `To` and the receiver in `CC`. If the sending
    provider supports BCC without exposing the recipient header, repeat with the
-   receiver in `BCC`. Routing must still use the recorded provider inbox.
-8. Inspect automatic grant capability. Current adapters lack exact mailbox-owner
-   attribution, so record automatic granting as blocked. Exercise explicit allow
-   using the controller invitation from step 5; verify the local grant and the
-   service-created receive entry without manually pre-allowing the guest.
-   Have the second OpenMail address reply-all in the established thread. The
-   participant admission request must go only to the controller, with empty
-   CC/BCC and no quoted participant content. Complete admission and instruction
-   approval independently and require exactly one lower-authority agent turn.
+   receiver in `BCC`. Authentication requires visible Dear Machine recipients,
+   so this candidate must reject that BCC-only inbound work.
+8. Verify the automatic grant from step 5 and service-created receive/reply/send
+   entries without explicit guest allow or manual guest rules. Have the guest
+   Reply All. Require one private approval prompt To owner with empty CC/BCC and
+   a quoted guest preview. One exact Yes must release exactly that instruction
+   for lower-authority execution and an answer To owner, CC guest. There is no
+   separate admission prompt.
 
 ## Persistent guest lifecycle extension
 
 Run the exact source candidate through the production OCI/Compose path. Record
 provider receipt separately from local acceptance. An automatic-grant success
-requires a supported sender-attribution contract; never treat explicit allow as
+requires the documented sender-authentication contract; never treat explicit allow as
 passing that row. Do not alter any existing production inbox or normal service.
 
 1. While guest receive permission is open, send a new guest thread and a guest
@@ -92,25 +92,15 @@ passing that row. Do not alter any existing production inbox or normal service.
 6. Verify permanent-pair and pre-existing-entry protection in disposable state.
    Separate injected provider failures/recovery from actual provider observations.
 
-Repeat the core grant/reply/revoke flow with an OpenMail receiver. Attempt the
-Sendmux row with scoped credentials and classify it pass, fail or blocked with
-the concrete preflight reason; an HTTP 401 is not a pass. Preserve applicable
-backend requirements from `participant-approval.md`; report exact-model behavior
-probes separately from deterministic authorization results.
-
 ## Adapter matrix
 
-Repeat the To/CC cases with an OpenMail receiver and, when scoped credentials
-are available, a Sendmux receiver. Provider-specific list operations remain
-fetch optimizations; assertions use the same normalized delivery contract:
-
-- exact provider inbox identity and address;
-- distinct To, CC, and BCC values;
-- correct delivery role when observable;
-- explicit unread state before processing and read/seen state afterward;
-- one durable claim and reply after filtered and recovery views are unioned;
-- no duplicate after a clean restart; and
-- failure before pair delivery when the adapter reports a different inbox ID.
+AgentMail is the current supported inbound authentication path. OpenMail and
+Sendmux receivers must report unsupported evidence and reject inbound work.
+Their normalization, scoped permission changes and outbound envelope encoding
+remain covered by adapter tests. Record any direct provider diagnostic separately;
+it cannot pass an authenticated application workflow row. Never weaken sender
+checks to make a transport row pass. Preserve backend requirements from
+`participant-approval.md` and report model behavior probes separately.
 
 ## Teardown
 
@@ -121,11 +111,11 @@ confirm the normal service, protected inbox, registry, and databases are
 unchanged.
 
 
-## Answer recipients after an explicit guest grant
+## Answer recipients after an authenticated automatic grant
 
-For each supported receiver, explicitly grant a visible invitation and exercise:
+For each supported receiver, automatically grant a signed visible invitation and exercise:
 
-1. Guest Reply All, private admission and instruction approval, then an answer
+1. Guest Reply All, one private instruction approval, then an answer
    with the owner in To and the guest in CC.
 2. Owner request with an active guest in To or CC, then an answer to both.
 3. Owner continuation omitting the guest, then an owner-only answer. Verify the

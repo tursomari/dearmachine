@@ -50,7 +50,10 @@ func TestParticipantInstructionRequiresPrivateCorrelatedApproval(t *testing.T) {
 			t.Errorf("approval omitted %q: %q", choice, approval.Text)
 		}
 	}
-	for _, forbidden := range []string{"Cancel", secret} {
+	if !strings.Contains(approval.Text, "> "+secret) {
+		t.Fatal("private approval omitted the guest instruction preview")
+	}
+	for _, forbidden := range []string{"Cancel"} {
 		if strings.Contains(approval.Text, forbidden) {
 			t.Errorf("approval exposed forbidden content %q: %q", forbidden, approval.Text)
 		}
@@ -289,8 +292,8 @@ func TestParticipantDecisionRequiresReplyCorrelationEvenWithSingleActiveRequest(
 		t.Fatalf("uncorrelated Yes did not remain an ordinary controller instruction:\n%s", prompt)
 	}
 	request, found, err := rig.store.ParticipantRequestByMessage(participant.MessageID)
-	if err != nil || !found || request.State != participantInvalidated {
-		t.Fatalf("uncorrelated Yes did not invalidate guest request = %+v, found=%v, err=%v", request, found, err)
+	if err != nil || !found || request.State != participantAwaitingDecision {
+		t.Fatalf("ordinary owner instruction changed guest approval = %+v, found=%v, err=%v", request, found, err)
 	}
 }
 
@@ -761,7 +764,7 @@ func TestParticipantReplacementRecoverySanitizesProviderRefetch(t *testing.T) {
 	}
 }
 
-func TestOrdinaryControllerInstructionInvalidatesOlderParticipantRequest(t *testing.T) {
+func TestOrdinaryControllerInstructionPreservesIndependentGuestDecision(t *testing.T) {
 	rig, raw, router, pair, inbox := newParticipantTestRig(t)
 	establishParticipantThread(t, rig, raw, router, pair, inbox, "thread-precedence")
 	seedAdmittedParticipants(t, rig.store, "guest@example.test")
@@ -792,8 +795,8 @@ func TestOrdinaryControllerInstructionInvalidatesOlderParticipantRequest(t *test
 	raw.setPoll([]Message{lateYes})
 	router.lastPoll = time.Time{}
 	mustProcess(t, rig)
-	if got := rig.capture("count"); got != "2" {
-		t.Fatalf("late Yes released invalidated body: run count=%q", got)
+	if got := rig.capture("count"); got != "3" {
+		t.Fatalf("explicit approval did not release the retained request: run count=%q", got)
 	}
 }
 
@@ -801,6 +804,7 @@ func newParticipantTestRig(t *testing.T) (*testRig, *fakeTransport, *InboxRouter
 	t.Helper()
 	raw := newFakeTransport()
 	inbox := Inbox{ID: testInboxUUID, Transport: "test", ProviderID: "provider", Address: "machine@example.test"}
+	raw.senderAddress = inbox.Address
 	pair := Pair{ID: testPairAUUID, UserEmail: "controller@example.test", InboxID: inbox.ID}
 	router, err := NewInboxRouter(raw, inbox, []Pair{pair}, time.Nanosecond)
 	if err != nil {

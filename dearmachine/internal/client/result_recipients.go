@@ -8,6 +8,36 @@ import (
 	"sort"
 )
 
+// Freeze eligible generations at authenticated instruction acceptance, before
+// execution or attachment preparation. A later reinvitation must not subscribe
+// that new grant to an older instruction's answer.
+func (r *InboxRouter) snapshotGuestRecipients(pairID string, message Message) error {
+	if r.guests == nil {
+		return nil
+	}
+	if !message.authenticated {
+		return ErrMessageUnauthenticated
+	}
+	grants, err := r.guests.List(pairID)
+	if err != nil {
+		return err
+	}
+	generations := map[string]int64{}
+	sender, _ := canonicalMessageAddress(message.From)
+	for _, g := range grants {
+		if g.Active && g.InboxID == guestInboxKey(r.inbox) && g.ThreadID == message.ThreadID &&
+			g.Address != r.inbox.Address && !r.controllers[g.Address] && (g.Address == sender || visibleRecipient(message, g.Address)) {
+			generations[g.Address] = g.Generation
+		}
+	}
+	encoded, err := json.Marshal(generations)
+	if err != nil {
+		return err
+	}
+	_, err = r.guests.db.Exec(`INSERT OR IGNORE INTO guest_recipient_grants VALUES(?,?,?,?)`, pairID, guestInboxKey(r.inbox), message.MessageID, string(encoded))
+	return err
+}
+
 // Result recipients come from the instruction being answered, never from its
 // private approval message or the accumulated membership of a conversation.
 func (e *pairEndpoint) resultRecipients(message Message) (ReplyPayload, error) {
@@ -23,10 +53,23 @@ func (e *pairEndpoint) resultRecipients(message Message) (ReplyPayload, error) {
 	if err != nil {
 		return payload, err
 	}
+	var encoded string
+	err = r.guests.db.QueryRow(`SELECT generations FROM guest_recipient_grants WHERE pair_id=? AND inbox_id=? AND message_id=?`, e.pairID, guestInboxKey(r.inbox), message.MessageID).Scan(&encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return payload, nil // Pre-upgrade work has no safe recipient snapshot.
+	}
+	if err != nil {
+		return payload, err
+	}
+	var generations map[string]int64
+	if err := json.Unmarshal([]byte(encoded), &generations); err != nil {
+		return payload, err
+	}
 	sender, _ := canonicalMessageAddress(message.From)
 	for _, g := range grants {
-		if g.Active && g.InboxID == guestInboxKey(r.inbox) && g.ThreadID == message.ThreadID &&
-			g.Address != r.inbox.Address && !r.controllers[g.Address] && (g.Address == sender || visibleRecipient(message, g.Address)) {
+		if guestRecipientEligible(g.Active, g.InboxID == guestInboxKey(r.inbox) && g.ThreadID == message.ThreadID,
+			g.Address == sender || visibleRecipient(message, g.Address), generations[g.Address] == g.Generation) &&
+			g.Address != r.inbox.Address && !r.controllers[g.Address] {
 			payload.CC = append(payload.CC, g.Address)
 		}
 	}
@@ -82,6 +125,16 @@ func (a *App) resultReplyPayload(message Message, payload ReplyPayload) (ReplyPa
 	payload.To = envelope.To
 	payload.CC = envelope.CC
 	payload.BCC = nil
+	if e, ok := a.transport.(*pairEndpoint); ok && len(payload.CC) == 0 {
+		footer, err := e.guestRemovalFooter(message.ThreadID, "")
+		if err != nil {
+			return payload, err
+		}
+		payload.Text += footer
+		if payload.HTML != "" {
+			payload.HTML = replyHTML(payload.Text)
+		}
+	}
 	return payload, nil
 }
 
@@ -102,7 +155,8 @@ func (a *App) resultReplyReceipt(ctx context.Context, message Message) (string, 
 				continue
 			}
 			repliesToOriginal := candidate.InReplyTo == message.MessageID || (candidate.InReplyTo == "" && seen)
-			if repliesToOriginal && candidate.ThreadID == message.ThreadID && containsFold(candidate.Labels, "sent") && sameRecipientSet(candidate.To, envelope.To) && sameRecipientSet(candidate.CC, envelope.CC) && len(candidate.BCC) == 0 {
+			sender, senderErr := canonicalMessageAddress(candidate.From)
+			if senderErr == nil && sender == e.router.inbox.Address && repliesToOriginal && candidate.ThreadID == message.ThreadID && containsFold(candidate.Labels, "sent") && sameRecipientSet(candidate.To, envelope.To) && sameRecipientSet(candidate.CC, envelope.CC) && len(candidate.BCC) == 0 {
 				return candidate.MessageID, true, nil
 			}
 		}

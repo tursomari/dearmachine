@@ -37,8 +37,11 @@ func TestOwnerAnswersCopyOnlyVisibleGrantedGuests(t *testing.T) {
 			replies := raw.sentReplies()
 			got := replies[len(replies)-1]
 			want := []string(nil)
-			if mode == "cc" || mode == "to" {
+			if mode == "cc" || mode == "to" || mode == "other-thread" {
 				want = []string{"guest@example.test"}
+			}
+			if mode == "unknown" {
+				want = []string{"stranger@example.test"}
 			}
 			if !equalFoldSlice(got.To, []string{pair.UserEmail}) || !equalFoldSlice(got.CC, want) || len(got.BCC) != 0 {
 				t.Fatalf("answer envelope: To=%v CC=%v BCC=%v", got.To, got.CC, got.BCC)
@@ -50,6 +53,7 @@ func TestResultEnvelopePersistsAcrossRestart(t *testing.T) {
 	rig, raw, router, pair, inbox := newParticipantTestRig(t)
 	establishParticipantThread(t, rig, raw, router, pair, inbox, "thread")
 	m := Message{MessageID: "stable", ThreadID: "thread", From: pair.UserEmail, To: []string{inbox.Address}, CC: []string{"guest@example.test"}}
+	snapshotReplyFixture(t, router, pair, m)
 	first, err := rig.app.resultReplyPayload(m, ReplyPayload{Text: "answer"})
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +76,7 @@ func TestResultReceiptRequiresTheSubmittedRecipientEnvelope(t *testing.T) {
 	rig, raw, router, pair, inbox := newParticipantTestRig(t)
 	establishParticipantThread(t, rig, raw, router, pair, inbox, "thread")
 	m := Message{MessageID: "approved-guest", ThreadID: "thread", From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}}
+	snapshotReplyFixture(t, router, pair, m)
 	if _, err := rig.app.resultReplyPayload(m, ReplyPayload{Text: "answer"}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,5 +98,41 @@ func TestResultReceiptRequiresTheSubmittedRecipientEnvelope(t *testing.T) {
 	rig.restartStore(t)
 	if id, found, err := rig.app.resultReplyReceipt(context.Background(), m); err != nil || !found || id != "answer" {
 		t.Fatalf("answer recovery: %s %v %v", id, found, err)
+	}
+}
+
+func snapshotReplyFixture(t *testing.T, router *InboxRouter, pair Pair, m Message) {
+	t.Helper()
+	m, err := router.authenticateMessage(context.Background(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := router.snapshotGuestRecipients(pair.ID, m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGuestReinvitationCannotSubscribeToAnOlderAnswer(t *testing.T) {
+	rig, raw, router, pair, inbox := newParticipantTestRig(t)
+	establishParticipantThread(t, rig, raw, router, pair, inbox, "thread")
+	m := Message{MessageID: "accepted", ThreadID: "thread", From: pair.UserEmail, To: []string{inbox.Address}, CC: []string{"guest@example.test"}}
+	snapshotReplyFixture(t, router, pair, m)
+	e := rig.app.transport.(*pairEndpoint)
+	before, err := e.resultRecipients(m)
+	if err != nil || len(before.CC) != 1 {
+		t.Fatalf("original grant not selected: %+v %v", before, err)
+	}
+	k := GuestKey{pair.ID, guestInboxKey(inbox), "guest@example.test", m.ThreadID}
+	if err := router.guests.Revoke(k, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := router.guests.Allow(k, "explicit-reinvitation", true); err != nil {
+		t.Fatal(err)
+	}
+	// Repeated acceptance cannot replace the stored generation snapshot.
+	snapshotReplyFixture(t, router, pair, m)
+	after, err := rig.app.resultReplyPayload(m, ReplyPayload{Text: "delayed answer"})
+	if err != nil || len(after.CC) != 0 || !equalFoldSlice(after.To, []string{pair.UserEmail}) {
+		t.Fatalf("new grant received an older answer: %+v %v", after, err)
 	}
 }

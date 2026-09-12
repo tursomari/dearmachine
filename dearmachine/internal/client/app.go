@@ -244,6 +244,9 @@ func (a *App) recoverParticipantPrompts(ctx context.Context) error {
 			parentMessageID = request.RequestMessageID
 		}
 		message, err := a.transport.Message(ctx, parentMessageID)
+		if errors.Is(err, ErrGuestUnauthorized) || errors.Is(err, ErrMessageUnauthenticated) {
+			continue // Unverifiable held work must not block unrelated owner work.
+		}
 		if err != nil {
 			return err
 		}
@@ -289,6 +292,12 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			continue
 		}
 		controller, controlling, participantBoundaryEnabled := participantBoundary(a.transport, original)
+		if handled, err := a.handleGuestRemoval(ctx, original); handled || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
 		if participantBoundaryEnabled {
 			request, expectedState, correlated, err := a.store.ParticipantRequestForControl(original)
 			if err != nil {
@@ -361,7 +370,7 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			}
 			continue
 		}
-		if participantBoundaryEnabled {
+		if participantBoundaryEnabled && !a.threadGuestFlow() {
 			if err := a.store.InvalidateParticipantRequests(message.ThreadID); err != nil {
 				return err
 			}
@@ -469,6 +478,12 @@ func (a *App) handleParticipantMessage(
 	if err != nil {
 		return err
 	}
+	if a.threadGuestFlow() {
+		// The router has already required an active, exact thread grant.
+		// Each message still needs its own decision, including formerly trusted
+		// guests. Historical address-wide admission/trust cannot bypass it.
+		admitted, trusted = true, false
+	}
 	if trusted {
 		prepared, reference := prepareInboundMessage(message)
 		pending, existed, err := a.store.BeginMessageWithReference(
@@ -537,6 +552,10 @@ func (a *App) ensureParticipantAdmissionPrompt(ctx context.Context, message Mess
 }
 
 func (a *App) ensureParticipantApprovalPrompt(ctx context.Context, message Message, request ParticipantRequest) error {
+	text, err := a.guestApprovalText(message, request)
+	if err != nil {
+		return err
+	}
 	outbound, found, err := a.transport.ReplyReceipt(ctx, message, request.ControllingParticipant)
 	if err != nil {
 		return err
@@ -545,7 +564,7 @@ func (a *App) ensureParticipantApprovalPrompt(ctx context.Context, message Messa
 		outbound, err = a.transport.Reply(
 			ctx,
 			message.MessageID,
-			participantPrivatePayload(participantApprovalPrompt(request), request.ControllingParticipant),
+			participantPrivatePayload(text, request.ControllingParticipant),
 			controlIdempotencyKey("participant-approval", message.MessageID),
 		)
 		if err != nil {
@@ -576,7 +595,7 @@ func (a *App) handleParticipantTrustControl(
 	kind := "participant-trust-unauthorized"
 	if controlling {
 		admitted := false
-		if control.Address != "" {
+		if control.Address != "" && !a.threadGuestFlow() {
 			admitted, err = a.store.SetParticipantTrust(
 				control.Address,
 				control.Kind == participantTrustControlGrant,
@@ -586,6 +605,9 @@ func (a *App) handleParticipantTrustControl(
 			}
 		}
 		text = trustControlResultPrompt(control, admitted)
+		if a.threadGuestFlow() {
+			text = "Every guest message requires your approval. Guest trust cannot disable this requirement. To remove a guest from this thread, use the REMOVE GUEST command in your private approval email."
+		}
 		if control.Kind == participantTrustControlGrant {
 			kind = "participant-trust-grant"
 		} else {
@@ -1036,7 +1058,7 @@ func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {
 		pending := grouped[slot.ThreadID][index]
 		groupIndexes[slot.ThreadID] = index + 1
 		message, err := a.transport.Message(ctx, pending.MessageID)
-		if errors.Is(err, ErrGuestUnauthorized) {
+		if errors.Is(err, ErrGuestUnauthorized) || errors.Is(err, ErrMessageUnauthenticated) {
 			continue
 		}
 		if err != nil {

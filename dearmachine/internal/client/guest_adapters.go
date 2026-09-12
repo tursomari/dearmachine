@@ -295,11 +295,11 @@ func (m *SendmuxTransport) RemoveReceive(ctx context.Context, address, token str
 	return p.RemoveReceive(ctx, address, token)
 }
 
-func (t *retryTransport) AuthenticatedSender(ctx context.Context, id string) (string, error) {
-	if p, ok := t.Transport.(ControllerAttributor); ok {
-		return p.AuthenticatedSender(ctx, id)
+func (t *retryTransport) AuthenticateMessage(ctx context.Context, message Message) error {
+	if p, ok := t.Transport.(MessageAuthenticator); ok {
+		return t.retry(ctx, "authenticate message", func() error { return p.AuthenticateMessage(ctx, message) })
 	}
-	return "", ErrSenderAttributionUnsupported
+	return ErrSenderAttributionUnsupported
 }
 func (t *retryTransport) InspectReceive(ctx context.Context, address string) (ReceivePermission, error) {
 	if p, ok := t.Transport.(ReceiveAuthorizer); ok {

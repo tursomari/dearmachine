@@ -12,17 +12,21 @@ var ErrAttachmentTooLarge = errors.New("attachment too large")
 
 // Message is the transport-neutral representation of an email message.
 type Message struct {
-	MessageID string
-	ThreadID  string
-	From      string
-	To        []string
-	CC        []string
-	BCC       []string
-	Delivery  MessageDelivery
-	Timestamp time.Time
-	CreatedAt time.Time
-	Subject   string
-	Body      string
+	// Set only by the inbox router after adapter authentication. Provider JSON
+	// and email headers cannot supply this authorization fact.
+	authenticated bool
+	fingerprint   string
+	MessageID     string
+	ThreadID      string
+	From          string
+	To            []string
+	CC            []string
+	BCC           []string
+	Delivery      MessageDelivery
+	Timestamp     time.Time
+	CreatedAt     time.Time
+	Subject       string
+	Body          string
 	// RawBody preserves the transport-normalized message before DearMachine
 	// removes reply history and its own footer metadata. It is used when a
 	// forwarded message must be delivered to the agent as ordinary content.
@@ -36,6 +40,13 @@ type Message struct {
 	// from provider-controlled message fields.
 	Authority              string
 	ControllingParticipant string
+}
+
+// MessageAuthenticator verifies the message, its author and authorization-
+// relevant outer headers, bound to the adapter's configured provider inbox.
+// A missing capability or missing evidence never falls back to From matching.
+type MessageAuthenticator interface {
+	AuthenticateMessage(context.Context, Message) error
 }
 
 // DeliveryRole records which RFC recipient field contained the provider inbox.

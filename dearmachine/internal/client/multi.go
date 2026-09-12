@@ -110,6 +110,12 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 				}
 				continue
 			}
+			message, err = router.authenticateMessage(ctx, message)
+			if errors.Is(err, ErrMessageUnauthenticated) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
 			routed, err := router.routeInbound(message)
 			if errors.Is(err, errNoPairRoute) {
 				continue
@@ -123,11 +129,14 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 			from, _ := canonicalMessageAddress(message.From)
 			if from != routed.UserEmail {
 				key, _ := guestKey(routed, router.inbox, message)
-				if err := router.guests.BindWork(key, message.MessageID); errors.Is(err, ErrGuestUnauthorized) {
+				if err := router.guests.bindWork(key, message.MessageID, message.fingerprint); errors.Is(err, ErrGuestUnauthorized) {
 					continue
 				} else if err != nil {
 					return nil, err
 				}
+			}
+			if err := router.snapshotGuestRecipients(routed.ID, message); err != nil {
+				return nil, err
 			}
 			distributed[routed.ID] = append(distributed[routed.ID], message)
 		}
@@ -154,6 +163,9 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 }
 
 func (router *InboxRouter) routeInbound(message Message) (Pair, error) {
+	if !message.authenticated {
+		return Pair{}, errNoPairRoute
+	}
 	from, err := canonicalMessageAddress(message.From)
 	if err != nil {
 		return Pair{}, fmt.Errorf("%w: message %s has invalid sender", errNoPairRoute, message.MessageID)
@@ -192,7 +204,7 @@ func (router *InboxRouter) authorize(pairID string, message Message) error {
 		return err
 	}
 	inboundRecipient := router.deliveredToInbox(message)
-	inbound := from == pair.UserEmail && inboundRecipient
+	inbound := message.authenticated && from == pair.UserEmail && inboundRecipient
 	if !inbound && inboundRecipient {
 		routed, routeErr := router.routeInbound(message)
 		inbound = routeErr == nil && routed.ID == pairID
@@ -200,7 +212,7 @@ func (router *InboxRouter) authorize(pairID string, message Message) error {
 			return routeErr
 		}
 	}
-	outbound := from == router.inbox.Address && containsCanonicalAddress(message.To, pair.UserEmail)
+	outbound := containsFold(message.Labels, "sent") && from == router.inbox.Address && containsCanonicalAddress(message.To, pair.UserEmail)
 	if !inbound && !outbound {
 		return fmt.Errorf("%w: message %s is not routed to pair %s", ErrGuestUnauthorized, message.MessageID, pairID)
 	}
@@ -286,6 +298,9 @@ func (endpoint *pairEndpoint) controllingParticipant() string {
 }
 
 func (endpoint *pairEndpoint) isControllingParticipant(message Message) bool {
+	if !message.authenticated {
+		return false
+	}
 	from, err := canonicalMessageAddress(message.From)
 	return err == nil && from == endpoint.controllingParticipant()
 }
@@ -306,18 +321,27 @@ func (endpoint *pairEndpoint) Thread(ctx context.Context, threadID string) ([]Me
 	}
 	endpoint.router.mu.Lock()
 	defer endpoint.router.mu.Unlock()
-	for index, message := range messages {
+	allowed := make([]Message, 0, len(messages))
+	for _, message := range messages {
 		message, err = endpoint.router.normalizeDelivery(message)
 		if err != nil {
 			return nil, err
+		}
+		if !containsFold(message.Labels, "sent") {
+			message, err = endpoint.router.authenticateMessage(ctx, message)
+			if errors.Is(err, ErrMessageUnauthenticated) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
 		}
 		if err := endpoint.router.authorize(endpoint.pairID, message); err != nil {
 			return nil, err
 		}
 		endpoint.router.remember(endpoint.pairID, message)
-		messages[index] = message
+		allowed = append(allowed, message)
 	}
-	return messages, nil
+	return allowed, nil
 }
 
 func (endpoint *pairEndpoint) Message(ctx context.Context, messageID string) (Message, error) {
@@ -330,6 +354,12 @@ func (endpoint *pairEndpoint) Message(ctx context.Context, messageID string) (Me
 	message, err = endpoint.router.normalizeDelivery(message)
 	if err != nil {
 		return Message{}, err
+	}
+	if !containsFold(message.Labels, "sent") {
+		message, err = endpoint.router.authenticateMessage(ctx, message)
+		if err != nil {
+			return Message{}, err
+		}
 	}
 	if err := endpoint.router.authorize(endpoint.pairID, message); err != nil {
 		return Message{}, err
@@ -346,6 +376,13 @@ func (endpoint *pairEndpoint) Reply(ctx context.Context, messageID string, paylo
 }
 
 func (endpoint *pairEndpoint) ReplyReceipt(ctx context.Context, message Message, recipient string) (string, bool, error) {
+	if !message.authenticated && !containsFold(message.Labels, "sent") {
+		var err error
+		message, err = endpoint.Message(ctx, message.MessageID)
+		if err != nil {
+			return "", false, err
+		}
+	}
 	endpoint.router.mu.Lock()
 	err := endpoint.router.authorize(endpoint.pairID, message)
 	if err == nil {

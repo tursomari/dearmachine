@@ -94,7 +94,7 @@ func runPairStates(cfg config, getenv func(string) string, deps dependencies, st
 		if err := router.ConfigureGuests(guests, registry.Pairs); err != nil {
 			return err
 		}
-		logger.Printf("inbox %s: automatic guest invitations disabled; exact mailbox-owner attribution is unavailable", inbox.ID)
+		logger.Printf("inbox %s: sender authentication %s", inbox.ID, client.SenderAuthenticationStatus(inbox.Transport))
 		for _, state := range group {
 			endpoint, err := router.Endpoint(state.Pair.ID)
 			if err != nil {

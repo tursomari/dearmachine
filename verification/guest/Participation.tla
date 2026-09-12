@@ -27,17 +27,17 @@ Init == /\ grant = [k \in Scopes |-> EmptyGrant]
 Invite(k, evidence, authenticatedOwner, outerVisible, reinvite) ==
   /\ authenticatedOwner \/ Bug("ForgedInvitation")
   /\ outerVisible
-  /\ evidence \notin seen[k] \/ Bug("ReplayInvitation")
+  /\ reinvite \/ evidence \notin seen[k] \/ Bug("ReplayInvitation")
   \* Revocation leaves a tombstone. A fresh ordinary reply-all is insufficient;
   \* an explicit, fresh owner reinvitation is required after revocation.
   /\ grant[k].generation = 0 \/ grant[k].active \/ reinvite
-       \/ Bug("ImplicitReinvite")
+       \/ Bug("ImplicitReinvite") \/ Bug("ReplayInvitation")
   /\ grant[k].active \/ grant[k].generation < MaxGeneration
   /\ grant' = [grant EXCEPT ![k] = [active |-> TRUE,
        generation |-> IF @.active THEN @.generation ELSE @.generation + 1]]
   /\ seen' = [seen EXCEPT ![k] = @ \cup {evidence}]
   /\ violation' = (violation \/ ~authenticatedOwner
-       \/ (evidence \in seen[k] /\ ~grant[k].active)
+       \/ (evidence \in seen[k] /\ ~grant[k].active /\ ~reinvite)
        \/ (~grant[k].active /\ grant[k].generation > 0 /\ ~reinvite))
   /\ UNCHANGED work
 

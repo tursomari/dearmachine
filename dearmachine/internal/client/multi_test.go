@@ -182,6 +182,10 @@ type routerTestTransport struct {
 	polls    int
 }
 
+func (transport *routerTestTransport) AuthenticateMessage(context.Context, Message) error {
+	return nil // Trusted fixture assertion; production adapters must prove it.
+}
+
 func (transport *routerTestTransport) Poll(context.Context) ([]Message, error) {
 	transport.polls++
 	return append([]Message(nil), transport.messages...), nil

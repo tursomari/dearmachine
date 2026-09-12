@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -44,8 +43,11 @@ type guestAuthenticatedTransport struct {
 	sender string
 }
 
-func (t *guestAuthenticatedTransport) AuthenticatedSender(context.Context, string) (string, error) {
-	return t.sender, nil
+func (t *guestAuthenticatedTransport) AuthenticateMessage(_ context.Context, m Message) error {
+	if t.sender != m.From {
+		return ErrMessageUnauthenticated
+	}
+	return nil
 }
 
 func TestGuestInvitationOuterVisibilityAndControllerAttribution(t *testing.T) {
@@ -92,7 +94,10 @@ func TestGuestInvitationOuterVisibilityAndControllerAttribution(t *testing.T) {
 			case "wrong-inbox":
 				m.Delivery.InboxID = "unrelated-provider"
 			}
-			_, err = r.allowInvitation(context.Background(), pair.ID, m, address, false)
+			m, err = r.authenticateMessage(context.Background(), m)
+			if err == nil {
+				_, err = r.allowInvitation(context.Background(), pair.ID, m, address, false)
+			}
 			want := mode == "to" || mode == "cc"
 			if (err == nil) != want {
 				t.Fatalf("invitation %s err=%v", mode, err)
@@ -199,7 +204,7 @@ func TestGuestExplicitInvitationValidatesProviderMessageWithoutBackfill(t *testi
 		t.Fatal("CLI accepted arbitrary address")
 	}
 	normalized, _ := r.normalizeDelivery(m)
-	if _, err := r.allowInvitation(context.Background(), pair.ID, normalized, "guest@example.test", false); !errors.Is(err, ErrSenderAttributionUnsupported) {
+	if _, err := r.allowInvitation(context.Background(), pair.ID, normalized, "guest@example.test", false); err == nil {
 		t.Fatalf("raw From treated as authentication: %v", err)
 	}
 }

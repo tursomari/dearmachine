@@ -30,6 +30,10 @@ type Mailbox struct {
 	recoveryAfter      time.Time
 	attachmentMu       sync.RWMutex
 	attachmentMessages map[string]string
+	authMu             sync.Mutex
+	authenticated      map[string]string
+	authHTTPClient     *http.Client
+	authLookupTXT      func(context.Context, string) ([]string, error)
 }
 
 func NewMailbox(client agentmail.Client, inboxID string) (*Mailbox, error) {
