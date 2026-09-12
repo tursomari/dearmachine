@@ -1,5 +1,8 @@
 # Guest authorization verification
 
+See the [validation record](VALIDATION.md) for finite-state results, live
+provider diagnostics and the remaining participant evaluation gaps.
+
 Run from the repository root after pulling the digest-pinned Gobra image:
 
 ```console
