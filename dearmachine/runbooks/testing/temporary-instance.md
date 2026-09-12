@@ -15,6 +15,8 @@ Current protocols include:
   concurrent processing of simultaneous email threads;
 - [`multi-pair.md`](./multi-pair.md) for pair-lane isolation, footer safety,
   provider-ID overlap, and per-pair allow-set experiments;
+- [`participant-approval.md`](./participant-approval.md) for non-paired
+  participant quarantine, private decisions, authority, and recovery;
 - [`queued-grace-preemption.md`](./queued-grace-preemption.md) for same-poll
   queue-aware preemption after one poll interval;
 - [`live-backends.md`](./live-backends.md) for Forge, Codex, and

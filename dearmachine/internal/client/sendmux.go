@@ -322,6 +322,9 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 	if len(recipients) == 0 {
 		recipients = []string{inbound.From}
 	}
+	if len(payload.To) > 0 {
+		recipients = append([]string(nil), payload.To...)
+	}
 	request := sendmuxSendRequest{
 		ReplyToMessageID: messageID,
 		To:               append([]string(nil), recipients...),
@@ -362,7 +365,7 @@ func sendmuxReplyHTML(text, html string) string {
 	return "<pre>" + stdhtml.EscapeString(text) + "</pre>"
 }
 
-func (transport *SendmuxTransport) ReplyReceipt(ctx context.Context, message Message) (string, bool, error) {
+func (transport *SendmuxTransport) ReplyReceipt(ctx context.Context, message Message, recipient string) (string, bool, error) {
 	messages, err := transport.Thread(ctx, message.ThreadID)
 	if err != nil {
 		return "", false, err
@@ -373,7 +376,8 @@ func (transport *SendmuxTransport) ReplyReceipt(ctx context.Context, message Mes
 			foundInbound = true
 			continue
 		}
-		if foundInbound && containsFold(candidate.Labels, "sent") && containsFold(candidate.To, message.From) {
+		if foundInbound && containsFold(candidate.Labels, "sent") &&
+			containsMessageAddress(candidate.To, replyReceiptRecipient(message, recipient)) {
 			return candidate.MessageID, true, nil
 		}
 	}

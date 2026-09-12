@@ -20,12 +20,16 @@ type fakeTransportErrors struct {
 }
 
 type fakeTransportReply struct {
-	MessageID      string
-	Text           string
-	HTML           string
-	Files          []OutboundFile
-	IdempotencyKey string
-	ReceiptID      string
+	MessageID            string
+	Text                 string
+	HTML                 string
+	Files                []OutboundFile
+	IdempotencyKey       string
+	ReceiptID            string
+	To                   []string
+	CC                   []string
+	BCC                  []string
+	IncludeQuotedContent bool
 }
 
 type fakeTransport struct {
@@ -140,18 +144,26 @@ func (f *fakeTransport) Reply(
 	}
 	receiptID := fmt.Sprintf("outbound-%d", len(f.replies)+1)
 	f.replies = append(f.replies, fakeTransportReply{
-		MessageID:      messageID,
-		Text:           payload.Text,
-		HTML:           payload.HTML,
-		Files:          cloneOutboundFiles(payload.Files),
-		IdempotencyKey: idempotencyKey,
-		ReceiptID:      receiptID,
+		MessageID:            messageID,
+		Text:                 payload.Text,
+		HTML:                 payload.HTML,
+		Files:                cloneOutboundFiles(payload.Files),
+		IdempotencyKey:       idempotencyKey,
+		ReceiptID:            receiptID,
+		To:                   append([]string(nil), payload.To...),
+		CC:                   append([]string(nil), payload.CC...),
+		BCC:                  append([]string(nil), payload.BCC...),
+		IncludeQuotedContent: payload.IncludeQuotedContent,
 	})
+	recipients := append([]string(nil), payload.To...)
+	if len(recipients) == 0 {
+		recipients = []string{inbound.From}
+	}
 	outbound := Message{
 		MessageID: receiptID,
 		ThreadID:  inbound.ThreadID,
 		From:      "device@example.com",
-		To:        []string{inbound.From},
+		To:        recipients,
 		Timestamp: time.Now(),
 		Body:      payload.Text,
 		InReplyTo: messageID,
@@ -177,6 +189,7 @@ func cloneOutboundFiles(files []OutboundFile) []OutboundFile {
 func (f *fakeTransport) ReplyReceipt(
 	_ context.Context,
 	message Message,
+	recipient string,
 ) (string, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -187,9 +200,9 @@ func (f *fakeTransport) ReplyReceipt(
 		if candidate.MessageID == message.MessageID {
 			continue
 		}
-		isOutbound := containsFold(candidate.Labels, "sent") ||
-			containsFold(candidate.To, message.From)
-		if candidate.InReplyTo == message.MessageID && isOutbound {
+		if candidate.InReplyTo == message.MessageID &&
+			containsFold(candidate.Labels, "sent") &&
+			containsMessageAddress(candidate.To, replyReceiptRecipient(message, recipient)) {
 			return candidate.MessageID, true, nil
 		}
 	}

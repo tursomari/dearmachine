@@ -322,9 +322,37 @@ func TestOpenMailTransportContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Message: %v", err)
 	}
-	gotReceipt, found, err := transport.ReplyReceipt(ctx, inbound)
+	gotReceipt, found, err := transport.ReplyReceipt(ctx, inbound, "")
 	if err != nil || !found || gotReceipt != receipt {
 		t.Fatalf("ReplyReceipt = %q, %v, %v", gotReceipt, found, err)
+	}
+}
+
+func TestOpenMailReplyPreservesThreadWithPrivateRecipient(t *testing.T) {
+	fake := newFakeOpenMailAPI(t)
+	transport := fake.transport(t, "inb-test", true)
+	receipt, err := transport.Reply(context.Background(), "message-new", ReplyPayload{
+		Text: "private control", To: []string{"controller@example.test"},
+	}, "private-key")
+	if err != nil || receipt != "outbound-1" {
+		t.Fatalf("Reply = %q, %v", receipt, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	want := openMailReplyRecord{
+		To: "controller@example.test", Body: "private control",
+		ThreadID: "thread-new", IncludeQuote: "false", IdempotencyKey: "private-key",
+	}
+	if len(fake.replies) != 1 || fake.replies[0] != want {
+		t.Fatalf("private reply = %+v, want %+v", fake.replies, want)
+	}
+	fake.mu.Unlock()
+	recovered, found, err := transport.ReplyReceipt(context.Background(), Message{
+		MessageID: "message-new", ThreadID: "thread-new", From: "sender@example.com",
+	}, "controller@example.test")
+	fake.mu.Lock()
+	if err != nil || !found || recovered != receipt {
+		t.Fatalf("private ReplyReceipt = %q, %v, %v; want %q, true, nil", recovered, found, err, receipt)
 	}
 }
 

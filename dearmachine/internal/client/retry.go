@@ -108,8 +108,8 @@ func (transport *retryTransport) Message(ctx context.Context, id string) (messag
 	err = transport.retry(ctx, "message", func() error { message, err = transport.Transport.Message(ctx, id); return err })
 	return
 }
-func (transport *retryTransport) ReplyReceipt(ctx context.Context, message Message) (id string, found bool, err error) {
-	err = transport.retry(ctx, "receipt", func() error { id, found, err = transport.Transport.ReplyReceipt(ctx, message); return err })
+func (transport *retryTransport) ReplyReceipt(ctx context.Context, message Message, recipient string) (id string, found bool, err error) {
+	err = transport.retry(ctx, "receipt", func() error { id, found, err = transport.Transport.ReplyReceipt(ctx, message, recipient); return err })
 	return
 }
 func (transport *retryTransport) MarkProcessed(ctx context.Context, id string) error {

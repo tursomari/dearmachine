@@ -316,7 +316,7 @@ func (*emptyTransport) Message(context.Context, string) (client.Message, error) 
 func (*emptyTransport) Reply(context.Context, string, client.ReplyPayload, string) (string, error) {
 	return "", nil
 }
-func (*emptyTransport) ReplyReceipt(context.Context, client.Message) (string, bool, error) {
+func (*emptyTransport) ReplyReceipt(context.Context, client.Message, string) (string, bool, error) {
 	return "", false, nil
 }
 func (*emptyTransport) MarkProcessed(context.Context, string) error { return nil }

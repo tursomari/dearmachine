@@ -85,6 +85,62 @@ func TestOpenStoreCreatesPrivateStateAndTightensExistingFile(t *testing.T) {
 	}
 }
 
+func TestStoreMigrationInvalidatesPreAdmissionInstructionApproval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-participant.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE participant_requests (
+			request_message_id TEXT PRIMARY KEY,
+			external_thread_id TEXT NOT NULL,
+			participant_address TEXT NOT NULL,
+			controlling_participant TEXT NOT NULL,
+			state TEXT NOT NULL,
+			prompt_message_id TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+		INSERT INTO participant_requests
+			(request_message_id, external_thread_id, participant_address,
+			 controlling_participant, state, prompt_message_id, created_at, updated_at)
+		VALUES
+			('legacy-guest', 'legacy-thread', 'guest@example.test',
+			 'controller@example.test', 'awaiting_decision', 'legacy-prompt',
+			 '2026-09-11T00:00:00Z', '2026-09-11T00:00:00Z');`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	request, found, err := store.ParticipantRequestByMessage("legacy-guest")
+	if err != nil || !found || request.State != participantInvalidated {
+		t.Fatalf("migrated request=%+v found=%v err=%v", request, found, err)
+	}
+	admitted, trusted, err := store.ParticipantStatus("guest@example.test")
+	if err != nil || admitted || trusted {
+		t.Fatalf("legacy approval inferred admission/trust admitted=%v trusted=%v err=%v", admitted, trusted, err)
+	}
+	control := Message{
+		MessageID: "late-legacy-yes", ThreadID: "legacy-thread",
+		From: "controller@example.test", Body: "Yes", InReplyTo: "legacy-prompt",
+	}
+	correlatedRequest, expectedState, correlated, err := store.ParticipantRequestForControl(control)
+	if err != nil || !correlated || correlatedRequest.RequestMessageID != request.RequestMessageID ||
+		expectedState != participantAwaitingDecision {
+		t.Fatalf("legacy stale correlation request=%+v expected=%q correlated=%v err=%v", correlatedRequest, expectedState, correlated, err)
+	}
+}
+
 func TestFreshStoreUsesCanonicalSessionIDSchema(t *testing.T) {
 	store := openTestStore(t)
 

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -406,6 +407,33 @@ func TestMailboxReplyMapsPayloadText(t *testing.T) {
 	replies := fake.sentReplies()
 	if len(replies) != 1 || replies[0].Text != "answer" {
 		t.Fatalf("replies = %+v", replies)
+	}
+}
+
+func TestMailboxReplyMapsPrivateRecipientWithoutReplyAll(t *testing.T) {
+	body := captureMailboxReplyBody(t, ReplyPayload{
+		Text: "private control",
+		To:   []string{"controller@example.test"},
+		CC:   []string{},
+		BCC:  []string{},
+	})
+
+	var to []string
+	if err := json.Unmarshal(body["to"], &to); err != nil {
+		t.Fatalf("decode private recipient: %v", err)
+	}
+	var replyAll bool
+	if err := json.Unmarshal(body["reply_all"], &replyAll); err != nil {
+		t.Fatalf("decode reply_all: %v", err)
+	}
+	if !slices.Equal(to, []string{"controller@example.test"}) || replyAll {
+		t.Fatalf("private reply fields = to %v, reply_all %v", to, replyAll)
+	}
+	if _, found := body["cc"]; found {
+		t.Fatalf("private reply unexpectedly inherited cc: %s", body["cc"])
+	}
+	if _, found := body["bcc"]; found {
+		t.Fatalf("private reply unexpectedly inherited bcc: %s", body["bcc"])
 	}
 }
 

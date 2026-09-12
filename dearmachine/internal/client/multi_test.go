@@ -147,7 +147,7 @@ func (transport *routerTestTransport) Message(_ context.Context, id string) (Mes
 func (transport *routerTestTransport) Reply(context.Context, string, ReplyPayload, string) (string, error) {
 	return "reply", nil
 }
-func (transport *routerTestTransport) ReplyReceipt(context.Context, Message) (string, bool, error) {
+func (transport *routerTestTransport) ReplyReceipt(context.Context, Message, string) (string, bool, error) {
 	return "", false, nil
 }
 func (transport *routerTestTransport) MarkProcessed(context.Context, string) error { return nil }

@@ -156,6 +156,27 @@ Follow-ups resume the mapped `machtiani` session with `--resume`; that persisted
 session owns prior conversation context, so DearMachine Client does not replay
 the email thread.
 
+Mail from a non-paired sender is eligible only inside an existing provider
+thread owned unambiguously by one pair. First contact is quarantined and sends
+a private admission prompt to that pair's controlling address. Exact `Yes`
+admits the participant but does not approve the held instruction; a separate
+private `Yes`/`No`/`Other` instruction prompt follows. `No` rejects the held
+message, and `Other` runs only the controller's newly authored replacement.
+The held body is not written to DearMachine state, session history, or agent
+prompts before instruction approval. All admission and instruction controls
+remain in the original provider thread but explicitly address only the
+controller, with empty CC/BCC and no quoted content.
+
+An admitted participant remains non-paired and lower authority. The controller
+may send exactly `Trust participant@example.com` to disable routine instruction
+confirmations, and `Revoke trust participant@example.com` to restore them.
+These controls cannot admit an address and are rejected when authored by anyone
+except the controller. Trust never changes pair routing, authority, delegation,
+or scheduling priority. Trusted instructions are still labeled lower authority,
+and explicit or implicit conflicts must resolve in favor of the controlling
+participant. Admission, approval, and trust controls are content-free local
+metadata and never become agent work or conversation history.
+
 Every outbound answer and AskUser response ends with a stable, opaque Dear
 Machine conversation reference. Pass `--minimal-footer` to suppress the rule,
 Dear Machine label, and optional Magnifica Humanitas quote while retaining the

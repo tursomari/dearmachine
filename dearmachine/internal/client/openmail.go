@@ -369,6 +369,16 @@ func (transport *OpenMailTransport) Reply(
 	if !ok {
 		return "", fmt.Errorf("OpenMail message %s has no reply recipient", messageID)
 	}
+	if len(payload.To) > 0 {
+		if len(payload.To) != 1 {
+			return "", fmt.Errorf("reply to OpenMail message %s: exactly one private recipient is required", messageID)
+		}
+		var valid bool
+		recipient, valid = canonicalOpenMailAddress(payload.To[0])
+		if !valid {
+			return "", fmt.Errorf("reply to OpenMail message %s: private recipient is invalid", messageID)
+		}
+	}
 	body := payload.Text
 	if body == "" {
 		body = payload.HTML
@@ -425,7 +435,7 @@ func (transport *OpenMailTransport) replyRequest(
 			Body:         body,
 			BodyHTML:     payload.HTML,
 			ThreadID:     threadID,
-			IncludeQuote: false,
+			IncludeQuote: payload.IncludeQuotedContent,
 		}
 		encoded, err := json.Marshal(requestBody)
 		if err != nil {
@@ -446,7 +456,7 @@ func (transport *OpenMailTransport) replyRequest(
 		"to":           recipient,
 		"body":         body,
 		"threadId":     threadID,
-		"includeQuote": "false",
+		"includeQuote": strconv.FormatBool(payload.IncludeQuotedContent),
 	}
 	if payload.HTML != "" {
 		fields["bodyHtml"] = payload.HTML
@@ -493,6 +503,7 @@ func escapeMultipartFilename(filename string) string {
 func (transport *OpenMailTransport) ReplyReceipt(
 	ctx context.Context,
 	message Message,
+	recipient string,
 ) (string, bool, error) {
 	messages, err := transport.Thread(ctx, message.ThreadID)
 	if err != nil {
@@ -504,7 +515,8 @@ func (transport *OpenMailTransport) ReplyReceipt(
 			foundInbound = true
 			continue
 		}
-		if foundInbound && containsFold(candidate.Labels, "sent") && containsFold(candidate.To, message.From) {
+		if foundInbound && containsFold(candidate.Labels, "sent") &&
+			containsMessageAddress(candidate.To, replyReceiptRecipient(message, recipient)) {
 			return candidate.MessageID, true, nil
 		}
 	}

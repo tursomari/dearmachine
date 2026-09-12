@@ -185,7 +185,7 @@ func TestSendmuxTransportContract(t *testing.T) {
 		t.Fatalf("send request = %+v", sends)
 	}
 	inbound, _ := transport.Message(ctx, "message-new")
-	gotReceipt, found, err := transport.ReplyReceipt(ctx, inbound)
+	gotReceipt, found, err := transport.ReplyReceipt(ctx, inbound, "")
 	if err != nil || !found || gotReceipt != receipt {
 		t.Fatalf("ReplyReceipt = %q, %v, %v", gotReceipt, found, err)
 	}
@@ -247,6 +247,40 @@ func TestSendmuxTransportUsesConfiguredSendingAPIForReplies(t *testing.T) {
 	}
 	if len(fake.sends) != 0 {
 		t.Fatalf("mailbox send should not have been used: %+v", fake.sends)
+	}
+}
+
+func TestSendmuxReplyPreservesThreadWithPrivateRecipient(t *testing.T) {
+	fake := newFakeSendmuxAPI("")
+	transport, err := newSendmuxTransport(sendmuxTransportConfig{
+		API: fake, Inbox: "mbx-test", AllowMutation: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := transport.Reply(context.Background(), "message-new", ReplyPayload{
+		Text: "private control", To: []string{"controller@example.test"},
+	}, "private-key")
+	if err != nil || receipt != "outbound-1" {
+		t.Fatalf("Reply = %q, %v", receipt, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.sends) != 1 {
+		t.Fatalf("private sends = %+v", fake.sends)
+	}
+	send := fake.sends[0]
+	if !slices.Equal(send.To, []string{"controller@example.test"}) ||
+		send.ReplyToMessageID != "message-new" {
+		t.Fatalf("private send envelope/thread = %+v", send)
+	}
+	fake.mu.Unlock()
+	recovered, found, err := transport.ReplyReceipt(context.Background(), Message{
+		MessageID: "message-new", ThreadID: "thread-new", From: "sender@example.com",
+	}, "controller@example.test")
+	fake.mu.Lock()
+	if err != nil || !found || recovered != receipt {
+		t.Fatalf("private ReplyReceipt = %q, %v, %v; want %q, true, nil", recovered, found, err, receipt)
 	}
 }
 

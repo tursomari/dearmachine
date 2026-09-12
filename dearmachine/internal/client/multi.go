@@ -33,6 +33,7 @@ type InboxRouter struct {
 	lastPoll time.Time
 	pending  map[string][]Message
 	known    map[string]map[string]struct{}
+	stores   map[string]*Store
 }
 
 var errNoPairRoute = errors.New("message has no pair route")
@@ -50,7 +51,7 @@ func NewInboxRouter(raw Transport, inbox Inbox, pairs []Pair, interval time.Dura
 	}
 	router := &InboxRouter{
 		raw: raw, inbox: inbox, interval: interval,
-		pairs: make(map[string]Pair, len(pairs)), pending: make(map[string][]Message), known: make(map[string]map[string]struct{}),
+		pairs: make(map[string]Pair, len(pairs)), pending: make(map[string][]Message), known: make(map[string]map[string]struct{}), stores: make(map[string]*Store),
 	}
 	routes := make(map[string]string, len(pairs))
 	for _, pair := range pairs {
@@ -137,7 +138,25 @@ func (router *InboxRouter) routeInbound(message Message) (Pair, error) {
 		}
 	}
 	if len(matches) == 0 {
-		return Pair{}, fmt.Errorf("%w: message %s sender %s", errNoPairRoute, message.MessageID, from)
+		// Non-paired participants may enter only a thread already owned by one
+		// unambiguous pair. This preserves the unknown-sender boundary for new
+		// threads, including inboxes that currently have only one pair.
+		for id, pair := range router.pairs {
+			store := router.stores[id]
+			if store == nil {
+				continue
+			}
+			known, storeErr := store.KnownThread(message.ThreadID)
+			if storeErr != nil {
+				return Pair{}, fmt.Errorf("route participant message %s: %w", message.MessageID, storeErr)
+			}
+			if known {
+				matches = append(matches, pair)
+			}
+		}
+		if len(matches) == 0 {
+			return Pair{}, fmt.Errorf("%w: message %s sender %s", errNoPairRoute, message.MessageID, from)
+		}
 	}
 	if len(matches) > 1 {
 		return Pair{}, fmt.Errorf("route message %s: sender %s is ambiguous on inbox %s", message.MessageID, from, router.inbox.ID)
@@ -151,7 +170,17 @@ func (router *InboxRouter) authorize(pairID string, message Message) error {
 	if err != nil {
 		return err
 	}
-	inbound := from == pair.UserEmail && containsCanonicalAddress(message.To, router.inbox.Address)
+	inboundRecipient := containsCanonicalAddress(message.To, router.inbox.Address)
+	inbound := from == pair.UserEmail && inboundRecipient
+	if !inbound && inboundRecipient {
+		store := router.stores[pairID]
+		if store != nil {
+			inbound, err = store.KnownThread(message.ThreadID)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	outbound := from == router.inbox.Address && containsCanonicalAddress(message.To, pair.UserEmail)
 	if !inbound && !outbound {
 		return fmt.Errorf("message %s is not routed to pair %s", message.MessageID, pairID)
@@ -186,6 +215,21 @@ func containsCanonicalAddress(values []string, target string) bool {
 type pairEndpoint struct {
 	router *InboxRouter
 	pairID string
+}
+
+func (endpoint *pairEndpoint) bindStore(store *Store) {
+	endpoint.router.mu.Lock()
+	endpoint.router.stores[endpoint.pairID] = store
+	endpoint.router.mu.Unlock()
+}
+
+func (endpoint *pairEndpoint) controllingParticipant() string {
+	return endpoint.router.pairs[endpoint.pairID].UserEmail
+}
+
+func (endpoint *pairEndpoint) isControllingParticipant(message Message) bool {
+	from, err := canonicalMessageAddress(message.From)
+	return err == nil && from == endpoint.controllingParticipant()
 }
 
 func (endpoint *pairEndpoint) pollTarget() string {
@@ -234,7 +278,7 @@ func (endpoint *pairEndpoint) Reply(ctx context.Context, messageID string, paylo
 	return endpoint.router.raw.Reply(ctx, messageID, payload, key)
 }
 
-func (endpoint *pairEndpoint) ReplyReceipt(ctx context.Context, message Message) (string, bool, error) {
+func (endpoint *pairEndpoint) ReplyReceipt(ctx context.Context, message Message, recipient string) (string, bool, error) {
 	endpoint.router.mu.Lock()
 	err := endpoint.router.authorize(endpoint.pairID, message)
 	if err == nil {
@@ -244,7 +288,7 @@ func (endpoint *pairEndpoint) ReplyReceipt(ctx context.Context, message Message)
 	if err != nil {
 		return "", false, err
 	}
-	return endpoint.router.raw.ReplyReceipt(ctx, message)
+	return endpoint.router.raw.ReplyReceipt(ctx, message, recipient)
 }
 
 func (endpoint *pairEndpoint) MarkProcessed(ctx context.Context, messageID string) error {

@@ -261,8 +261,12 @@ func (m *Mailbox) Reply(
 	idempotencyKey string,
 ) (string, error) {
 	params := agentmail.InboxMessageReplyParams{
-		InboxID: m.inboxID,
-		Text:    agentmail.String(payload.Text),
+		InboxID:  m.inboxID,
+		Text:     agentmail.String(payload.Text),
+		ReplyAll: agentmail.Bool(false),
+	}
+	if len(payload.To) > 0 {
+		params.To = agentmail.AddressesUnionParam{OfStringArray: append([]string(nil), payload.To...)}
 	}
 	if payload.HTML != "" {
 		params.HTML = agentmail.String(payload.HTML)
@@ -296,6 +300,7 @@ func (m *Mailbox) Reply(
 func (m *Mailbox) ReplyReceipt(
 	ctx context.Context,
 	message Message,
+	recipient string,
 ) (string, bool, error) {
 	messages, err := m.Thread(ctx, message.ThreadID)
 	if err != nil {
@@ -305,9 +310,9 @@ func (m *Mailbox) ReplyReceipt(
 		if candidate.MessageID == message.MessageID {
 			continue
 		}
-		isOutbound := containsFold(candidate.Labels, "sent") ||
-			containsFold(candidate.To, message.From)
-		if candidate.InReplyTo == message.MessageID && isOutbound {
+		if candidate.InReplyTo == message.MessageID &&
+			containsFold(candidate.Labels, "sent") &&
+			containsMessageAddress(candidate.To, replyReceiptRecipient(message, recipient)) {
 			return candidate.MessageID, true, nil
 		}
 	}

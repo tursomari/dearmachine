@@ -31,19 +31,22 @@ type Session struct {
 }
 
 type PendingMessage struct {
-	MessageID            string
-	ThreadID             string
-	Session              Session
-	CheckpointSessionID  string
-	State                string
-	Prompt               string
-	ResultKind           ResultKind
-	ResultText           string
-	ResultManifest       string
-	MagnificaHumanitas   *MagnificaHumanitas
-	ForkedFromSessionID  string
-	ForkedFromThreadID   string
-	PreserveOriginalBody bool
+	MessageID              string
+	ThreadID               string
+	Session                Session
+	CheckpointSessionID    string
+	State                  string
+	Prompt                 string
+	ResultKind             ResultKind
+	ResultText             string
+	ResultManifest         string
+	MagnificaHumanitas     *MagnificaHumanitas
+	ForkedFromSessionID    string
+	ForkedFromThreadID     string
+	PreserveOriginalBody   bool
+	Authority              string
+	ControllingParticipant string
+	SanitizeControlBody    bool
 }
 
 type ForwardRequest struct {
@@ -53,6 +56,20 @@ type ForwardRequest struct {
 	SelectedID       string
 	State            string
 	PromptMessageID  string
+}
+
+// ParticipantRequest is deliberately content-free. The provider message ID
+// is the durable handle for retrieving an instruction only after approval;
+// neither its body nor a body-derived hash is stored by Dear Machine.
+type ParticipantRequest struct {
+	RequestMessageID       string
+	ExternalThreadID       string
+	ParticipantAddress     string
+	ControllingParticipant string
+	Kind                   string
+	State                  string
+	PromptMessageID        string
+	PromptParentMessageID  string
 }
 
 type MessageRef struct {
@@ -85,12 +102,25 @@ type AbandonPlan struct {
 }
 
 const (
-	messageReceived              = "received"
-	messageRunning               = "running"
-	messageResultReady           = "result_ready"
-	forwardAwaitingSelection     = "awaiting_selection"
-	forwardAwaitingConfirmation  = "awaiting_confirmation"
-	sessionReferenceInsertTrials = 10
+	messageReceived                 = "received"
+	messageRunning                  = "running"
+	messageResultReady              = "result_ready"
+	forwardAwaitingSelection        = "awaiting_selection"
+	forwardAwaitingConfirmation     = "awaiting_confirmation"
+	participantAwaitingDecision     = "awaiting_decision"
+	participantAwaitingAdmission    = "awaiting_admission"
+	participantAwaitingReplacement  = "awaiting_replacement"
+	participantResolvedYes          = "resolved_yes"
+	participantResolvedNo           = "resolved_no"
+	participantResolvedOther        = "resolved_other"
+	participantInvalidated          = "invalidated"
+	participantAmbiguousCorrelation = "ambiguous_correlation"
+	participantRequestAdmission     = "admission"
+	participantRequestInstruction   = "instruction"
+	authorityController             = "controller"
+	authorityParticipant            = "approved_participant"
+	authorityTrustedParticipant     = "trusted_participant"
+	sessionReferenceInsertTrials    = 10
 )
 
 var errMessageSkipped = errors.New("message is locally skipped")
@@ -182,6 +212,9 @@ CREATE TABLE IF NOT EXISTS pending_messages (
     forked_from_session_id TEXT NOT NULL DEFAULT '',
     forked_from_thread_id TEXT NOT NULL DEFAULT '',
     preserve_original_body INTEGER NOT NULL DEFAULT 0,
+    authority TEXT NOT NULL DEFAULT '',
+    controlling_participant TEXT NOT NULL DEFAULT '',
+    sanitize_control_body INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(thread_id, sequence)
@@ -206,6 +239,33 @@ CREATE TABLE IF NOT EXISTS forward_requests (
 	selected_session_id TEXT NOT NULL DEFAULT '',
 	state TEXT NOT NULL,
 	prompt_message_id TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS participant_requests (
+	request_message_id TEXT PRIMARY KEY,
+	external_thread_id TEXT NOT NULL,
+	participant_address TEXT NOT NULL,
+	controlling_participant TEXT NOT NULL,
+	kind TEXT NOT NULL DEFAULT 'instruction',
+	state TEXT NOT NULL,
+	prompt_message_id TEXT NOT NULL DEFAULT '',
+	prompt_parent_message_id TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS participant_request_prompts (
+	prompt_message_id TEXT PRIMARY KEY,
+	request_message_id TEXT NOT NULL,
+	expected_state TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admitted_participants (
+	participant_address TEXT PRIMARY KEY,
+	trusted INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );`
@@ -235,6 +295,9 @@ CREATE TABLE IF NOT EXISTS forward_requests (
 		{"forked_from_session_id", `ALTER TABLE pending_messages ADD COLUMN forked_from_session_id TEXT NOT NULL DEFAULT ''`},
 		{"forked_from_thread_id", `ALTER TABLE pending_messages ADD COLUMN forked_from_thread_id TEXT NOT NULL DEFAULT ''`},
 		{"preserve_original_body", `ALTER TABLE pending_messages ADD COLUMN preserve_original_body INTEGER NOT NULL DEFAULT 0`},
+		{"authority", `ALTER TABLE pending_messages ADD COLUMN authority TEXT NOT NULL DEFAULT ''`},
+		{"controlling_participant", `ALTER TABLE pending_messages ADD COLUMN controlling_participant TEXT NOT NULL DEFAULT ''`},
+		{"sanitize_control_body", `ALTER TABLE pending_messages ADD COLUMN sanitize_control_body INTEGER NOT NULL DEFAULT 0`},
 	} {
 		hasColumn, err := sqliteTableHasColumn(s.db, "pending_messages", column.name)
 		if err != nil {
@@ -245,6 +308,65 @@ CREATE TABLE IF NOT EXISTS forward_requests (
 				return fmt.Errorf("add %s storage: %w", column.name, err)
 			}
 		}
+	}
+	hasParticipantKind, err := sqliteTableHasColumn(s.db, "participant_requests", "kind")
+	if err != nil {
+		return fmt.Errorf("inspect participant request schema: %w", err)
+	}
+	if !hasParticipantKind {
+		if _, err := s.db.Exec(
+			`ALTER TABLE participant_requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'instruction'`,
+		); err != nil {
+			return fmt.Errorf("add participant request kind: %w", err)
+		}
+		if _, err := s.db.Exec(
+			`INSERT OR IGNORE INTO participant_request_prompts
+			     (prompt_message_id, request_message_id, expected_state, created_at)
+			 SELECT prompt_message_id, request_message_id, state, created_at
+			   FROM participant_requests
+			  WHERE prompt_message_id <> '' AND state IN (?, ?)`,
+			participantAwaitingDecision,
+			participantAwaitingReplacement,
+		); err != nil {
+			return fmt.Errorf("preserve legacy participant prompt correlation: %w", err)
+		}
+		// A pre-admission build could have an outstanding per-instruction
+		// approval. It cannot be reinterpreted as admission because the already
+		// sent prompt described different authority. Fail closed and require a
+		// new participant message after upgrade.
+		if _, err := s.db.Exec(
+			`UPDATE participant_requests SET state = ?, updated_at = ?
+			  WHERE state IN (?, ?)`,
+			participantInvalidated,
+			time.Now().UTC().Format(time.RFC3339Nano),
+			participantAwaitingDecision,
+			participantAwaitingReplacement,
+		); err != nil {
+			return fmt.Errorf("invalidate legacy participant approvals: %w", err)
+		}
+	}
+	hasPromptParent, err := sqliteTableHasColumn(s.db, "participant_requests", "prompt_parent_message_id")
+	if err != nil {
+		return fmt.Errorf("inspect participant request prompt parent schema: %w", err)
+	}
+	if !hasPromptParent {
+		if _, err := s.db.Exec(
+			`ALTER TABLE participant_requests ADD COLUMN prompt_parent_message_id TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("add participant request prompt parent: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO participant_request_prompts
+		     (prompt_message_id, request_message_id, expected_state, created_at)
+		 SELECT prompt_message_id, request_message_id, state, created_at
+		   FROM participant_requests
+		  WHERE prompt_message_id <> '' AND state IN (?, ?, ?)`,
+		participantAwaitingAdmission,
+		participantAwaitingDecision,
+		participantAwaitingReplacement,
+	); err != nil {
+		return fmt.Errorf("backfill participant approval prompt correlation: %w", err)
 	}
 	return nil
 }
@@ -724,6 +846,8 @@ func (s *Store) Seen(messageID string) (bool, error) {
 			SELECT message_id FROM processed_messages
 			UNION ALL
 			SELECT request_message_id AS message_id FROM forward_requests
+			UNION ALL
+			SELECT request_message_id AS message_id FROM participant_requests
 		) WHERE message_id = ? LIMIT 1`,
 		messageID,
 	).Scan(&found)
@@ -734,6 +858,601 @@ func (s *Store) Seen(messageID string) (bool, error) {
 		return false, fmt.Errorf("query processed message: %w", err)
 	}
 	return true, nil
+}
+
+func (s *Store) BeginParticipantRequest(message Message, controller string) (ParticipantRequest, bool, error) {
+	return s.beginParticipantRequest(message, controller, participantRequestInstruction, participantAwaitingDecision)
+}
+
+func (s *Store) BeginParticipantAdmission(message Message, controller string) (ParticipantRequest, bool, error) {
+	return s.beginParticipantRequest(message, controller, participantRequestAdmission, participantAwaitingAdmission)
+}
+
+func (s *Store) beginParticipantRequest(
+	message Message,
+	controller, kind, state string,
+) (ParticipantRequest, bool, error) {
+	participant, err := canonicalMessageAddress(message.From)
+	if err != nil {
+		return ParticipantRequest{}, false, fmt.Errorf("participant address: %w", err)
+	}
+	controller, err = canonicalMessageAddress(controller)
+	if err != nil {
+		return ParticipantRequest{}, false, fmt.Errorf("controlling participant address: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := s.db.Exec(
+		`INSERT INTO participant_requests
+		     (request_message_id, external_thread_id, participant_address,
+		      controlling_participant, kind, state, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(request_message_id) DO NOTHING`,
+		message.MessageID, message.ThreadID, participant, controller,
+		kind, state, now, now,
+	)
+	if err != nil {
+		return ParticipantRequest{}, false, fmt.Errorf("persist participant approval request: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return ParticipantRequest{}, false, fmt.Errorf("check participant approval claim: %w", err)
+	}
+	request, found, err := s.ParticipantRequestByMessage(message.MessageID)
+	if err != nil || !found {
+		if err == nil {
+			err = errors.New("participant approval request disappeared after claim")
+		}
+		return ParticipantRequest{}, false, err
+	}
+	return request, changed == 0, nil
+}
+
+func scanParticipantRequest(row rowScanner) (ParticipantRequest, error) {
+	var request ParticipantRequest
+	err := row.Scan(
+		&request.RequestMessageID,
+		&request.ExternalThreadID,
+		&request.ParticipantAddress,
+		&request.ControllingParticipant,
+		&request.Kind,
+		&request.State,
+		&request.PromptMessageID,
+		&request.PromptParentMessageID,
+	)
+	return request, err
+}
+
+const participantRequestColumns = `request_message_id, external_thread_id,
+       participant_address, controlling_participant, kind, state, prompt_message_id,
+       prompt_parent_message_id`
+
+func (s *Store) ParticipantRequestByMessage(messageID string) (ParticipantRequest, bool, error) {
+	request, err := scanParticipantRequest(s.db.QueryRow(
+		`SELECT `+participantRequestColumns+` FROM participant_requests WHERE request_message_id = ?`,
+		messageID,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ParticipantRequest{}, false, nil
+	}
+	if err != nil {
+		return ParticipantRequest{}, false, fmt.Errorf("query participant approval request: %w", err)
+	}
+	return request, true, nil
+}
+
+func (s *Store) ParticipantRequestsMissingPrompt() ([]ParticipantRequest, error) {
+	rows, err := s.db.Query(
+		`SELECT `+participantRequestColumns+`
+		   FROM participant_requests
+		  WHERE prompt_message_id = '' AND state IN (?, ?)
+		  ORDER BY created_at, request_message_id`,
+		participantAwaitingAdmission,
+		participantAwaitingDecision,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query participant requests missing prompts: %w", err)
+	}
+	defer rows.Close()
+	var requests []ParticipantRequest
+	for rows.Next() {
+		request, err := scanParticipantRequest(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan participant request missing prompt: %w", err)
+		}
+		requests = append(requests, request)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query participant requests missing prompts: %w", err)
+	}
+	return requests, nil
+}
+
+func (s *Store) ParticipantRequestForControl(message Message) (ParticipantRequest, string, bool, error) {
+	correlations := make([]string, 0, len(message.References)+1)
+	seen := make(map[string]struct{}, len(message.References)+1)
+	if value := strings.TrimSpace(message.InReplyTo); value != "" {
+		correlations = append(correlations, value)
+		seen[value] = struct{}{}
+	}
+	for _, value := range message.References {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			if _, duplicate := seen[value]; duplicate {
+				continue
+			}
+			correlations = append(correlations, value)
+			seen[value] = struct{}{}
+		}
+	}
+	if len(correlations) == 0 {
+		return ParticipantRequest{}, "", false, nil
+	}
+	var matches []struct {
+		request       ParticipantRequest
+		expectedState string
+	}
+	for index, promptMessageID := range correlations {
+		var expectedState string
+		row := s.db.QueryRow(
+			`SELECT r.request_message_id, r.external_thread_id,
+			        r.participant_address, r.controlling_participant,
+			        r.kind, r.state, r.prompt_message_id,
+			        r.prompt_parent_message_id, p.expected_state
+			   FROM participant_request_prompts p
+			   JOIN participant_requests r ON r.request_message_id = p.request_message_id
+			  WHERE p.prompt_message_id = ?`,
+			promptMessageID,
+		)
+		var request ParticipantRequest
+		err := row.Scan(
+			&request.RequestMessageID,
+			&request.ExternalThreadID,
+			&request.ParticipantAddress,
+			&request.ControllingParticipant,
+			&request.Kind,
+			&request.State,
+			&request.PromptMessageID,
+			&request.PromptParentMessageID,
+			&expectedState,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			// A present In-Reply-To is the direct parent. If it is not one of
+			// our prompts, older References entries do not turn an ordinary
+			// controlling-participant reply into control-plane traffic.
+			if index == 0 && strings.TrimSpace(message.InReplyTo) != "" {
+				return ParticipantRequest{}, "", false, nil
+			}
+			continue
+		}
+		if err != nil {
+			return ParticipantRequest{}, "", false, fmt.Errorf("query participant control correlation: %w", err)
+		}
+		// In-Reply-To names the direct parent and therefore dominates older
+		// References entries carried forward by normal email clients. A stale
+		// direct parent is still returned so the caller can suppress it safely.
+		if index == 0 && strings.TrimSpace(message.InReplyTo) != "" {
+			return request, expectedState, true, nil
+		}
+		duplicate := false
+		for _, match := range matches {
+			if match.request.RequestMessageID == request.RequestMessageID && match.expectedState == expectedState {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			matches = append(matches, struct {
+				request       ParticipantRequest
+				expectedState string
+			}{request: request, expectedState: expectedState})
+		}
+	}
+	var active []struct {
+		request       ParticipantRequest
+		expectedState string
+	}
+	for _, match := range matches {
+		if match.request.State == match.expectedState {
+			active = append(active, match)
+		}
+	}
+	if len(active) == 1 {
+		return active[0].request, active[0].expectedState, true, nil
+	}
+	if len(active) > 1 {
+		return ParticipantRequest{}, participantAmbiguousCorrelation, true, nil
+	}
+	if len(matches) > 0 {
+		return matches[0].request, matches[0].expectedState, true, nil
+	}
+	return ParticipantRequest{}, "", false, nil
+}
+
+func (s *Store) SetParticipantPrompt(requestMessageID, state, outboundMessageID string) error {
+	if state != participantAwaitingAdmission && state != participantAwaitingDecision && state != participantAwaitingReplacement {
+		return fmt.Errorf("invalid participant approval state %q", state)
+	}
+	outboundMessageID = strings.TrimSpace(outboundMessageID)
+	if outboundMessageID == "" {
+		return fmt.Errorf("participant approval prompt message ID is required")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin participant approval prompt: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.Exec(
+		`UPDATE participant_requests SET state = ?, prompt_message_id = ?, updated_at = ?
+		  WHERE request_message_id = ? AND state IN (?, ?, ?)`,
+		state, outboundMessageID, now, requestMessageID,
+		participantAwaitingAdmission, participantAwaitingDecision, participantAwaitingReplacement,
+	)
+	if err != nil {
+		return fmt.Errorf("record participant approval prompt: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return fmt.Errorf("record participant approval prompt: request is not active")
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO participant_request_prompts
+		     (prompt_message_id, request_message_id, expected_state, created_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(prompt_message_id) DO NOTHING`,
+		outboundMessageID,
+		requestMessageID,
+		state,
+		now,
+	); err != nil {
+		return fmt.Errorf("record participant prompt correlation: %w", err)
+	}
+	var storedRequestID, storedState string
+	if err := tx.QueryRow(
+		`SELECT request_message_id, expected_state
+		   FROM participant_request_prompts WHERE prompt_message_id = ?`,
+		outboundMessageID,
+	).Scan(&storedRequestID, &storedState); err != nil {
+		return fmt.Errorf("verify participant prompt correlation: %w", err)
+	}
+	if storedRequestID != requestMessageID || storedState != state {
+		return fmt.Errorf("participant prompt is already bound to another request state")
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit participant approval prompt: %w", err)
+	}
+	return nil
+}
+
+// ParticipantStatus returns pair-local admission and trust. A Store belongs to
+// exactly one pair, so neither fact can create or alter a pair route.
+func (s *Store) ParticipantStatus(address string) (bool, bool, error) {
+	address, err := canonicalMessageAddress(address)
+	if err != nil {
+		return false, false, fmt.Errorf("participant address: %w", err)
+	}
+	var trusted int
+	err = s.db.QueryRow(
+		`SELECT trusted FROM admitted_participants WHERE participant_address = ?`,
+		address,
+	).Scan(&trusted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("query participant status: %w", err)
+	}
+	return true, trusted != 0, nil
+}
+
+// AdmitParticipantRequest records admission and advances the same content-free
+// request to a separate instruction decision. It intentionally does not create
+// executable work.
+func (s *Store) AdmitParticipantRequest(request ParticipantRequest, controlMessageID string) (ParticipantRequest, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return ParticipantRequest{}, fmt.Errorf("begin participant admission: %w", err)
+	}
+	defer tx.Rollback()
+	stored, err := scanParticipantRequest(tx.QueryRow(
+		`SELECT `+participantRequestColumns+` FROM participant_requests WHERE request_message_id = ?`,
+		request.RequestMessageID,
+	))
+	if err != nil {
+		return ParticipantRequest{}, fmt.Errorf("query participant admission request: %w", err)
+	}
+	if stored.ExternalThreadID != request.ExternalThreadID ||
+		stored.ParticipantAddress != request.ParticipantAddress ||
+		stored.ControllingParticipant != request.ControllingParticipant ||
+		stored.Kind != participantRequestAdmission || stored.State != participantAwaitingAdmission {
+		return ParticipantRequest{}, fmt.Errorf("participant admission request is not active")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(
+		`INSERT INTO admitted_participants
+		     (participant_address, trusted, created_at, updated_at)
+		 VALUES (?, 0, ?, ?)
+		 ON CONFLICT(participant_address) DO UPDATE SET updated_at = excluded.updated_at`,
+		stored.ParticipantAddress, now, now,
+	); err != nil {
+		return ParticipantRequest{}, fmt.Errorf("record participant admission: %w", err)
+	}
+	result, err := tx.Exec(
+		`UPDATE participant_requests
+		    SET kind = ?, state = ?, prompt_message_id = '', prompt_parent_message_id = ?, updated_at = ?
+		  WHERE request_message_id = ? AND kind = ? AND state = ?`,
+		participantRequestInstruction, participantAwaitingDecision, controlMessageID, now,
+		stored.RequestMessageID, participantRequestAdmission, participantAwaitingAdmission,
+	)
+	if err != nil {
+		return ParticipantRequest{}, fmt.Errorf("advance admitted participant request: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return ParticipantRequest{}, fmt.Errorf("advance admitted participant request: request is not active")
+	}
+	if strings.TrimSpace(controlMessageID) != "" {
+		if err := recordProcessedTx(tx, controlMessageID, stored.ExternalThreadID, "", now); err != nil {
+			return ParticipantRequest{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return ParticipantRequest{}, fmt.Errorf("commit participant admission: %w", err)
+	}
+	stored.Kind = participantRequestInstruction
+	stored.State = participantAwaitingDecision
+	stored.PromptMessageID = ""
+	stored.PromptParentMessageID = controlMessageID
+	return stored, nil
+}
+
+// SetParticipantTrust changes trust only for an already-admitted participant.
+// The boolean result is false when the address is not admitted.
+func (s *Store) SetParticipantTrust(address string, trusted bool) (bool, error) {
+	address, err := canonicalMessageAddress(address)
+	if err != nil {
+		return false, fmt.Errorf("participant address: %w", err)
+	}
+	value := 0
+	if trusted {
+		value = 1
+	}
+	result, err := s.db.Exec(
+		`UPDATE admitted_participants SET trusted = ?, updated_at = ?
+		  WHERE participant_address = ?`,
+		value, time.Now().UTC().Format(time.RFC3339Nano), address,
+	)
+	if err != nil {
+		return false, fmt.Errorf("set participant trust: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check participant trust update: %w", err)
+	}
+	return changed == 1, nil
+}
+
+func (s *Store) SetPendingAuthority(messageID, authority, controller string) error {
+	if authority != authorityController && authority != authorityParticipant && authority != authorityTrustedParticipant {
+		return fmt.Errorf("invalid message authority %q", authority)
+	}
+	result, err := s.db.Exec(
+		`UPDATE pending_messages SET authority = ?, controlling_participant = ?, updated_at = ?
+		  WHERE message_id = ? AND state = ?`,
+		authority, controller, time.Now().UTC().Format(time.RFC3339Nano), messageID, messageReceived,
+	)
+	if err != nil {
+		return fmt.Errorf("set pending message authority: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return fmt.Errorf("set pending message authority: message is not received")
+	}
+	return nil
+}
+
+func (s *Store) ResolveParticipantRequest(request ParticipantRequest, state string, controlMessageIDs ...string) error {
+	if state != participantResolvedNo && state != participantInvalidated {
+		return fmt.Errorf("invalid participant resolution %q", state)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin participant resolution: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.Exec(
+		`UPDATE participant_requests SET state = ?, updated_at = ?
+		  WHERE request_message_id = ? AND state IN (?, ?, ?)`,
+		state, now, request.RequestMessageID,
+		participantAwaitingAdmission, participantAwaitingDecision, participantAwaitingReplacement,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve participant request: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return fmt.Errorf("resolve participant request: request is not active")
+	}
+	if err := recordProcessedTx(tx, request.RequestMessageID, request.ExternalThreadID, "", now); err != nil {
+		return err
+	}
+	for _, messageID := range controlMessageIDs {
+		if strings.TrimSpace(messageID) != "" {
+			if err := recordProcessedTx(tx, messageID, request.ExternalThreadID, "", now); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// MaterializeParticipantExecution atomically turns an explicitly authorized
+// participant episode into executable work. Keeping the request transition and
+// pending row in one transaction prevents crash recovery from observing an
+// unresolved guest message as runnable work.
+func (s *Store) MaterializeParticipantExecution(
+	request ParticipantRequest,
+	executionMessageID string,
+	controlMessageID string,
+	state string,
+	sanitizeControlBody bool,
+) (PendingMessage, error) {
+	executionMessageID = strings.TrimSpace(executionMessageID)
+	controlMessageID = strings.TrimSpace(controlMessageID)
+	if executionMessageID == "" {
+		return PendingMessage{}, fmt.Errorf("participant execution message ID is required")
+	}
+	var expectedState, authority string
+	switch state {
+	case participantResolvedYes:
+		expectedState = participantAwaitingDecision
+		authority = authorityParticipant
+		if sanitizeControlBody {
+			return PendingMessage{}, fmt.Errorf("approved participant instruction cannot be control traffic")
+		}
+	case participantResolvedOther:
+		expectedState = participantAwaitingReplacement
+		authority = authorityController
+		if !sanitizeControlBody {
+			return PendingMessage{}, fmt.Errorf("controlling replacement must sanitize control traffic")
+		}
+	default:
+		return PendingMessage{}, fmt.Errorf("invalid executable participant resolution %q", state)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("begin participant execution: %w", err)
+	}
+	defer tx.Rollback()
+	stored, err := scanParticipantRequest(tx.QueryRow(
+		`SELECT `+participantRequestColumns+` FROM participant_requests WHERE request_message_id = ?`,
+		request.RequestMessageID,
+	))
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("query participant execution request: %w", err)
+	}
+	if stored.ExternalThreadID != request.ExternalThreadID ||
+		stored.ParticipantAddress != request.ParticipantAddress ||
+		stored.ControllingParticipant != request.ControllingParticipant {
+		return PendingMessage{}, fmt.Errorf("participant execution request changed")
+	}
+	if stored.State != expectedState {
+		return PendingMessage{}, fmt.Errorf("participant execution request is not %s", expectedState)
+	}
+
+	canonicalThreadID, found, err := resolveThreadAlias(tx, stored.ExternalThreadID)
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("resolve participant execution thread: %w", err)
+	}
+	if !found {
+		return PendingMessage{}, fmt.Errorf("participant execution thread is not known")
+	}
+	var session Session
+	if err := scanSession(tx.QueryRow(
+		`SELECT thread_id, session_id, sequence, status, response_tier
+		   FROM thread_sessions WHERE thread_id = ?`,
+		canonicalThreadID,
+	), &session); err != nil {
+		return PendingMessage{}, fmt.Errorf("query participant execution session: %w", err)
+	}
+	latestSequence := session.Sequence
+	if err := tx.QueryRow(
+		`SELECT COALESCE(MAX(sequence), ?) FROM pending_messages WHERE thread_id = ?`,
+		session.Sequence,
+		session.ThreadID,
+	).Scan(&latestSequence); err != nil {
+		return PendingMessage{}, fmt.Errorf("query participant execution sequence: %w", err)
+	}
+	pending := PendingMessage{
+		MessageID: executionMessageID,
+		ThreadID:  session.ThreadID,
+		Session: Session{
+			ThreadID:     session.ThreadID,
+			SessionID:    session.SessionID,
+			Sequence:     latestSequence + 1,
+			Status:       session.Status,
+			IsNew:        session.Sequence == 0,
+			ResponseTier: session.ResponseTier,
+		},
+		State:                  messageReceived,
+		Authority:              authority,
+		ControllingParticipant: stored.ControllingParticipant,
+		SanitizeControlBody:    sanitizeControlBody,
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	sanitize := 0
+	if sanitizeControlBody {
+		sanitize = 1
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO pending_messages
+		     (message_id, thread_id, sequence, state, authority,
+		      controlling_participant, sanitize_control_body, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		pending.MessageID,
+		pending.ThreadID,
+		pending.Session.Sequence,
+		pending.State,
+		pending.Authority,
+		pending.ControllingParticipant,
+		sanitize,
+		now,
+		now,
+	); err != nil {
+		return PendingMessage{}, fmt.Errorf("persist participant execution: %w", err)
+	}
+	result, err := tx.Exec(
+		`UPDATE participant_requests SET state = ?, updated_at = ?
+		  WHERE request_message_id = ? AND state = ?`,
+		state,
+		now,
+		stored.RequestMessageID,
+		expectedState,
+	)
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("resolve participant execution: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return PendingMessage{}, fmt.Errorf("resolve participant execution: request is not active")
+	}
+	if controlMessageID != "" && controlMessageID != executionMessageID {
+		if err := recordProcessedTx(tx, controlMessageID, stored.ExternalThreadID, "", now); err != nil {
+			return PendingMessage{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return PendingMessage{}, fmt.Errorf("commit participant execution: %w", err)
+	}
+	return pending, nil
+}
+
+func (s *Store) InvalidateParticipantRequests(threadID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin participant invalidation: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(
+		`INSERT OR IGNORE INTO processed_messages (message_id, thread_id, outbound_message_id, processed_at)
+		 SELECT request_message_id, external_thread_id, '', ? FROM participant_requests
+		  WHERE external_thread_id = ? AND state IN (?, ?, ?)`,
+		now, threadID, participantAwaitingAdmission, participantAwaitingDecision, participantAwaitingReplacement,
+	); err != nil {
+		return fmt.Errorf("tombstone invalidated participant requests: %w", err)
+	}
+	if _, err := tx.Exec(
+		`UPDATE participant_requests SET state = ?, updated_at = ?
+		  WHERE external_thread_id = ? AND state IN (?, ?, ?)`,
+		participantInvalidated, now, threadID,
+		participantAwaitingAdmission, participantAwaitingDecision, participantAwaitingReplacement,
+	); err != nil {
+		return fmt.Errorf("invalidate participant requests: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (s *Store) KnownThread(externalThreadID string) (bool, error) {
@@ -1550,6 +2269,9 @@ SELECT p.message_id,
 	   p.forked_from_session_id,
 	   p.forked_from_thread_id,
 	   p.preserve_original_body,
+	   p.authority,
+	   p.controlling_participant,
+	   p.sanitize_control_body,
        t.sequence
   FROM pending_messages p
   JOIN thread_sessions t ON t.thread_id = p.thread_id`
@@ -1564,6 +2286,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 	var storedTier string
 	var storedMagnificaHumanitas sql.NullString
 	var preserveOriginalBody int
+	var sanitizeControlBody int
 	err := row.Scan(
 		&pending.MessageID,
 		&pending.ThreadID,
@@ -1581,6 +2304,9 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 		&pending.ForkedFromSessionID,
 		&pending.ForkedFromThreadID,
 		&preserveOriginalBody,
+		&pending.Authority,
+		&pending.ControllingParticipant,
+		&sanitizeControlBody,
 		&committedSequence,
 	)
 	if err != nil {
@@ -1612,6 +2338,7 @@ func scanPending(row rowScanner) (PendingMessage, error) {
 	}
 	pending.Session.ThreadID = pending.ThreadID
 	pending.PreserveOriginalBody = preserveOriginalBody != 0
+	pending.SanitizeControlBody = sanitizeControlBody != 0
 	pending.Session.IsNew = committedSequence == 0 && pending.ForkedFromSessionID == ""
 	pending.Session.ResponseTier = tier
 	if storedMagnificaHumanitas.Valid && strings.TrimSpace(storedMagnificaHumanitas.String) != "" {

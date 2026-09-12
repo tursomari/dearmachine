@@ -29,6 +29,10 @@ type Message struct {
 	ConversationReferences []string
 	Labels                 []string
 	Attachments            []AttachmentRef
+	// Authority metadata is assigned locally after routing and is never read
+	// from provider-controlled message fields.
+	Authority              string
+	ControllingParticipant string
 }
 
 // AttachmentRef describes an inbound attachment without loading its contents.
@@ -49,6 +53,17 @@ type ReplyPayload struct {
 	Text  string
 	HTML  string
 	Files []OutboundFile
+	// To, CC, and BCC are an explicit envelope override. When To is non-empty,
+	// adapters must address exactly these recipients while retaining the
+	// provider thread selected by messageID. CC and BCC are intentionally
+	// explicit so privacy-sensitive control mail cannot inherit recipients.
+	To  []string
+	CC  []string
+	BCC []string
+	// IncludeQuotedContent is false for Dear Machine generated mail. Keeping it
+	// in the cross-provider contract makes the no-quotation privacy property
+	// testable instead of relying on provider defaults.
+	IncludeQuotedContent bool
 }
 
 // Transport is the email surface used by the dearmachine orchestrator.
@@ -57,9 +72,26 @@ type Transport interface {
 	Thread(ctx context.Context, threadID string) ([]Message, error)
 	Message(ctx context.Context, messageID string) (Message, error)
 	Reply(ctx context.Context, messageID string, payload ReplyPayload, idempotencyKey string) (string, error)
-	ReplyReceipt(ctx context.Context, message Message) (string, bool, error)
+	// ReplyReceipt finds the provider receipt for a reply to message. Recipient
+	// is empty for the normal reply target and explicit for a private override.
+	ReplyReceipt(ctx context.Context, message Message, recipient string) (string, bool, error)
 	MarkProcessed(ctx context.Context, messageID string) error
 	FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error)
+}
+
+func replyReceiptRecipient(message Message, explicit string) string {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value
+	}
+	return message.From
+}
+
+func containsMessageAddress(values []string, target string) bool {
+	canonical, err := canonicalMessageAddress(target)
+	if err != nil {
+		return containsFold(values, target)
+	}
+	return containsCanonicalAddress(values, canonical)
 }
 
 // PairAuthorizer is an optional provider capability used while creating a

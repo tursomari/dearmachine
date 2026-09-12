@@ -114,7 +114,7 @@ func (f *retryMailFixture) Reply(_ context.Context, _ string, _ ReplyPayload, ke
 	// Delivery succeeded but the response was lost.
 	return "", syscall.ECONNRESET
 }
-func (f *retryMailFixture) ReplyReceipt(context.Context, Message) (string, bool, error) {
+func (f *retryMailFixture) ReplyReceipt(context.Context, Message, string) (string, bool, error) {
 	f.receipts++
 	if f.receipts == 1 {
 		return "", false, syscall.ECONNRESET
@@ -135,7 +135,7 @@ func TestTransportRetryLostReplyUsesReceiptWithoutDuplicateSend(t *testing.T) {
 	if _, err := transport.Reply(ctx, "inbound", ReplyPayload{Text: "done"}, "durable-key"); !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatal(err)
 	}
-	id, found, err := transport.ReplyReceipt(ctx, Message{MessageID: "inbound"})
+	id, found, err := transport.ReplyReceipt(ctx, Message{MessageID: "inbound"}, "")
 	if err != nil || !found || id != "outbound" || raw.sends != 1 || raw.receipts != 2 {
 		t.Fatalf("receipt=%q,%v,%v sends=%d receipts=%d", id, found, err, raw.sends, raw.receipts)
 	}

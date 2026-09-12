@@ -295,7 +295,7 @@ func (transport *pairTestTransport) Message(_ context.Context, id string) (Messa
 func (transport *pairTestTransport) Reply(context.Context, string, ReplyPayload, string) (string, error) {
 	return "", nil
 }
-func (transport *pairTestTransport) ReplyReceipt(context.Context, Message) (string, bool, error) {
+func (transport *pairTestTransport) ReplyReceipt(context.Context, Message, string) (string, bool, error) {
 	return "", false, nil
 }
 func (transport *pairTestTransport) MarkProcessed(context.Context, string) error { return nil }

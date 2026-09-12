@@ -83,11 +83,12 @@ func TestFakeTransportContractReplyReceiptFindsFirstOutboundMatch(t *testing.T) 
 	transport.setThread("thread-1", []Message{
 		inbound,
 		{MessageID: "unrelated", ThreadID: "thread-1", InReplyTo: "other", Labels: []string{"sent"}},
-		{MessageID: "first", ThreadID: "thread-1", InReplyTo: "inbound-1", Labels: []string{"sent"}},
+		{MessageID: "wrong-recipient", ThreadID: "thread-1", InReplyTo: "inbound-1", To: []string{"controller@example.test"}, Labels: []string{"sent"}},
+		{MessageID: "first", ThreadID: "thread-1", InReplyTo: "inbound-1", To: []string{inbound.From}, Labels: []string{"sent"}},
 		{MessageID: "second", ThreadID: "thread-1", InReplyTo: "inbound-1", To: []string{inbound.From}},
 	})
 
-	receiptID, found, err := transport.ReplyReceipt(context.Background(), inbound)
+	receiptID, found, err := transport.ReplyReceipt(context.Background(), inbound, "")
 	if err != nil || !found || receiptID != "first" {
 		t.Fatalf("ReplyReceipt = %q, %v, %v", receiptID, found, err)
 	}

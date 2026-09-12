@@ -121,6 +121,7 @@ That shared file is a reference, not a standalone test.
 | [`concurrent-sessions.md`](dearmachine/runbooks/testing/concurrent-sessions.md) | Sequential compatibility and concurrent independent threads |
 | [`continuous-intake.md`](dearmachine/runbooks/testing/continuous-intake.md) | Intake during active work and turn-gated maintenance |
 | [`multi-pair.md`](dearmachine/runbooks/testing/multi-pair.md) | Pair routing, isolation, allow sets, and provider-ID overlap |
+| [`participant-approval.md`](dearmachine/runbooks/testing/participant-approval.md) | Participant admission, private instruction approval, controller-only trust, exact-model authority, and recovery |
 | [`forward-session-fork.md`](dearmachine/runbooks/testing/forward-session-fork.md) | Forward detection, confirmation, and clean session forks across provider threading behavior |
 | [`queued-grace-preemption.md`](dearmachine/runbooks/testing/queued-grace-preemption.md) | Same-poll queued work and grace-period preemption |
 | [`stop-and-resume-preemption.md`](dearmachine/runbooks/testing/stop-and-resume-preemption.md) | New-message interruption and session continuation |

@@ -621,6 +621,7 @@ func (f inboxTestTransport) Reply(
 func (f inboxTestTransport) ReplyReceipt(
 	context.Context,
 	client.Message,
+	string,
 ) (string, bool, error) {
 	return "", false, nil
 }

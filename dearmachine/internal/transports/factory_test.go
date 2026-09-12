@@ -22,7 +22,7 @@ func (*factoryAuthorizingTransport) Message(context.Context, string) (client.Mes
 func (*factoryAuthorizingTransport) Reply(context.Context, string, client.ReplyPayload, string) (string, error) {
 	return "", nil
 }
-func (*factoryAuthorizingTransport) ReplyReceipt(context.Context, client.Message) (string, bool, error) {
+func (*factoryAuthorizingTransport) ReplyReceipt(context.Context, client.Message, string) (string, bool, error) {
 	return "", false, nil
 }
 func (*factoryAuthorizingTransport) MarkProcessed(context.Context, string) error { return nil }
