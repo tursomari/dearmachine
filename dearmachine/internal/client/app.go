@@ -331,7 +331,7 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		if err != nil {
 			return fmt.Errorf("claim message %s: %w", message.MessageID, err)
 		}
-		if preserveForward {
+		if preserveForward && !pending.PreserveOriginalBody {
 			if err := a.store.PreservePendingOriginalBody(message.MessageID); err != nil {
 				return err
 			}

@@ -416,6 +416,41 @@ func TestForwardConfirmationSurvivesStoreRestart(t *testing.T) {
 	}
 }
 
+func TestRecoveredPreservedForwardIsIdempotentWhenPolledAgain(t *testing.T) {
+	rig, transport, source := forwardTestRig(t)
+	forward := Message{
+		MessageID: "recovered-preserved-forward",
+		ThreadID:  source.ThreadID,
+		From:      "user@example.com",
+		Body: "Continue the ordinary thread.\n\n---------- Forwarded message ---------\n" +
+			"From: Someone <someone@example.com>\nDate: Today\nTo: User <user@example.com>\nSubject: No reference\n\nDetails.",
+	}
+	forward.RawBody = forward.Body
+	transport.setPoll([]Message{forward})
+	pending, existed, err := rig.store.BeginMessageWithReference(
+		forward.MessageID,
+		forward.ThreadID,
+		"",
+		rig.app.responseTier,
+	)
+	if err != nil || existed {
+		t.Fatalf("BeginMessageWithReference = %+v, %t, %v", pending, existed, err)
+	}
+	if err := rig.store.PreservePendingOriginalBody(forward.MessageID); err != nil {
+		t.Fatalf("PreservePendingOriginalBody: %v", err)
+	}
+	if err := rig.store.MarkRunning(forward.MessageID, "persisted recovery prompt"); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+
+	rig.setAnswer("Recovered answer.")
+	mustProcess(t, rig)
+	continued := rig.session(source.ThreadID)
+	if continued.SessionID != source.SessionID || continued.Sequence != 2 {
+		t.Fatalf("recovered forward did not continue source: source=%+v continued=%+v", source, continued)
+	}
+}
+
 func TestConfirmedForkTakesSourceLaneBeforeQueuedSourceFollowUp(t *testing.T) {
 	queue := newThreadWorkQueue()
 	source := messageWork{pending: PendingMessage{MessageID: "source-active", ThreadID: "source-thread", State: messageReceived, Session: Session{Sequence: 4}}}
