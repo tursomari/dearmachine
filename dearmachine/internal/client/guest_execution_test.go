@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -96,5 +97,38 @@ func TestGuestRevocationBlocksQueuedTrustedAndRecoveredWork(t *testing.T) {
 	admitted, trusted, err := rig.store.ParticipantStatus(key.Address)
 	if err != nil || !admitted || !trusted {
 		t.Fatal("grant revocation erased retained admission/trust")
+	}
+}
+
+func TestGuestHistoricalInvitationStartsOnlyApprovedNewWork(t *testing.T) {
+	rig, raw, router, pair, inbox := newParticipantTestRig(t)
+	invitation := Message{MessageID: "historical-invite", ThreadID: "historical-thread", From: pair.UserEmail, To: []string{inbox.Address, "guest@example.test"}, Body: "OLD_OWNER_INSTRUCTION", Timestamp: time.Now().UTC().Add(-time.Hour)}
+	raw.setThread(invitation.ThreadID, []Message{invitation})
+	if _, err := router.Invite(context.Background(), pair.ID, invitation.MessageID, "guest@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	seedAdmittedParticipants(t, rig.store, "guest@example.test")
+	guest := Message{MessageID: "new-guest-work", ThreadID: invitation.ThreadID, From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "NEW_GUEST_INSTRUCTION", Timestamp: time.Now().UTC()}
+	raw.setThread(guest.ThreadID, []Message{invitation, guest})
+	raw.setPoll([]Message{guest})
+	mustProcess(t, rig)
+	if _, err := os.Stat(filepath.Join(rig.captureDir, "count")); !os.IsNotExist(err) {
+		t.Fatal("historical authorization executed work without approval")
+	}
+	approval := raw.sentReplies()[0]
+	yes := Message{MessageID: "historical-yes", ThreadID: guest.ThreadID, From: pair.UserEmail, To: []string{inbox.Address}, Body: "Yes", InReplyTo: approval.ReceiptID, Timestamp: guest.Timestamp.Add(time.Minute)}
+	raw.setThread(guest.ThreadID, []Message{invitation, guest, yes})
+	raw.setPoll([]Message{yes})
+	router.lastPoll = time.Time{}
+	mustProcess(t, rig)
+	if rig.capture("count") != "1" {
+		t.Fatal("approved new work did not start exactly once")
+	}
+	if pending, found, err := rig.store.PendingByID(invitation.MessageID); err != nil || found {
+		t.Fatalf("historical invitation became work: %+v %v %v", pending, found, err)
+	}
+	result := raw.sentReplies()[1]
+	if !equalFoldSlice(result.To, []string{pair.UserEmail}) || len(result.CC) != 0 || len(result.BCC) != 0 {
+		t.Fatal("guest result escaped the private controller route")
 	}
 }

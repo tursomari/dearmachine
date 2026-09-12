@@ -758,6 +758,7 @@ func (a *App) handleParticipantControl(
 			"",
 			participantResolvedOther,
 			true,
+			a.responseTier,
 		)
 		if err != nil {
 			return err
@@ -778,6 +779,7 @@ func (a *App) handleParticipantControl(
 			message.MessageID,
 			participantResolvedYes,
 			false,
+			a.responseTier,
 		)
 		if err != nil {
 			return err

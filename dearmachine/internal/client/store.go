@@ -1297,6 +1297,7 @@ func (s *Store) MaterializeParticipantExecution(
 	controlMessageID string,
 	state string,
 	sanitizeControlBody bool,
+	responseTier ResponseTier,
 ) (PendingMessage, error) {
 	executionMessageID = strings.TrimSpace(executionMessageID)
 	controlMessageID = strings.TrimSpace(controlMessageID)
@@ -1346,10 +1347,25 @@ func (s *Store) MaterializeParticipantExecution(
 	if err != nil {
 		return PendingMessage{}, fmt.Errorf("resolve participant execution thread: %w", err)
 	}
-	if !found {
-		return PendingMessage{}, fmt.Errorf("participant execution thread is not known")
-	}
 	var session Session
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if !found {
+		// An explicit historical grant may precede any local session. Create
+		// one only with this approved new work, without claiming old messages
+		// or accepting a guest-supplied conversation reference.
+		tier, err := ParseResponseTier(string(responseTier))
+		if err != nil {
+			return PendingMessage{}, err
+		}
+		canonicalThreadID = stored.ExternalThreadID
+		session = Session{ThreadID: canonicalThreadID, Status: "active", ResponseTier: tier}
+		if _, err := s.insertThreadSession(tx, session, now); err != nil {
+			return PendingMessage{}, fmt.Errorf("create approved participant session: %w", err)
+		}
+		if _, err := tx.Exec(`INSERT INTO thread_aliases (external_thread_id, canonical_thread_id) VALUES (?, ?)`, stored.ExternalThreadID, canonicalThreadID); err != nil {
+			return PendingMessage{}, fmt.Errorf("map approved participant session: %w", err)
+		}
+	}
 	if err := scanSession(tx.QueryRow(
 		`SELECT thread_id, session_id, sequence, status, response_tier
 		   FROM thread_sessions WHERE thread_id = ?`,
@@ -1381,7 +1397,6 @@ func (s *Store) MaterializeParticipantExecution(
 		ControllingParticipant: stored.ControllingParticipant,
 		SanitizeControlBody:    sanitizeControlBody,
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
 	sanitize := 0
 	if sanitizeControlBody {
 		sanitize = 1

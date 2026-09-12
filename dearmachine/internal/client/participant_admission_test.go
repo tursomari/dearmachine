@@ -553,7 +553,7 @@ func TestParticipantApprovedInstructionRecoveryDoesNotTreatApprovalAsFinalReply(
 	}
 	if _, err := rig.store.MaterializeParticipantExecution(
 		request, participant.MessageID, "controller-approved-recovery",
-		participantResolvedYes, false,
+		participantResolvedYes, false, TierPlain,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -729,7 +729,7 @@ func TestParticipantReplacementRecoverySanitizesProviderRefetch(t *testing.T) {
 		t.Fatalf("ParticipantRequestByMessage = %+v, %v, %v", request, found, err)
 	}
 	if _, err := rig.store.MaterializeParticipantExecution(
-		request, replacement.MessageID, "", participantResolvedOther, true,
+		request, replacement.MessageID, "", participantResolvedOther, true, TierPlain,
 	); err != nil {
 		t.Fatalf("MaterializeParticipantExecution: %v", err)
 	}
