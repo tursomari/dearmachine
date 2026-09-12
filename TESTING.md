@@ -179,3 +179,12 @@ release manager and source snapshot container test lives in the sibling
 installer's `tests/managed-nix/run.sh`, documented in its `TESTING.md`.
 The container uses an explicitly supplied candidate native CLI, never a command
 resolved from the host installation.
+
+## Guest authorization verification
+
+[The guest verification guide](verification/guest/README.md) documents the
+pinned Gobra/TLC runner, finite model, intentional counterexamples, production
+policy correspondence and trusted boundaries. Run its credential-free container
+checks alongside `go test ./internal/client -run '^TestGuest' -count=1` when the
+guest authorization lifecycle changes. These checks do not authenticate external
+email providers or establish model obedience.
