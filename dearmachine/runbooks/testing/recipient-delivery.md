@@ -119,3 +119,23 @@ container remains. Delete only the inboxes and policy rules inventoried for the
 run. Verify every deleted provider ID is absent or explicitly soft-deleted, and
 confirm the normal service, protected inbox, registry, and databases are
 unchanged.
+
+
+## Answer recipients after an explicit guest grant
+
+For each supported receiver, explicitly grant a visible invitation and exercise:
+
+1. Guest Reply All, private admission and instruction approval, then an answer
+   with the owner in To and the guest in CC.
+2. Owner request with an active guest in To or CC, then an answer to both.
+3. Owner continuation omitting the guest, then an owner-only answer. Verify the
+   guest inbox received no copy using a distinct synthetic result marker.
+4. BCC-only, revoked and ungranted recipients never enter answer CC.
+5. Lost send response and client restart retain the original answer envelope;
+   the private approval prompt cannot be mistaken for the final answer.
+6. Verify AgentMail receive/reply/send and OpenMail inbound/outbound entries
+   individually. Revoke one of two grants, then the last; inspect preservation of
+   permanent/pre-existing rules and removal of every owned unneeded direction.
+
+Use the recipient transport diagnostic separately from model behavior probes.
+A synthetic answer verifies addressing and delivery, not model execution.

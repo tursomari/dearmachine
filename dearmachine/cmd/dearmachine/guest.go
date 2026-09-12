@@ -28,6 +28,9 @@ are disabled. From matching or SPF/DKIM/DMARC alone does not authenticate an own
 
 Guests must Reply All to Dear Machine and the controller. Delivery authorization,
 participant admission, instruction approval and trust are separate gates.
+Task answers go To the owner and CC active thread guests visible in the original
+request's From/To/CC. Owner continuations without the guest stay private.
+Admission and instruction approval prompts remain private to the owner.
 Revocation blocks subsequent guest execution starts, including queued/recovered
 work. It does not roll back already-started work or erase pairing/admission/trust.
 Provider errors leave synchronization pending; local revocation still applies.
@@ -155,6 +158,6 @@ func runGuest(args []string, deps dependencies) error {
 	if err = router.ReconcileGuests(ctx); err != nil {
 		return fmt.Errorf("local guest change committed; provider synchronization pending: %w", err)
 	}
-	_, err = fmt.Fprintln(outputOrDiscard(deps.stdout), "Provider receive permissions synchronized.")
+	_, err = fmt.Fprintln(outputOrDiscard(deps.stdout), "Provider guest permissions synchronized.")
 	return err
 }

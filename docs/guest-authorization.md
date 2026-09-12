@@ -46,9 +46,22 @@ not expand the exact provider-thread grant.
 Delivery authorization permits the existing private admission flow. Admission
 and approval of the held instruction are separate controller decisions. Retained
 trust can bypass routine instruction confirmation only with valid delivery
-authorization and admission. Guest work remains lower authority; approved guest
-results are sent privately to the controller. This uses the permanent pair's
-existing reply/send permissions while adding only guest receive permission.
+authorization and admission. Guest work remains lower authority. Admission and
+instruction approval prompts are private to the controller.
+
+Task answers put the controller in To. CC includes only active guests for that
+exact pair/inbox/thread who appear in the original request's From, To or CC.
+An approved guest request is answered to the controller and that guest. An owner
+request visibly including an authorized guest is also answered to both. When
+the owner continues without that guest in To/CC, the answer goes only to the
+owner. BCC and quoted/body addresses never add answer recipients. The private
+approval message does not determine recipients for the approved guest request.
+
+The answer envelope is persisted immediately before first submission. Recovery
+matches the complete envelope; retries use the same envelope and idempotency key.
+Later invitations or changes to a provider refetch cannot widen that delivery.
+Already-submitted deliveries, including uncertain sends, may complete after
+revocation. No email already delivered can be recalled by revoking a grant.
 
 ## Revocation and provider synchronization
 
@@ -63,15 +76,18 @@ invitation (when supported) or explicit validated `allow` can restore access.
 Grant generations and durable message correlation keep prior held/queued work
 invalid after reauthorization. Send a new guest instruction for the new grant.
 
-Receive permissions are shared across every applicable grant and permanent pair
+Provider receive and outbound permissions are shared across every applicable grant and permanent pair
 in the provider inbox. Only a final unneeded entry with established DearMachine
-ownership may be removed. Pre-existing entries, uncertain additions after lost
+ownership may be removed. AgentMail needs separate receive, reply and send
+entries; OpenMail needs inbound and outbound rules. Sendmux retains its receive
+filter and uses the configured sending capability. Ownership is tracked
+independently for every provider permission direction. Pre-existing entries, uncertain additions after lost
 responses, and externally changed entries are preserved. Sendmux removal uses
 its filter ETag; a changed revision conservatively loses ownership. No guest
 operation changes a provider's global policy mode or unrelated rules.
 
 Local changes commit before remote reconciliation. `list` shows active/revoked
-grants and permission records with `Pending`, `Owned`, and `LastError`. A nonzero
+grants and permission records with `Direction`, `Pending`, `Owned`, and `LastError`. A nonzero
 exit after local success says synchronization is pending. Local revocation still
 applies while credentials or the provider are unavailable. The daemon retries
 pending intents on subsequent polls; an explicit command also reconciles them.

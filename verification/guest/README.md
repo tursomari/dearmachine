@@ -95,3 +95,19 @@ owned, and uncertain or pre-existing rules are preserved. Providers without
 conditional deletion also require external operators not to replace that exact
 entry between inspection and deletion. External provider correctness and
 concurrent out-of-band mutation cannot be proved by the local model.
+
+
+## Answer recipients and permission directions
+
+The reconciliation model applies independently to each exact provider permission
+entry, including its direction. Receive, reply and send entries share the grant
+reference predicate but have separate durable ownership and operation records.
+Migration preserves the existing receive entry identity and does not adopt
+pre-existing outbound rules. Directional migration, partial failure and final
+reference removal have Go conformance tests; no new refinement claim is made.
+
+Answer-recipient selection and persisted outbound envelopes are covered by Go
+integration and adapter tests. They are outside the three Gobra-verified Boolean
+contracts and the finite TLC execution-start model. Recipient selection uses the
+original instruction's visible headers and exact active grants when first
+submitting the result. Retries preserve that already-submitted envelope.

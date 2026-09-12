@@ -205,3 +205,12 @@ and scratch state. It mounts no host state or credentials and removes its exact
 image afterward. Source hashes and logs stay in the new output directory.
 Use `--docker-host unix:///var/run/docker.sock` when needed. The host Nix gate
 remains mandatory and checks the repository's own pinned production toolchain.
+
+
+Guest answer-recipient regressions live in `guest_reply_test.go` and
+`reply_cc_test.go`. They cover owner/guest visibility, private approval prompts,
+full-envelope receipt recovery, persisted retry recipients, and real SDK request
+encoding for AgentMail, OpenMail JSON/multipart, and both Sendmux sending APIs.
+`guest_permission_test.go` additionally covers migration from receive-only state,
+per-direction ownership, shared references and uncertain outbound responses.
+The recipient-delivery runbook owns the corresponding disposable live probes.
