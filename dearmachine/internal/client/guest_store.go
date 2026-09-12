@@ -70,11 +70,15 @@ func OpenGuestStore(path string) (*GuestStore, error) {
  pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL, message_id TEXT NOT NULL, address TEXT NOT NULL, thread_id TEXT NOT NULL,
  generation INTEGER NOT NULL, PRIMARY KEY(pair_id,inbox_id,message_id));
  CREATE TABLE IF NOT EXISTS receive_permissions (
- inbox_id TEXT NOT NULL,address TEXT NOT NULL,permanent INTEGER NOT NULL DEFAULT 0,
+ inbox_id TEXT NOT NULL,address TEXT NOT NULL,direction TEXT NOT NULL DEFAULT 'receive',permanent INTEGER NOT NULL DEFAULT 0,
  pending INTEGER NOT NULL DEFAULT 1,owned INTEGER NOT NULL DEFAULT 0,token TEXT NOT NULL DEFAULT '',
  operation TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',
- PRIMARY KEY(inbox_id,address));`)
+ PRIMARY KEY(inbox_id,address,direction));`)
 	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := migrateGuestPermissionDirections(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -160,7 +164,7 @@ func (s *GuestStore) Allow(k GuestKey, evidence string, explicit bool) (GuestGra
 			return g, err
 		}
 	}
-	_, err = tx.Exec(`INSERT INTO receive_permissions(inbox_id,address) VALUES(?,?) ON CONFLICT(inbox_id,address) DO UPDATE SET pending=1`, k.InboxID, k.Address)
+	_, err = tx.Exec(`INSERT INTO receive_permissions(inbox_id,address) VALUES(?,?) ON CONFLICT(inbox_id,address,direction) DO UPDATE SET pending=1`, k.InboxID, k.Address)
 	if err != nil {
 		return g, err
 	}

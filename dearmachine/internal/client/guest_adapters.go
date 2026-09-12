@@ -14,18 +14,23 @@ import (
 	"sendmux.ai/go/management"
 )
 
-func (m *Mailbox) InspectReceive(ctx context.Context, address string) (ReceivePermission, error) {
+type agentMailPermission struct {
+	*Mailbox
+	direction string
+}
+
+func (m *agentMailPermission) InspectReceive(ctx context.Context, address string) (ReceivePermission, error) {
 	if err := exactReceiveAddress(address); err != nil {
 		return ReceivePermission{}, err
 	}
-	entry, err := m.client.Inboxes.Lists.Get(ctx, address, agentmail.InboxListGetParams{InboxID: m.inboxID, Direction: agentmail.InboxListGetParamsDirectionReceive, Type: agentmail.InboxListGetParamsTypeAllow})
+	entry, err := m.client.Inboxes.Lists.Get(ctx, address, agentmail.InboxListGetParams{InboxID: m.inboxID, Direction: agentmail.InboxListGetParamsDirection(m.direction), Type: agentmail.InboxListGetParamsTypeAllow})
 	if agentMailStatus(err, http.StatusNotFound) {
 		return ReceivePermission{}, nil
 	}
 	if err != nil {
 		return ReceivePermission{}, err
 	}
-	if entry.Entry != address || entry.Direction != "receive" || entry.ListType != "allow" || entry.EntryType != "email" {
+	if entry.Entry != address || string(entry.Direction) != m.direction || entry.ListType != "allow" || entry.EntryType != "email" {
 		return ReceivePermission{}, errors.New("AgentMail returned a different receive rule")
 	}
 	token := ""
@@ -34,11 +39,11 @@ func (m *Mailbox) InspectReceive(ctx context.Context, address string) (ReceivePe
 	}
 	return ReceivePermission{true, token}, nil
 }
-func (m *Mailbox) AddReceive(ctx context.Context, address string) (ReceivePermission, error) {
+func (m *agentMailPermission) AddReceive(ctx context.Context, address string) (ReceivePermission, error) {
 	if err := exactReceiveAddress(address); err != nil {
 		return ReceivePermission{}, err
 	}
-	entry, err := m.client.Inboxes.Lists.New(ctx, agentmail.InboxListNewParamsTypeAllow, agentmail.InboxListNewParams{InboxID: m.inboxID, Direction: agentmail.InboxListNewParamsDirectionReceive, Entry: address}, option.WithMaxRetries(0))
+	entry, err := m.client.Inboxes.Lists.New(ctx, agentmail.InboxListNewParamsTypeAllow, agentmail.InboxListNewParams{InboxID: m.inboxID, Direction: agentmail.InboxListNewParamsDirection(m.direction), Entry: address}, option.WithMaxRetries(0))
 	if agentMailStatus(err, http.StatusConflict) {
 		observed, inspectErr := m.InspectReceive(ctx, address)
 		observed.Token = ""
@@ -47,7 +52,7 @@ func (m *Mailbox) AddReceive(ctx context.Context, address string) (ReceivePermis
 	if err != nil {
 		return ReceivePermission{}, err
 	}
-	if entry.Entry != address || entry.Direction != "receive" || entry.ListType != "allow" || entry.EntryType != "email" || entry.InboxID != m.inboxID {
+	if entry.Entry != address || string(entry.Direction) != m.direction || entry.ListType != "allow" || entry.EntryType != "email" || entry.InboxID != m.inboxID {
 		return ReceivePermission{}, errors.New("AgentMail did not confirm the exact receive entry")
 	}
 	token := ""
@@ -56,7 +61,7 @@ func (m *Mailbox) AddReceive(ctx context.Context, address string) (ReceivePermis
 	}
 	return ReceivePermission{true, token}, nil
 }
-func (m *Mailbox) RemoveReceive(ctx context.Context, address, token string) error {
+func (m *agentMailPermission) RemoveReceive(ctx context.Context, address, token string) error {
 	observed, err := m.InspectReceive(ctx, address)
 	if err != nil {
 		return err
@@ -64,7 +69,7 @@ func (m *Mailbox) RemoveReceive(ctx context.Context, address, token string) erro
 	if !observed.Present || token == "" || token != observed.Token {
 		return nil
 	}
-	err = m.client.Inboxes.Lists.Delete(ctx, address, agentmail.InboxListDeleteParams{InboxID: m.inboxID, Direction: agentmail.InboxListDeleteParamsDirectionReceive, Type: agentmail.InboxListDeleteParamsTypeAllow}, option.WithMaxRetries(0))
+	err = m.client.Inboxes.Lists.Delete(ctx, address, agentmail.InboxListDeleteParams{InboxID: m.inboxID, Direction: agentmail.InboxListDeleteParamsDirection(m.direction), Type: agentmail.InboxListDeleteParamsTypeAllow}, option.WithMaxRetries(0))
 	if agentMailStatus(err, http.StatusNotFound) {
 		return nil
 	}
@@ -86,7 +91,12 @@ type openMailReceiveRule struct {
 	Value     string `json:"value"`
 }
 
-func (m *OpenMailTransport) InspectReceive(ctx context.Context, address string) (ReceivePermission, error) {
+type openMailPermission struct {
+	*OpenMailTransport
+	direction string
+}
+
+func (m *openMailPermission) InspectReceive(ctx context.Context, address string) (ReceivePermission, error) {
 	if err := exactReceiveAddress(address); err != nil {
 		return ReceivePermission{}, err
 	}
@@ -104,13 +114,13 @@ func (m *OpenMailTransport) InspectReceive(ctx context.Context, address string) 
 		return ReceivePermission{}, errors.New("OpenMail policy response omitted scoped rules")
 	}
 	for _, rule := range *policy.Rules {
-		if rule.Direction == "inbound" && rule.Type == "allow" && rule.Value == address {
+		if rule.Direction == m.direction && rule.Type == "allow" && rule.Value == address {
 			return ReceivePermission{true, rule.ID}, nil
 		}
 	}
 	return ReceivePermission{}, nil
 }
-func (m *OpenMailTransport) AddReceive(ctx context.Context, address string) (ReceivePermission, error) {
+func (m *openMailPermission) AddReceive(ctx context.Context, address string) (ReceivePermission, error) {
 	if err := exactReceiveAddress(address); err != nil {
 		return ReceivePermission{}, err
 	}
@@ -121,7 +131,7 @@ func (m *OpenMailTransport) AddReceive(ctx context.Context, address string) (Rec
 	var created struct {
 		ID string `json:"id"`
 	}
-	err = m.mutateJSON(ctx, http.MethodPost, "/v1/policy/rules?inboxId="+url.QueryEscape(inbox), openMailPolicyRule{Type: "allow", Value: address, Direction: "inbound"}, &created)
+	err = m.mutateJSON(ctx, http.MethodPost, "/v1/policy/rules?inboxId="+url.QueryEscape(inbox), openMailPolicyRule{Type: "allow", Value: address, Direction: m.direction}, &created)
 	if err != nil {
 		var apiErr *openMailAPIError
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusConflict && apiErr.Code == "rule_exists" {
@@ -141,7 +151,7 @@ func (m *OpenMailTransport) AddReceive(ctx context.Context, address string) (Rec
 	}
 	return observed, nil
 }
-func (m *OpenMailTransport) RemoveReceive(ctx context.Context, address, token string) error {
+func (m *openMailPermission) RemoveReceive(ctx context.Context, address, token string) error {
 	observed, err := m.InspectReceive(ctx, address)
 	if err != nil {
 		return err
@@ -308,4 +318,39 @@ func (t *retryTransport) RemoveReceive(ctx context.Context, address, token strin
 		return p.RemoveReceive(ctx, address, token)
 	}
 	return errors.New("receive synchronization unsupported")
+}
+
+func (m *Mailbox) InspectReceive(ctx context.Context, address string) (ReceivePermission, error) {
+	return (&agentMailPermission{m, "receive"}).InspectReceive(ctx, address)
+}
+func (m *Mailbox) AddReceive(ctx context.Context, address string) (ReceivePermission, error) {
+	return (&agentMailPermission{m, "receive"}).AddReceive(ctx, address)
+}
+func (m *Mailbox) RemoveReceive(ctx context.Context, address, token string) error {
+	return (&agentMailPermission{m, "receive"}).RemoveReceive(ctx, address, token)
+}
+func (m *Mailbox) GuestPermissionAuthorizers() map[string]ReceiveAuthorizer {
+	return map[string]ReceiveAuthorizer{"receive": &agentMailPermission{m, "receive"}, "reply": &agentMailPermission{m, "reply"}, "send": &agentMailPermission{m, "send"}}
+}
+
+func (m *OpenMailTransport) InspectReceive(ctx context.Context, address string) (ReceivePermission, error) {
+	return (&openMailPermission{m, "inbound"}).InspectReceive(ctx, address)
+}
+func (m *OpenMailTransport) AddReceive(ctx context.Context, address string) (ReceivePermission, error) {
+	return (&openMailPermission{m, "inbound"}).AddReceive(ctx, address)
+}
+func (m *OpenMailTransport) RemoveReceive(ctx context.Context, address, token string) error {
+	return (&openMailPermission{m, "inbound"}).RemoveReceive(ctx, address, token)
+}
+func (m *OpenMailTransport) GuestPermissionAuthorizers() map[string]ReceiveAuthorizer {
+	return map[string]ReceiveAuthorizer{"receive": &openMailPermission{m, "inbound"}, "send": &openMailPermission{m, "outbound"}}
+}
+
+func (t *retryTransport) GuestPermissionAuthorizers() map[string]ReceiveAuthorizer {
+	if p, ok := t.Transport.(interface {
+		GuestPermissionAuthorizers() map[string]ReceiveAuthorizer
+	}); ok {
+		return p.GuestPermissionAuthorizers()
+	}
+	return map[string]ReceiveAuthorizer{"receive": t}
 }

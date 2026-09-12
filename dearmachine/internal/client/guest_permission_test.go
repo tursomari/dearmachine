@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -183,5 +184,125 @@ func TestGuestNewReferenceWaitsForInFlightRemoval(t *testing.T) {
 	}
 	if !f.present {
 		t.Fatal("new reference was not reconciled")
+	}
+}
+
+type guestDirectionsFake struct {
+	guestPermissionFake
+	reply, send guestPermissionFake
+}
+
+func (f *guestDirectionsFake) GuestPermissionAuthorizers() map[string]ReceiveAuthorizer {
+	return map[string]ReceiveAuthorizer{"receive": &f.guestPermissionFake, "reply": &f.reply, "send": &f.send}
+}
+func TestGuestPermissionsReconcileEveryDirectionIndependently(t *testing.T) {
+	for _, preserve := range []bool{false, true} {
+		s, err := OpenGuestStore(filepath.Join(t.TempDir(), "auth.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer s.Close()
+		k := GuestKey{"p", "i", "g@example.test", "t"}
+		other := k
+		other.ThreadID = "other"
+		for _, key := range []GuestKey{k, other} {
+			if _, err = s.Allow(key, "invite", true); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f := &guestDirectionsFake{}
+		f.reply.present = preserve
+		f.reply.token = "preexisting"
+		if err = s.Reconcile(context.Background(), "i", f); err != nil {
+			t.Fatal(err)
+		}
+		if !f.present || !f.reply.present || !f.send.present {
+			t.Fatal("grant did not establish receive, reply and send permissions")
+		}
+		if err = s.Revoke(k, false); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.Reconcile(context.Background(), "i", f); err != nil {
+			t.Fatal(err)
+		}
+		if !f.send.present {
+			t.Fatal("first revoke removed shared outbound permission")
+		}
+		if err = s.Revoke(other, false); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.Reconcile(context.Background(), "i", f); err != nil {
+			t.Fatal(err)
+		}
+		if f.present || f.send.present || f.reply.present != preserve {
+			t.Fatal("final revoke lost direction ownership isolation")
+		}
+	}
+}
+
+func TestGuestPermissionUpgradeRetainsOwnedReceiveRule(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE receive_permissions(inbox_id TEXT NOT NULL,address TEXT NOT NULL,permanent INTEGER NOT NULL DEFAULT 0,pending INTEGER NOT NULL DEFAULT 1,owned INTEGER NOT NULL DEFAULT 0,token TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',PRIMARY KEY(inbox_id,address));
+ INSERT INTO receive_permissions VALUES('i','g@example.test',0,0,1,'created','','');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	s, err := OpenGuestStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	k := GuestKey{"p", "i", "g@example.test", "t"}
+	if _, err = s.Allow(k, "invite", true); err != nil {
+		t.Fatal(err)
+	}
+	f := &guestDirectionsFake{}
+	f.present = true
+	f.token = "created"
+	if err = s.Reconcile(context.Background(), "i", f); err != nil {
+		t.Fatal(err)
+	}
+	if f.adds != 0 || f.send.adds != 1 || f.reply.adds != 1 {
+		t.Fatalf("upgrade operations: receive=%d reply=%d send=%d", f.adds, f.reply.adds, f.send.adds)
+	}
+	if err = s.Revoke(k, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Reconcile(context.Background(), "i", f); err != nil {
+		t.Fatal(err)
+	}
+	if f.removes != 1 || f.reply.removes != 1 || f.send.removes != 1 {
+		t.Fatal("upgrade lost permission ownership")
+	}
+}
+
+func TestGuestOutboundLostResponseDoesNotLoseReceiveOwnership(t *testing.T) {
+	s, err := OpenGuestStore(filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	k := GuestKey{"p", "i", "g@example.test", "t"}
+	if _, err = s.Allow(k, "invite", true); err != nil {
+		t.Fatal(err)
+	}
+	f := &guestDirectionsFake{}
+	f.send.failAdd = true
+	if err = s.Reconcile(context.Background(), "i", f); err == nil {
+		t.Fatal("lost outbound response reported success")
+	}
+	if err = s.Revoke(k, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Reconcile(context.Background(), "i", f); err != nil {
+		t.Fatal(err)
+	}
+	if f.present || f.reply.present || !f.send.present {
+		t.Fatal("uncertain outbound ownership contaminated other directions")
 	}
 }

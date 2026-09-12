@@ -2,14 +2,18 @@ package client
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"syscall"
 	"time"
 )
 
-// ReceiveAuthorizer operates on one exact inbox and exact address. Token
+// ReceiveAuthorizer operates on one exact inbox, address and permission
+// direction. Directional adapters reuse this exact-entry reconciliation contract.
+// Token
 // identifies the observed rule version. Empty tokens never establish ownership.
 // RemoveReceive must preserve a rule whose token no longer matches.
 type ReceiveAuthorizer interface {
@@ -22,9 +26,9 @@ type ReceivePermission struct {
 	Token   string
 }
 type GuestPermissionStatus struct {
-	InboxID, Address          string
-	Permanent, Pending, Owned bool
-	Operation, LastError      string
+	InboxID, Address, Direction string
+	Permanent, Pending, Owned   bool
+	Operation, LastError        string
 }
 
 func (s *GuestStore) PermanentReceive(inboxID, address string) error {
@@ -40,11 +44,11 @@ func (s *GuestStore) permanentReceive(inboxID, address string) error {
 	if err != nil || canonical != address || inboxID == "" {
 		return errors.New("exact inbox and canonical paired address are required")
 	}
-	_, err = s.db.Exec(`INSERT INTO receive_permissions(inbox_id,address,permanent) VALUES(?,?,1) ON CONFLICT(inbox_id,address) DO UPDATE SET permanent=1,pending=1`, inboxID, address)
+	_, err = s.db.Exec(`INSERT INTO receive_permissions(inbox_id,address,permanent) VALUES(?,?,1) ON CONFLICT(inbox_id,address,direction) DO UPDATE SET permanent=1,pending=1`, inboxID, address)
 	return err
 }
 func (s *GuestStore) PermissionStatus(inboxID string) ([]GuestPermissionStatus, error) {
-	rows, err := s.db.Query(`SELECT inbox_id,address,permanent,pending,owned,operation,last_error FROM receive_permissions WHERE inbox_id=? ORDER BY address`, inboxID)
+	rows, err := s.db.Query(`SELECT inbox_id,address,direction,permanent,pending,owned,operation,last_error FROM receive_permissions WHERE inbox_id=? ORDER BY address,direction`, inboxID)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +56,7 @@ func (s *GuestStore) PermissionStatus(inboxID string) ([]GuestPermissionStatus, 
 	out := []GuestPermissionStatus{}
 	for rows.Next() {
 		var p GuestPermissionStatus
-		if err = rows.Scan(&p.InboxID, &p.Address, &p.Permanent, &p.Pending, &p.Owned, &p.Operation, &p.LastError); err != nil {
+		if err = rows.Scan(&p.InboxID, &p.Address, &p.Direction, &p.Permanent, &p.Pending, &p.Owned, &p.Operation, &p.LastError); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -93,6 +97,15 @@ func (s *GuestStore) Reconcile(ctx context.Context, inboxID string, provider Rec
 		return err
 	}
 	defer unlock()
+	providers := map[string]ReceiveAuthorizer{"receive": provider}
+	if directional, ok := provider.(interface {
+		GuestPermissionAuthorizers() map[string]ReceiveAuthorizer
+	}); ok {
+		providers = directional.GuestPermissionAuthorizers()
+	}
+	if err := s.preparePermissionDirections(inboxID, providers); err != nil {
+		return err
+	}
 	statuses, err := s.PermissionStatus(inboxID)
 	if err != nil {
 		return err
@@ -102,22 +115,25 @@ func (s *GuestStore) Reconcile(ctx context.Context, inboxID string, provider Rec
 		if !status.Pending {
 			continue
 		}
-		if err := s.reconcileEntry(ctx, inboxID, status.Address, provider); err != nil {
+		if err := s.reconcileEntry(ctx, inboxID, status.Address, status.Direction, providers[status.Direction]); err != nil {
 			// Provider error strings can contain private request data. Persist only a
 			// content-free status; the caller receives the actual failure for reporting.
-			_, persistErr := s.db.Exec(`UPDATE receive_permissions SET pending=1,last_error='provider synchronization failed' WHERE inbox_id=? AND address=?`, inboxID, status.Address)
-			failures = append(failures, errors.Join(fmt.Errorf("receive permission for %s: %w", status.Address, err), persistErr))
+			_, persistErr := s.db.Exec(`UPDATE receive_permissions SET pending=1,last_error='provider synchronization failed' WHERE inbox_id=? AND address=? AND direction=?`, inboxID, status.Address, status.Direction)
+			failures = append(failures, errors.Join(fmt.Errorf("%s permission for %s: %w", status.Direction, status.Address, err), persistErr))
 		}
 	}
 	return errors.Join(failures...)
 }
-func (s *GuestStore) reconcileEntry(ctx context.Context, inbox, address string, p ReceiveAuthorizer) error {
+func (s *GuestStore) reconcileEntry(ctx context.Context, inbox, address, direction string, p ReceiveAuthorizer) error {
+	if p == nil {
+		return errors.New("provider permission direction unsupported")
+	}
 	// Re-read desired state after each remote operation; a concurrent local
 	// revoke/add cannot be overwritten by a stale successful response.
 	for attempt := 0; attempt < 8; attempt++ {
 		var needed, owned bool
 		var token, operation string
-		err := s.db.QueryRow(`SELECT (permanent=1 OR EXISTS(SELECT 1 FROM guest_grants WHERE inbox_id=? AND address=? AND active=1)),owned,token,operation FROM receive_permissions WHERE inbox_id=? AND address=?`, inbox, address, inbox, address).Scan(&needed, &owned, &token, &operation)
+		err := s.db.QueryRow(`SELECT (permanent=1 OR EXISTS(SELECT 1 FROM guest_grants WHERE inbox_id=? AND address=? AND active=1)),owned,token,operation FROM receive_permissions WHERE inbox_id=? AND address=? AND direction=?`, inbox, address, inbox, address, direction).Scan(&needed, &owned, &token, &operation)
 		if err != nil {
 			return err
 		}
@@ -129,13 +145,13 @@ func (s *GuestStore) reconcileEntry(ctx context.Context, inbox, address string, 
 			// An interrupted addition or externally changed entry is never adopted.
 			owned = false
 			token = ""
-			if _, err = s.db.Exec(`UPDATE receive_permissions SET owned=0,token='',operation='' WHERE inbox_id=? AND address=?`, inbox, address); err != nil {
+			if _, err = s.db.Exec(`UPDATE receive_permissions SET owned=0,token='',operation='' WHERE inbox_id=? AND address=? AND direction=?`, inbox, address, direction); err != nil {
 				return err
 			}
 		}
 		switch {
 		case needed && !observed.Present:
-			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='add',pending=1,owned=0,token='' WHERE inbox_id=? AND address=?`, inbox, address); err != nil {
+			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='add',pending=1,owned=0,token='' WHERE inbox_id=? AND address=? AND direction=?`, inbox, address, direction); err != nil {
 				return err
 			}
 			created, err := p.AddReceive(ctx, address)
@@ -145,18 +161,18 @@ func (s *GuestStore) reconcileEntry(ctx context.Context, inbox, address string, 
 			if !created.Present {
 				return errors.New("provider did not confirm receive permission")
 			}
-			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='',owned=?,token=? WHERE inbox_id=? AND address=?`, created.Token != "", created.Token, inbox, address); err != nil {
+			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='',owned=?,token=? WHERE inbox_id=? AND address=? AND direction=?`, created.Token != "", created.Token, inbox, address, direction); err != nil {
 				return err
 			}
 			continue
 		case !needed && observed.Present && owned:
-			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='remove',pending=1 WHERE inbox_id=? AND address=?`, inbox, address); err != nil {
+			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='remove',pending=1 WHERE inbox_id=? AND address=? AND direction=?`, inbox, address, direction); err != nil {
 				return err
 			}
 			if err = p.RemoveReceive(ctx, address, token); err != nil {
 				return err
 			}
-			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='',owned=0,token='' WHERE inbox_id=? AND address=?`, inbox, address); err != nil {
+			if _, err = s.db.Exec(`UPDATE receive_permissions SET operation='',owned=0,token='' WHERE inbox_id=? AND address=? AND direction=?`, inbox, address, direction); err != nil {
 				return err
 			}
 			continue
@@ -168,7 +184,7 @@ func (s *GuestStore) reconcileEntry(ctx context.Context, inbox, address string, 
 			return err
 		}
 		var current bool
-		err = tx.QueryRow(`SELECT (permanent=1 OR EXISTS(SELECT 1 FROM guest_grants WHERE inbox_id=? AND address=? AND active=1)) FROM receive_permissions WHERE inbox_id=? AND address=?`, inbox, address, inbox, address).Scan(&current)
+		err = tx.QueryRow(`SELECT (permanent=1 OR EXISTS(SELECT 1 FROM guest_grants WHERE inbox_id=? AND address=? AND active=1)) FROM receive_permissions WHERE inbox_id=? AND address=? AND direction=?`, inbox, address, inbox, address, direction).Scan(&current)
 		if err != nil {
 			tx.Rollback()
 			return err
@@ -177,7 +193,7 @@ func (s *GuestStore) reconcileEntry(ctx context.Context, inbox, address string, 
 			tx.Rollback()
 			continue
 		}
-		_, err = tx.Exec(`UPDATE receive_permissions SET pending=0,operation='',last_error='' WHERE inbox_id=? AND address=?`, inbox, address)
+		_, err = tx.Exec(`UPDATE receive_permissions SET pending=0,operation='',last_error='' WHERE inbox_id=? AND address=? AND direction=?`, inbox, address, direction)
 		if err != nil {
 			tx.Rollback()
 			return err
@@ -204,4 +220,82 @@ func (s *GuestStore) AuthorizePair(ctx context.Context, inbox Inbox, address str
 		return err
 	}
 	return authorize()
+}
+
+// Directional rows share the grant reference predicate, but never ownership.
+// Materialize durable intent before any provider operation, including upgrades
+// from a database that only tracked receiving.
+func (s *GuestStore) preparePermissionDirections(inbox string, providers map[string]ReceiveAuthorizer) error {
+	directions := make([]string, 0, len(providers))
+	for direction, p := range providers {
+		if p == nil || (direction != "receive" && direction != "reply" && direction != "send") {
+			return errors.New("invalid provider permission direction")
+		}
+		if direction != "receive" {
+			directions = append(directions, direction)
+		}
+	}
+	sort.Strings(directions)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, direction := range directions {
+		_, err = tx.Exec(`INSERT OR IGNORE INTO receive_permissions(inbox_id,address,direction,permanent,pending)
+   SELECT inbox_id,address,?,permanent,1 FROM receive_permissions WHERE inbox_id=? AND direction='receive'`, direction, inbox)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`UPDATE receive_permissions AS dest SET
+    permanent=(SELECT permanent FROM receive_permissions src WHERE src.inbox_id=dest.inbox_id AND src.address=dest.address AND src.direction='receive'),
+    pending=MAX(pending,(SELECT pending FROM receive_permissions src WHERE src.inbox_id=dest.inbox_id AND src.address=dest.address AND src.direction='receive'))
+    WHERE inbox_id=? AND direction=?`, inbox, direction)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func migrateGuestPermissionDirections(db *sql.DB) error {
+	// Inspect under the same write transaction as the migration so concurrent
+	// daemon/CLI startup cannot both migrate the old table.
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.Query(`PRAGMA table_info(receive_permissions)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var def any
+		if err = rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		found = found || name == "direction"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !found {
+		_, err = tx.Exec(`ALTER TABLE receive_permissions RENAME TO receive_permissions_v1;
+   CREATE TABLE receive_permissions(inbox_id TEXT NOT NULL,address TEXT NOT NULL,direction TEXT NOT NULL DEFAULT 'receive',
+   permanent INTEGER NOT NULL DEFAULT 0,pending INTEGER NOT NULL DEFAULT 1,owned INTEGER NOT NULL DEFAULT 0,
+   token TEXT NOT NULL DEFAULT '',operation TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',PRIMARY KEY(inbox_id,address,direction));
+   INSERT INTO receive_permissions SELECT inbox_id,address,'receive',permanent,pending,owned,token,operation,last_error FROM receive_permissions_v1;
+   DROP TABLE receive_permissions_v1;`)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
