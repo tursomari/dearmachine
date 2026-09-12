@@ -149,7 +149,11 @@ func (m *OpenMailTransport) RemoveReceive(ctx context.Context, address, token st
 	if !observed.Present || token == "" || observed.Token != token {
 		return nil
 	}
-	req, err := m.request(ctx, http.MethodDelete, "/v1/policy/rules/"+url.PathEscape(token), nil)
+	inbox, err := m.inboxID(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := m.request(ctx, http.MethodDelete, "/v1/policy/rules/"+url.PathEscape(token)+"?inboxId="+url.QueryEscape(inbox), nil)
 	if err != nil {
 		return err
 	}

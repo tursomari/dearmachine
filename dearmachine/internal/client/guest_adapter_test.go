@@ -90,6 +90,11 @@ func TestGuestOpenMailReceiveOnlyAndExactRuleID(t *testing.T) {
 			w.WriteHeader(201)
 			json.NewEncoder(w).Encode(map[string]string{"id": "owned-rule"})
 		case r.Method == "DELETE" && r.URL.Path == "/v1/policy/rules/owned-rule":
+			if r.URL.Query().Get("inboxId") != "inbox" {
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]string{"code": "inherited_rule"})
+				return
+			}
 			present = false
 			deletes++
 			w.WriteHeader(204)
