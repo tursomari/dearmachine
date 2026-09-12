@@ -319,6 +319,8 @@ func (m *Mailbox) Reply(
 	}
 	if len(payload.To) > 0 {
 		params.To = agentmail.AddressesUnionParam{OfStringArray: append([]string(nil), payload.To...)}
+		params.Cc = agentmail.AddressesUnionParam{OfStringArray: append([]string(nil), payload.CC...)}
+		params.Bcc = agentmail.AddressesUnionParam{OfStringArray: append([]string(nil), payload.BCC...)}
 	}
 	if payload.HTML != "" {
 		params.HTML = agentmail.String(payload.HTML)

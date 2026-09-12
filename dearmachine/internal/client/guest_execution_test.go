@@ -128,7 +128,7 @@ func TestGuestHistoricalInvitationStartsOnlyApprovedNewWork(t *testing.T) {
 		t.Fatalf("historical invitation became work: %+v %v %v", pending, found, err)
 	}
 	result := raw.sentReplies()[1]
-	if !equalFoldSlice(result.To, []string{pair.UserEmail}) || len(result.CC) != 0 || len(result.BCC) != 0 {
-		t.Fatal("guest result escaped the private controller route")
+	if !equalFoldSlice(result.To, []string{pair.UserEmail}) || !equalFoldSlice(result.CC, []string{"guest@example.test"}) || len(result.BCC) != 0 {
+		t.Fatal("guest result did not reach the owner and guest")
 	}
 }

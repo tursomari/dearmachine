@@ -164,6 +164,8 @@ func (f *fakeTransport) Reply(
 		ThreadID:  inbound.ThreadID,
 		From:      "device@example.com",
 		To:        recipients,
+		CC:        append([]string(nil), payload.CC...),
+		BCC:       append([]string(nil), payload.BCC...),
 		Timestamp: time.Now(),
 		Body:      payload.Text,
 		InReplyTo: messageID,

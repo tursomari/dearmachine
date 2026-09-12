@@ -103,6 +103,7 @@ type sendmuxSendFile struct {
 }
 
 type sendmuxSendRequest struct {
+	CC, BCC          []string
 	ReplyToMessageID string
 	To               []string
 	Subject          string
@@ -327,6 +328,8 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 	request := sendmuxSendRequest{
 		ReplyToMessageID: messageID,
 		To:               append([]string(nil), recipients...),
+		CC:               append([]string(nil), payload.CC...),
+		BCC:              append([]string(nil), payload.BCC...),
 		Subject:          sendmuxReplySubject(inbound.Subject),
 		Text:             payload.Text,
 		HTML:             sendmuxReplyHTML(payload.Text, payload.HTML),
@@ -772,7 +775,7 @@ func (api *sendmuxSDKAPI) Thread(ctx context.Context, mailboxID, threadID string
 
 func (api *sendmuxSDKAPI) Send(ctx context.Context, mailboxID string, request sendmuxSendRequest, idempotencyKey string) (string, error) {
 	body := mailbox.SendMailboxMessageBody{
-		To: mailboxAddresses(request.To), Subject: request.Subject,
+		To: mailboxAddresses(request.To), Cc: mailboxAddresses(request.CC), Bcc: mailboxAddresses(request.BCC), Subject: request.Subject,
 	}
 	if len(request.CustomHeaders) > 0 {
 		body.CustomHeaders = mailbox.NewOptSendMailboxMessageBodyCustomHeaders(mailbox.SendMailboxMessageBodyCustomHeaders(request.CustomHeaders))
@@ -811,6 +814,12 @@ func (api *sendmuxSDKSendingAPI) Send(ctx context.Context, from string, request 
 		To:       sending.EmailSendRequestTo{Email: request.To[0]},
 		Subject:  request.Subject,
 		HTMLBody: request.HTML,
+	}
+	for _, address := range request.CC {
+		body.Cc = append(body.Cc, sending.Recipient{Email: address})
+	}
+	for _, address := range request.BCC {
+		body.Bcc = append(body.Bcc, sending.Recipient{Email: address})
 	}
 	if request.Text != "" {
 		body.TextBody = sending.NewOptString(request.Text)

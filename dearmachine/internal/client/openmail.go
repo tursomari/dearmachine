@@ -371,13 +371,16 @@ func (transport *OpenMailTransport) Reply(
 	}
 	if len(payload.To) > 0 {
 		if len(payload.To) != 1 {
-			return "", fmt.Errorf("reply to OpenMail message %s: exactly one private recipient is required", messageID)
+			return "", fmt.Errorf("reply to OpenMail message %s: exactly one primary recipient is required", messageID)
 		}
 		var valid bool
 		recipient, valid = canonicalOpenMailAddress(payload.To[0])
 		if !valid {
-			return "", fmt.Errorf("reply to OpenMail message %s: private recipient is invalid", messageID)
+			return "", fmt.Errorf("reply to OpenMail message %s: primary recipient is invalid", messageID)
 		}
+	}
+	if len(payload.BCC) > 0 {
+		return "", fmt.Errorf("OpenMail reply does not support BCC")
 	}
 	body := payload.Text
 	if body == "" {
@@ -425,13 +428,15 @@ func (transport *OpenMailTransport) replyRequest(
 	target := transport.endpoint("/v1/inboxes/" + url.PathEscape(inboxID) + "/send")
 	if len(payload.Files) == 0 {
 		requestBody := struct {
-			To           string `json:"to"`
-			Body         string `json:"body"`
-			BodyHTML     string `json:"bodyHtml,omitempty"`
-			ThreadID     string `json:"threadId"`
-			IncludeQuote bool   `json:"includeQuote"`
+			To           string   `json:"to"`
+			CC           []string `json:"cc,omitempty"`
+			Body         string   `json:"body"`
+			BodyHTML     string   `json:"bodyHtml,omitempty"`
+			ThreadID     string   `json:"threadId"`
+			IncludeQuote bool     `json:"includeQuote"`
 		}{
 			To:           recipient,
+			CC:           append([]string(nil), payload.CC...),
 			Body:         body,
 			BodyHTML:     payload.HTML,
 			ThreadID:     threadID,
@@ -463,6 +468,11 @@ func (transport *OpenMailTransport) replyRequest(
 	}
 	for name, value := range fields {
 		if err := writer.WriteField(name, value); err != nil {
+			return nil, err
+		}
+	}
+	for _, address := range payload.CC {
+		if err := writer.WriteField("cc", address); err != nil {
 			return nil, err
 		}
 	}

@@ -243,6 +243,10 @@ CREATE TABLE IF NOT EXISTS forward_requests (
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS result_recipients (
+ message_id TEXT PRIMARY KEY, envelope TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS participant_requests (
 	request_message_id TEXT PRIMARY KEY,
 	external_thread_id TEXT NOT NULL,

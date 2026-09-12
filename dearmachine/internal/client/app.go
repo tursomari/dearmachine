@@ -842,7 +842,7 @@ func (a *App) handleParticipantControl(
 
 func (a *App) ensureForwardPrompt(ctx context.Context, message Message, request ForwardRequest) error {
 	if request.PromptMessageID == "" {
-		outboundMessageID, found, err := a.transport.ReplyReceipt(ctx, message, "")
+		outboundMessageID, found, err := a.resultReplyReceipt(ctx, message)
 		if err != nil {
 			return err
 		}
@@ -953,7 +953,7 @@ func (a *App) replyForwardControl(
 	message Message,
 	text, kind string,
 ) (string, error) {
-	outbound, found, err := a.transport.ReplyReceipt(ctx, message, "")
+	outbound, found, err := a.resultReplyReceipt(ctx, message)
 	if err != nil {
 		return "", err
 	}
@@ -1125,7 +1125,7 @@ func (a *App) processPending(
 ) error {
 	message = prepareMessageForPending(message, pending)
 	if recovering {
-		outboundMessageID, found, err := a.transport.ReplyReceipt(ctx, message, "")
+		outboundMessageID, found, err := a.resultReplyReceipt(ctx, message)
 		if err != nil {
 			return err
 		}
@@ -1267,9 +1267,9 @@ func (a *App) processPending(
 		a.minimalFooter,
 		footerQuote,
 	)
-	payload := ReplyPayload{Text: replyText}
-	if pending.Authority == authorityParticipant || pending.Authority == authorityTrustedParticipant {
-		payload = participantPrivatePayload(replyText, pending.ControllingParticipant)
+	payload, err := a.resultReplyPayload(message, ReplyPayload{Text: replyText})
+	if err != nil {
+		return err
 	}
 	tier := a.tierFor(pending)
 	if tier != TierPlain {
