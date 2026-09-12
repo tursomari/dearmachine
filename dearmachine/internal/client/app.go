@@ -1267,10 +1267,7 @@ func (a *App) processPending(
 		a.minimalFooter,
 		footerQuote,
 	)
-	payload, err := a.resultReplyPayload(message, ReplyPayload{Text: replyText})
-	if err != nil {
-		return err
-	}
+	payload := ReplyPayload{Text: replyText}
 	tier := a.tierFor(pending)
 	if tier != TierPlain {
 		payload.HTML = replyHTML(replyText)
@@ -1292,6 +1289,10 @@ func (a *App) processPending(
 		}
 	}
 	key := idempotencyKey(pending.Session.SessionID, message.MessageID)
+	payload, err = a.resultReplyPayload(message, payload)
+	if err != nil {
+		return err
+	}
 	outboundMessageID, err := a.transport.Reply(ctx, message.MessageID, payload, key)
 	if err != nil {
 		return err
