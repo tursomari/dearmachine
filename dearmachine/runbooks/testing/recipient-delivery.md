@@ -75,7 +75,7 @@ closed, and a duplicate candidate is emitted once.
 Run the exact source candidate through the production OCI/Compose path. Record
 provider receipt separately from local acceptance. An automatic-grant success
 requires a supported sender-attribution contract; never treat explicit allow as
-passing that row. Do not alter the protected `david-8699@agentmail.to` inbox.
+passing that row. Do not alter any existing production inbox or normal service.
 
 1. While guest receive permission is open, send a new guest thread and a guest
    message into another known thread without a grant. Prove provider delivery
