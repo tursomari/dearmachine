@@ -95,6 +95,10 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 		}
 		distributed := make(map[string][]Message)
 		for _, message := range messages {
+			message, err = router.normalizeDelivery(message)
+			if err != nil {
+				return nil, err
+			}
 			if containsFold(message.Labels, "sent") {
 				if err := router.raw.MarkProcessed(ctx, message.MessageID); err != nil {
 					return nil, fmt.Errorf("clear own outbound message %s: %w", message.MessageID, err)
@@ -128,7 +132,7 @@ func (router *InboxRouter) routeInbound(message Message) (Pair, error) {
 	if err != nil {
 		return Pair{}, fmt.Errorf("%w: message %s has invalid sender", errNoPairRoute, message.MessageID)
 	}
-	if !containsCanonicalAddress(message.To, router.inbox.Address) {
+	if !router.deliveredToInbox(message) {
 		return Pair{}, fmt.Errorf("%w: message %s recipient does not match inbox %s", errNoPairRoute, message.MessageID, router.inbox.Address)
 	}
 	var matches []Pair
@@ -170,7 +174,7 @@ func (router *InboxRouter) authorize(pairID string, message Message) error {
 	if err != nil {
 		return err
 	}
-	inboundRecipient := containsCanonicalAddress(message.To, router.inbox.Address)
+	inboundRecipient := router.deliveredToInbox(message)
 	inbound := from == pair.UserEmail && inboundRecipient
 	if !inbound && inboundRecipient {
 		store := router.stores[pairID]
@@ -186,6 +190,43 @@ func (router *InboxRouter) authorize(pairID string, message Message) error {
 		return fmt.Errorf("message %s is not routed to pair %s", message.MessageID, pairID)
 	}
 	return nil
+}
+
+func (router *InboxRouter) normalizeDelivery(message Message) (Message, error) {
+	if strings.TrimSpace(message.Delivery.InboxID) == "" {
+		// The router constructs one raw transport for this exact registered
+		// provider inbox, so stamping legacy/test transports here is trusted
+		// transport configuration rather than a message-header inference.
+		message.Delivery.InboxID = router.inbox.ProviderID
+	} else if !strings.EqualFold(strings.TrimSpace(message.Delivery.InboxID), router.inbox.ProviderID) {
+		return Message{}, fmt.Errorf(
+			"message %s was delivered through provider inbox %s, not %s",
+			message.MessageID, message.Delivery.InboxID, router.inbox.ProviderID,
+		)
+	}
+	if strings.TrimSpace(message.Delivery.Recipient) == "" {
+		message.Delivery.Recipient = router.inbox.Address
+	}
+	if message.Delivery.Role == DeliveryRoleUnknown {
+		message.Delivery.Role = normalizeMessageDelivery(
+			message.Delivery.InboxID, message.Delivery.Recipient,
+			message.To, message.CC, message.BCC, "",
+			message.Delivery.ReadState,
+		).Role
+	}
+	if message.Delivery.ReadState == MessageReadStateUnknown {
+		switch {
+		case containsFold(message.Labels, "unread"):
+			message.Delivery.ReadState = MessageReadStateUnread
+		case containsFold(message.Labels, "read"):
+			message.Delivery.ReadState = MessageReadStateRead
+		}
+	}
+	return message, nil
+}
+
+func (router *InboxRouter) deliveredToInbox(message Message) bool {
+	return strings.EqualFold(strings.TrimSpace(message.Delivery.InboxID), router.inbox.ProviderID)
 }
 
 func (router *InboxRouter) remember(pairID string, message Message) {
@@ -248,11 +289,16 @@ func (endpoint *pairEndpoint) Thread(ctx context.Context, threadID string) ([]Me
 	}
 	endpoint.router.mu.Lock()
 	defer endpoint.router.mu.Unlock()
-	for _, message := range messages {
+	for index, message := range messages {
+		message, err = endpoint.router.normalizeDelivery(message)
+		if err != nil {
+			return nil, err
+		}
 		if err := endpoint.router.authorize(endpoint.pairID, message); err != nil {
 			return nil, err
 		}
 		endpoint.router.remember(endpoint.pairID, message)
+		messages[index] = message
 	}
 	return messages, nil
 }
@@ -264,6 +310,10 @@ func (endpoint *pairEndpoint) Message(ctx context.Context, messageID string) (Me
 	}
 	endpoint.router.mu.Lock()
 	defer endpoint.router.mu.Unlock()
+	message, err = endpoint.router.normalizeDelivery(message)
+	if err != nil {
+		return Message{}, err
+	}
 	if err := endpoint.router.authorize(endpoint.pairID, message); err != nil {
 		return Message{}, err
 	}

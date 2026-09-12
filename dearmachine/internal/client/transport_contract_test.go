@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestFakeTransportContractPollAndThreadReturnNormalizedMessages(t *testing.T) {
@@ -23,6 +24,20 @@ func TestFakeTransportContractPollAndThreadReturnNormalizedMessages(t *testing.T
 	thread, err := transport.Thread(context.Background(), "thread-1")
 	if err != nil || len(thread) != 1 || thread[0].MessageID != "inbound-1" {
 		t.Fatalf("Thread = %+v, %v", thread, err)
+	}
+}
+
+func TestPolledMessageSeamFiltersReadAndDeduplicatesAllAdapters(t *testing.T) {
+	messages := finalizePolledMessages([]Message{
+		{MessageID: "state-race", CreatedAt: time.Unix(0, 0), Delivery: MessageDelivery{ReadState: MessageReadStateRead}},
+		{MessageID: "state-race", CreatedAt: time.Unix(1, 0), Delivery: MessageDelivery{ReadState: MessageReadStateUnread}},
+		{MessageID: "unread", CreatedAt: time.Unix(2, 0), Delivery: MessageDelivery{ReadState: MessageReadStateUnread}},
+		{MessageID: "read", CreatedAt: time.Unix(1, 0), Delivery: MessageDelivery{ReadState: MessageReadStateRead}},
+		{MessageID: "unread", CreatedAt: time.Unix(2, 0), Delivery: MessageDelivery{ReadState: MessageReadStateUnread}},
+		{MessageID: "sent", CreatedAt: time.Unix(3, 0), Labels: []string{"sent"}, Delivery: MessageDelivery{ReadState: MessageReadStateRead}},
+	})
+	if !slices.Equal(messageIDs(messages), []string{"state-race", "unread", "sent"}) {
+		t.Fatalf("eligible messages = %+v", messages)
 	}
 }
 

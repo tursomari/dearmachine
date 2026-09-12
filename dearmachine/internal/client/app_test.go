@@ -45,10 +45,13 @@ type fakeAgentMail struct {
 	mu       sync.Mutex
 	messages map[string]agentmail.Message
 	unread   map[string]bool
-	replies  []sentReply
-	replyIDs map[string]string
-	polls    chan time.Time
-	failures map[string]fakeHTTPResponse
+	// omitUnread simulates AgentMail's live behavior where a message carrying
+	// the unread label is absent from labels=unread results.
+	omitUnread map[string]bool
+	replies    []sentReply
+	replyIDs   map[string]string
+	polls      chan time.Time
+	failures   map[string]fakeHTTPResponse
 }
 
 type testRig struct {
@@ -1616,12 +1619,13 @@ func newTestRigTransport(t *testing.T, tier ResponseTier, transport Transport, m
 func newFakeAgentMail(t *testing.T) *fakeAgentMail {
 	t.Helper()
 	fake := &fakeAgentMail{
-		t:        t,
-		messages: make(map[string]agentmail.Message),
-		unread:   make(map[string]bool),
-		replyIDs: make(map[string]string),
-		polls:    make(chan time.Time, 16),
-		failures: make(map[string]fakeHTTPResponse),
+		t:          t,
+		messages:   make(map[string]agentmail.Message),
+		unread:     make(map[string]bool),
+		omitUnread: make(map[string]bool),
+		replyIDs:   make(map[string]string),
+		polls:      make(chan time.Time, 16),
+		failures:   make(map[string]fakeHTTPResponse),
 	}
 	fake.server = httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
 	return fake
@@ -1649,7 +1653,7 @@ func (f *fakeAgentMail) serveHTTP(writer http.ResponseWriter, request *http.Requ
 
 	switch {
 	case request.Method == http.MethodGet && path == prefix+"messages":
-		f.serveList(writer)
+		f.serveList(writer, request)
 	case request.Method == http.MethodGet && strings.HasPrefix(path, prefix+"messages/"):
 		messageID := strings.TrimPrefix(path, prefix+"messages/")
 		f.writeJSON(writer, f.messages[messageID])
@@ -1725,13 +1729,31 @@ func (f *fakeAgentMail) serveHTTP(writer http.ResponseWriter, request *http.Requ
 	}
 }
 
-func (f *fakeAgentMail) serveList(writer http.ResponseWriter) {
-	f.polls <- time.Now()
+func (f *fakeAgentMail) serveList(writer http.ResponseWriter, request *http.Request) {
+	if values, present := request.URL.Query()["page_token"]; present &&
+		(len(values) == 0 || strings.TrimSpace(values[0]) == "") {
+		writer.WriteHeader(http.StatusBadRequest)
+		f.writeJSON(writer, map[string]string{"error": "empty page token"})
+		return
+	}
+	filteredUnread := request.URL.Query().Get("labels") != ""
+	if filteredUnread {
+		f.polls <- time.Now()
+	}
 	var messages []agentmail.Message
 	for id, message := range f.messages {
-		if f.unread[id] {
-			messages = append(messages, message)
+		if filteredUnread && (!f.unread[id] || f.omitUnread[id]) {
+			continue
 		}
+		message.Labels = slices.DeleteFunc(slices.Clone(message.Labels), func(label string) bool {
+			return strings.EqualFold(label, "read") || strings.EqualFold(label, "unread")
+		})
+		if f.unread[id] {
+			message.Labels = append(message.Labels, "unread")
+		} else {
+			message.Labels = append(message.Labels, "read")
+		}
+		messages = append(messages, message)
 	}
 	slices.SortFunc(messages, func(a, b agentmail.Message) int {
 		return a.Timestamp.Compare(b.Timestamp)
@@ -1754,6 +1776,12 @@ func (f *fakeAgentMail) add(message agentmail.Message) {
 	defer f.mu.Unlock()
 	f.messages[message.MessageID] = message
 	f.unread[message.MessageID] = true
+}
+
+func (f *fakeAgentMail) omitFromUnreadFilter(messageID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.omitUnread[messageID] = true
 }
 
 func (f *fakeAgentMail) fail(method, path string, response fakeHTTPResponse) {

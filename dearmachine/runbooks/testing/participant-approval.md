@@ -157,6 +157,11 @@ deterministic and email-container results.
 
 ## Containerized email scenarios
 
+Before this series, run the cross-version multi-recipient prelude in
+[`recipient-delivery.md`](./recipient-delivery.md). Its final reply-all step is
+the delivery prerequisite for scenarios 1 through 3 below; do not substitute a
+synthetic message inserted directly into provider or local state.
+
 Start the isolated production Compose stack only after its effective Machtiani
 configuration proves that its OpenRouter model ID is exactly
 `z-ai/glm-5.3-flash` and its provider parameters contain

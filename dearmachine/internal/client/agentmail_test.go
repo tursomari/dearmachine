@@ -334,6 +334,40 @@ func TestMailboxTimeoutContract(t *testing.T) {
 	}
 }
 
+func TestMailboxPollRecoversUnreadMessageOmittedByLabelFilter(t *testing.T) {
+	fake, mailbox := newMailboxTestPair(t)
+	message := testMessage("message-multi", "thread-existing", "Check again")
+	message.InboxID = "device@agentmail.to"
+	message.To = []string{"Device <device@agentmail.to>"}
+	message.Cc = []string{"guest@openmail.sh"}
+	fake.add(message)
+	fake.omitFromUnreadFilter(message.MessageID)
+
+	messages, err := mailbox.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(messages) != 1 || messages[0].MessageID != message.MessageID {
+		t.Fatalf("Poll = %+v", messages)
+	}
+	normalized := messages[0]
+	if !slices.Equal(normalized.To, message.To) || !slices.Equal(normalized.CC, message.Cc) ||
+		len(normalized.BCC) != 0 || normalized.Delivery.InboxID != "test-inbox" ||
+		normalized.Delivery.Recipient != "device@agentmail.to" ||
+		normalized.Delivery.Role != DeliveryRoleTo ||
+		normalized.Delivery.ReadState != MessageReadStateUnread {
+		t.Fatalf("normalized multi-recipient delivery = %+v", normalized)
+	}
+
+	if err := mailbox.MarkProcessed(context.Background(), message.MessageID); err != nil {
+		t.Fatalf("MarkProcessed: %v", err)
+	}
+	messages, err = mailbox.Poll(context.Background())
+	if err != nil || len(messages) != 0 {
+		t.Fatalf("Poll after mark = %+v, %v", messages, err)
+	}
+}
+
 func TestMailboxNormalizeFindsQuotedFooterOutsideExtractedText(t *testing.T) {
 	reference := newConversationReference()
 	mailbox := &Mailbox{}

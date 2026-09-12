@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +66,53 @@ func TestInboxRouterRejectsUnknownAndAmbiguousRoutesBeforeDelivery(t *testing.T)
 	}
 	if len(router.pending) != 0 {
 		t.Fatalf("unknown message was delivered: %+v", router.pending)
+	}
+}
+
+func TestInboxRouterRoutesByTrustedDeliveryInsteadOfMergedHeaders(t *testing.T) {
+	inbox := Inbox{ID: testInboxUUID, Transport: "test", ProviderID: "provider", Address: "machine@example.test"}
+	pair := Pair{ID: testPairAUUID, UserEmail: "a@example.test", InboxID: inbox.ID}
+	raw := &routerTestTransport{messages: []Message{
+		{
+			MessageID: "cc", ThreadID: "thread-cc", From: pair.UserEmail,
+			To: []string{"guest@example.test"}, CC: []string{inbox.Address},
+		},
+		{
+			MessageID: "blind", ThreadID: "thread-blind", From: pair.UserEmail,
+			Delivery: MessageDelivery{InboxID: inbox.ProviderID, ReadState: MessageReadStateUnread},
+		},
+	}}
+	router, err := NewInboxRouter(raw, inbox, []Pair{pair}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, _ := router.Endpoint(pair.ID)
+	messages, err := endpoint.Poll(context.Background())
+	if err != nil || !slices.Equal(messageIDs(messages), []string{"cc", "blind"}) {
+		t.Fatalf("Poll = %+v, %v", messages, err)
+	}
+	if messages[0].Delivery.Role != DeliveryRoleCC ||
+		messages[0].Delivery.Recipient != inbox.Address ||
+		messages[1].Delivery.Role != DeliveryRoleUnknown {
+		t.Fatalf("deliveries = %+v, %+v", messages[0].Delivery, messages[1].Delivery)
+	}
+}
+
+func TestInboxRouterRejectsMismatchedProviderDelivery(t *testing.T) {
+	inbox := Inbox{ID: testInboxUUID, Transport: "test", ProviderID: "provider", Address: "machine@example.test"}
+	pair := Pair{ID: testPairAUUID, UserEmail: "a@example.test", InboxID: inbox.ID}
+	raw := &routerTestTransport{messages: []Message{{
+		MessageID: "wrong-inbox", From: pair.UserEmail,
+		Delivery: MessageDelivery{InboxID: "different-provider-inbox"},
+	}}}
+	router, err := NewInboxRouter(raw, inbox, []Pair{pair}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, _ := router.Endpoint(pair.ID)
+	if _, err := endpoint.Poll(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "different-provider-inbox") {
+		t.Fatalf("mismatched delivery error = %v", err)
 	}
 }
 

@@ -201,6 +201,7 @@ type openMailMessage struct {
 	HeaderTo     string               `json:"headerTo"`
 	DeliveryRole string               `json:"deliveryRole"`
 	CC           []string             `json:"cc"`
+	BCC          []string             `json:"bcc"`
 	Subject      string               `json:"subject"`
 	BodyText     string               `json:"bodyText"`
 	BodyHTML     string               `json:"bodyHtml"`
@@ -263,8 +264,7 @@ func (transport *OpenMailTransport) Poll(ctx context.Context) ([]Message, error)
 			break
 		}
 	}
-	sortMessages(candidates)
-	return candidates, nil
+	return finalizePolledMessages(candidates), nil
 }
 
 func (transport *OpenMailTransport) Thread(ctx context.Context, threadID string) ([]Message, error) {
@@ -650,7 +650,6 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 	if message.Direction == "inbound" && strings.TrimSpace(message.HeaderTo) != "" {
 		to = openMailAddresses(message.HeaderTo)
 	}
-	to = appendUniqueAddresses(to, message.CC...)
 	labels := []string{message.Direction}
 	if message.Direction == "outbound" {
 		labels = append(labels, "sent")
@@ -679,11 +678,21 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 		bodyReferences,
 		conversationReferencesInBodies(message.BodyText, htmlToText(message.BodyHTML)),
 	)
+	readState := MessageReadStateUnread
+	if isRead {
+		readState = MessageReadStateRead
+	}
 	return Message{
-		MessageID:              message.ID,
-		ThreadID:               message.ThreadID,
-		From:                   from,
-		To:                     to,
+		MessageID: message.ID,
+		ThreadID:  message.ThreadID,
+		From:      from,
+		To:        to,
+		CC:        append([]string(nil), message.CC...),
+		BCC:       append([]string(nil), message.BCC...),
+		Delivery: normalizeMessageDelivery(
+			transport.resolvedInboxID, transport.resolvedAddress,
+			to, message.CC, message.BCC, message.DeliveryRole, readState,
+		),
 		Timestamp:              message.CreatedAt,
 		CreatedAt:              message.CreatedAt,
 		Subject:                message.Subject,

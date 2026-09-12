@@ -328,6 +328,28 @@ func TestOpenMailTransportContract(t *testing.T) {
 	}
 }
 
+func TestOpenMailNormalizePreservesRecipientRolesAndDelivery(t *testing.T) {
+	transport := &OpenMailTransport{
+		resolvedInboxID: "inb-test",
+		resolvedAddress: "device@openmail.sh",
+	}
+	normalized := transport.normalize(openMailMessage{
+		ID: "message-multi", ThreadID: "thread-existing", Direction: "inbound",
+		FromAddr: "controller@example.test", HeaderTo: "primary@example.test",
+		ToAddr: "device@openmail.sh", CC: []string{"device@openmail.sh"},
+		BCC: []string{"audit@example.test"}, DeliveryRole: "cc",
+	}, false)
+	if !slices.Equal(normalized.To, []string{"primary@example.test"}) ||
+		!slices.Equal(normalized.CC, []string{"device@openmail.sh"}) ||
+		!slices.Equal(normalized.BCC, []string{"audit@example.test"}) ||
+		normalized.Delivery != (MessageDelivery{
+			InboxID: "inb-test", Recipient: "device@openmail.sh",
+			Role: DeliveryRoleCC, ReadState: MessageReadStateUnread,
+		}) {
+		t.Fatalf("normalized delivery = %+v", normalized)
+	}
+}
+
 func TestOpenMailReplyPreservesThreadWithPrivateRecipient(t *testing.T) {
 	fake := newFakeOpenMailAPI(t)
 	transport := fake.transport(t, "inb-test", true)

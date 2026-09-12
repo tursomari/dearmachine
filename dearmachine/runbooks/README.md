@@ -34,6 +34,9 @@ Go test suite.
   Sendmux provisioning, scoped credential handoff, fail-closed boundaries, and
   a two-turn continuation lifecycle using a separately authorized external
   correspondent.
+- [`testing/recipient-delivery.md`](./testing/recipient-delivery.md) tests the
+  shared AgentMail, OpenMail, and Sendmux recipient-role seam, AgentMail
+  filtered-list recovery, and a cross-version multi-recipient continuation.
 - [`testing/concurrent-sessions.md`](./testing/concurrent-sessions.md) compares
   sequential and three-worker processing across simultaneous email threads.
 - [`testing/queued-grace-preemption.md`](./testing/queued-grace-preemption.md)

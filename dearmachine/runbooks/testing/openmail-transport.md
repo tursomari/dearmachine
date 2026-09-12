@@ -6,6 +6,9 @@ project, or Agent Manager state. It exercises constructor configuration,
 inbox resolution, unread-thread polling, thread history, idempotent reply, and
 thread-level read acknowledgement.
 
+For To/CC/BCC preservation and the adapter-neutral routing contract, also run
+the OpenMail receiver row in [`recipient-delivery.md`](./recipient-delivery.md).
+
 Use the isolation requirements in
 [`temporary-instance.md`](./temporary-instance.md), adapted as described here.
 This is a native transport diagnostic, not evidence for the OCI or Compose

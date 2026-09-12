@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	agentmail "github.com/agentmail-to/agentmail-go"
 	"github.com/agentmail-to/agentmail-go/option"
@@ -25,6 +26,8 @@ var _ PairAuthorizer = (*Mailbox)(nil)
 type Mailbox struct {
 	client             agentmail.Client
 	inboxID            string
+	pollMu             sync.Mutex
+	recoveryAfter      time.Time
 	attachmentMu       sync.RWMutex
 	attachmentMessages map[string]string
 }
@@ -182,44 +185,93 @@ func (m *Mailbox) pollTarget() string {
 }
 
 func (m *Mailbox) Poll(ctx context.Context) ([]Message, error) {
-	var messages []Message
-	pageToken := ""
+	m.pollMu.Lock()
+	defer m.pollMu.Unlock()
 
-	for {
-		params := agentmail.InboxMessageListParams{
-			Ascending: agentmail.Bool(true),
-			Labels:    []string{"unread"},
-			Limit:     agentmail.Int(pageSize),
+	unread, err := m.listMessageSummaries(ctx, agentmail.InboxMessageListParams{
+		Ascending: agentmail.Bool(true),
+		Labels:    []string{"unread"},
+		Limit:     agentmail.Int(pageSize),
+	})
+	if err != nil {
+		return nil, err
+	}
+	recoveryParams := agentmail.InboxMessageListParams{
+		Ascending: agentmail.Bool(true),
+		Limit:     agentmail.Int(pageSize),
+	}
+	if !m.recoveryAfter.IsZero() {
+		// Keep a small overlap because providers can assign equal timestamps or
+		// make a just-delivered message visible after a later one.
+		recoveryParams.After = agentmail.Time(m.recoveryAfter.Add(-time.Minute))
+	}
+	recovery, err := m.listMessageSummaries(ctx, recoveryParams)
+	if err != nil {
+		return nil, err
+	}
+
+	nextRecoveryAfter := m.recoveryAfter
+	byID := make(map[string]bool, len(unread)+len(recovery))
+	for _, summary := range unread {
+		byID[summary.MessageID] = true
+	}
+	for _, summary := range recovery {
+		if messageTimeFromAgentMailSummary(summary).After(nextRecoveryAfter) {
+			nextRecoveryAfter = messageTimeFromAgentMailSummary(summary)
 		}
+		if containsFold(summary.Labels, "unread") {
+			if _, listedUnread := byID[summary.MessageID]; !listedUnread {
+				byID[summary.MessageID] = false
+			}
+		}
+	}
+
+	messages := make([]Message, 0, len(byID))
+	for messageID, listedUnread := range byID {
+		message, err := m.client.Inboxes.Messages.Get(
+			ctx,
+			messageID,
+			agentmail.InboxMessageGetParams{InboxID: m.inboxID},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("get AgentMail message %s: %w", messageID, err)
+		}
+		if !listedUnread && !containsFold(message.Labels, "unread") {
+			continue
+		}
+		messages = append(messages, m.normalize(*message))
+	}
+	m.recoveryAfter = nextRecoveryAfter
+	return finalizePolledMessages(messages), nil
+}
+
+func (m *Mailbox) listMessageSummaries(
+	ctx context.Context,
+	params agentmail.InboxMessageListParams,
+) ([]agentmail.InboxMessageListResponseMessage, error) {
+	var summaries []agentmail.InboxMessageListResponseMessage
+	pageToken := ""
+	for {
 		if pageToken != "" {
 			params.PageToken = agentmail.String(pageToken)
 		}
-
 		page, err := m.client.Inboxes.Messages.List(ctx, m.inboxID, params)
 		if err != nil {
 			return nil, fmt.Errorf("list AgentMail messages: %w", err)
 		}
-
-		for _, summary := range page.Messages {
-			message, err := m.client.Inboxes.Messages.Get(
-				ctx,
-				summary.MessageID,
-				agentmail.InboxMessageGetParams{InboxID: m.inboxID},
-			)
-			if err != nil {
-				return nil, fmt.Errorf("get AgentMail message %s: %w", summary.MessageID, err)
-			}
-			messages = append(messages, m.normalize(*message))
-		}
-
+		summaries = append(summaries, page.Messages...)
 		pageToken = page.NextPageToken
 		if pageToken == "" {
-			break
+			return summaries, nil
 		}
 	}
+}
 
-	sortMessages(messages)
-	return messages, nil
+func messageTimeFromAgentMailSummary(message agentmail.InboxMessageListResponseMessage) time.Time {
+	if !message.Timestamp.IsZero() {
+		return message.Timestamp
+	}
+	return message.CreatedAt
 }
 
 func (m *Mailbox) Thread(ctx context.Context, threadID string) ([]Message, error) {
@@ -585,10 +637,16 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 		})
 	}
 	normalized := Message{
-		MessageID:              message.MessageID,
-		ThreadID:               message.ThreadID,
-		From:                   message.From,
-		To:                     append([]string(nil), message.To...),
+		MessageID: message.MessageID,
+		ThreadID:  message.ThreadID,
+		From:      message.From,
+		To:        append([]string(nil), message.To...),
+		CC:        append([]string(nil), message.Cc...),
+		BCC:       append([]string(nil), message.Bcc...),
+		Delivery: normalizeMessageDelivery(
+			m.inboxID, agentMailInboxAddress(message.InboxID), message.To, message.Cc, message.Bcc, "",
+			messageReadStateFromLabels(message.Labels),
+		),
 		Timestamp:              message.Timestamp,
 		CreatedAt:              message.CreatedAt,
 		Subject:                message.Subject,
@@ -608,4 +666,22 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 		m.attachmentMu.Unlock()
 	}
 	return normalized
+}
+
+func agentMailInboxAddress(inboxID string) string {
+	if strings.Contains(inboxID, "@") {
+		return inboxID
+	}
+	return ""
+}
+
+func messageReadStateFromLabels(labels []string) MessageReadState {
+	switch {
+	case containsFold(labels, "unread"):
+		return MessageReadStateUnread
+	case containsFold(labels, "read"):
+		return MessageReadStateRead
+	default:
+		return MessageReadStateUnknown
+	}
 }

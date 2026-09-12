@@ -251,8 +251,7 @@ func (transport *SendmuxTransport) Poll(ctx context.Context) ([]Message, error) 
 		}
 		messages = append(messages, transport.normalize(raw))
 	}
-	sortMessages(messages)
-	return messages, nil
+	return finalizePolledMessages(messages), nil
 }
 
 func (transport *SendmuxTransport) Thread(ctx context.Context, threadID string) ([]Message, error) {
@@ -488,7 +487,10 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 		labels = append(labels, "unread")
 	}
 	to := append([]string(nil), raw.To...)
-	to = appendUniqueStringsFold(to, raw.CC...)
+	readState := MessageReadStateUnread
+	if raw.Seen {
+		readState = MessageReadStateRead
+	}
 	attachments := make([]AttachmentRef, 0, len(raw.Attachments))
 	for _, attachment := range raw.Attachments {
 		attachments = append(attachments, AttachmentRef{
@@ -499,6 +501,11 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 	}
 	return Message{
 		MessageID: raw.ID, ThreadID: raw.ThreadID, From: strings.ToLower(raw.From), To: to,
+		CC: append([]string(nil), raw.CC...), BCC: append([]string(nil), raw.BCC...),
+		Delivery: normalizeMessageDelivery(
+			transport.resolved.ID, transport.resolved.Email,
+			to, raw.CC, raw.BCC, "", readState,
+		),
 		Timestamp: firstNonZeroTime(raw.ReceivedAt, raw.SentAt), CreatedAt: firstNonZeroTime(raw.ReceivedAt, raw.SentAt),
 		Subject: raw.Subject, Body: body, RawBody: rawBody, InReplyTo: raw.InReplyTo,
 		References:             append([]string(nil), raw.References...),

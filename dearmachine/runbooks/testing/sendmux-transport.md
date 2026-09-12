@@ -6,6 +6,9 @@ mailbox transport. It proves one complete two-turn conversation:
 
 `external send -> Dear Machine reply -> external reply -> Dear Machine reply`
 
+For To/CC/BCC preservation and the adapter-neutral routing contract, also run
+the Sendmux receiver row in [`recipient-delivery.md`](./recipient-delivery.md).
+
 Use the isolation requirements in
 [`temporary-instance.md`](./temporary-instance.md). This is a native transport
 diagnostic unless the test explicitly follows the containerized production

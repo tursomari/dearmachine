@@ -20,7 +20,11 @@ func TestParticipantInstructionRequiresPrivateCorrelatedApproval(t *testing.T) {
 	const secret = "PARTICIPANT_SECRET_DO_NOT_PERSIST"
 	participant := Message{
 		MessageID: "participant-1", ThreadID: "thread-shared",
-		From: "Guest <guest@example.test>", To: []string{inbox.Address},
+		From: "Guest <guest@example.test>", To: []string{pair.UserEmail}, CC: []string{inbox.Address},
+		Delivery: MessageDelivery{
+			InboxID: inbox.ProviderID, Recipient: inbox.Address,
+			Role: DeliveryRoleCC, ReadState: MessageReadStateUnread,
+		},
 		Subject: "Re: shared work", Body: secret,
 		Timestamp: time.Date(2026, 9, 11, 20, 45, 0, 0, time.UTC),
 	}

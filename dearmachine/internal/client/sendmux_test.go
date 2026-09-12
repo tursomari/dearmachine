@@ -198,6 +198,26 @@ func TestSendmuxTransportContract(t *testing.T) {
 	}
 }
 
+func TestSendmuxNormalizePreservesRecipientRolesAndDelivery(t *testing.T) {
+	transport := &SendmuxTransport{resolved: sendmuxMailboxInfo{
+		ID: "mbx-test", Email: "device@myagent.mx",
+	}}
+	normalized := transport.normalize(sendmuxRawMessage{
+		ID: "message-multi", ThreadID: "thread-existing",
+		From: "controller@example.test", To: []string{"primary@example.test"},
+		CC: []string{"Device <device@myagent.mx>"}, BCC: []string{"audit@example.test"},
+	})
+	if !slices.Equal(normalized.To, []string{"primary@example.test"}) ||
+		!slices.Equal(normalized.CC, []string{"Device <device@myagent.mx>"}) ||
+		!slices.Equal(normalized.BCC, []string{"audit@example.test"}) ||
+		normalized.Delivery.InboxID != "mbx-test" ||
+		normalized.Delivery.Recipient != "device@myagent.mx" ||
+		normalized.Delivery.Role != DeliveryRoleCC ||
+		normalized.Delivery.ReadState != MessageReadStateUnread {
+		t.Fatalf("normalized delivery = %+v", normalized)
+	}
+}
+
 func TestSendmuxMutationsHonorInjectedReadOnlyConfiguration(t *testing.T) {
 	fake := newFakeSendmuxAPI("")
 	transport, err := newSendmuxTransport(sendmuxTransportConfig{

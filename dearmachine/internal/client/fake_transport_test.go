@@ -274,6 +274,8 @@ func cloneMessages(messages []Message) []Message {
 
 func cloneMessage(message Message) Message {
 	message.To = append([]string(nil), message.To...)
+	message.CC = append([]string(nil), message.CC...)
+	message.BCC = append([]string(nil), message.BCC...)
 	message.References = append([]string(nil), message.References...)
 	message.ConversationReferences = append([]string(nil), message.ConversationReferences...)
 	message.Labels = append([]string(nil), message.Labels...)
