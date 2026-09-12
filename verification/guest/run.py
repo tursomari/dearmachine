@@ -19,7 +19,7 @@ def main():
     parser.add_argument('--docker-host', help='Explicit Docker socket, if needed')
     parser.add_argument('--tlc-jar', type=Path, help='Pre-downloaded pinned tla2tools.jar')
     parser.add_argument('--output', type=Path, required=True, help='New artifact directory outside the checkout')
-    parser.add_argument('--expand', action='store_true', help='Explore two threads sharing one provider entry')
+    parser.add_argument('--expand', action='store_true', help='Also explore multiple scopes and shared provider entries')
     args = parser.parse_args()
     output = args.output.resolve()
     if output == ROOT or ROOT in output.parents:
@@ -33,8 +33,9 @@ def main():
         if hashlib.sha256(data).hexdigest() != TLC_SHA:
             raise SystemExit('TLC checksum mismatch')
         (snapshot / 'tla2tools.jar').write_bytes(data)
-        for file in ('Guest.tla', 'Guest.cfg'):
+        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg'):
             shutil.copyfile(ROOT / 'verification/guest' / file, snapshot / file)
+            shutil.copyfile(snapshot / file, output / file)
         source = (ROOT / 'dearmachine/internal/client/guest_policy.go').read_text()
         (output / 'source.sha256').write_text(hashlib.sha256(source.encode()).hexdigest() + '\n')
         # Gobra receives the exact production declarations and bodies; only
@@ -50,11 +51,41 @@ def main():
         run('gobra', common + [IMAGE, '-i', '/proof/policy.gobra'], marker='Gobra found 0 errors')
         tlc = common + ['--entrypoint', 'java', IMAGE, '-XX:+UseParallelGC', '-Xmx2g', '-cp', '/proof/tla2tools.jar', 'tlc2.TLC', '-workers', '2', '-metadir', '/tmp/tlc']
         config = (snapshot / 'Guest.cfg').read_text()
+        participation = (snapshot / 'Participation.cfg').read_text()
+        def workflow(label, cfg, invariant=None):
+            path = label + '.cfg'
+            if invariant:
+                cfg = cfg.replace('INVARIANTS Safety TypeOK AnswerPrivacy',
+                                  'INVARIANTS Safety TypeOK AnswerPrivacy ' + invariant)
+            (snapshot / path).write_text(cfg)
+            shutil.copyfile(snapshot / path, output / path)
+            expected = 12 if invariant or 'Mutation = "None"' not in cfg else 0
+            marker = (f'Invariant {invariant or "Safety"} is violated'
+                      if expected else 'Model checking completed. No error has been found.')
+            run(label, tlc + ['-config', '/proof/' + path, '/proof/Participation.tla'],
+                expected, marker)
+        for mutant in ('ForgedInvitation', 'ForgedGuest', 'ForgedOwner',
+                       'ForgedApproval', 'ForgedRevocation', 'ReplayInvitation',
+                       'ImplicitReinvite', 'WrongApprovalRequest', 'PublicApproval',
+                       'ReuseApproval', 'StartRevoked', 'StaleExecution',
+                       'HistoricalRecipients', 'MutableRetry', 'OmissionRevokes',
+                       'WrongRevocationScope', 'WrongDeliveryScope'):
+            cfg = participation.replace('Mutation = "None"', f'Mutation = "{mutant}"')
+            if mutant in ('WrongRevocationScope', 'WrongDeliveryScope'):
+                cfg = cfg.replace('Scopes = {s1}', 'Scopes = {s1, s2}')
+                cfg = cfg.replace('GuestMessages = {g1, g2}', 'GuestMessages = {g1}')
+            workflow('participation-' + mutant, cfg)
+        for witness in ('NoRepeatedAnswers', 'NoPrivateContinuation', 'NoReinvitation'):
+            workflow('participation-' + witness, participation, witness)
+        workflow('participation', participation)
         for mutant in ('KnownOnly', 'StaleDecision', 'ReplayInvitation', 'DeleteUnowned'):
             (snapshot / (mutant + '.cfg')).write_text(config.replace(mutant + ' = FALSE', mutant + ' = TRUE'))
             run(mutant, tlc + ['-config', '/proof/' + mutant + '.cfg', '/proof/Guest.tla'], 12, 'Invariant Safety is violated')
         run('tlc', tlc + ['-config', '/proof/Guest.cfg', '/proof/Guest.tla'], marker='Model checking completed. No error has been found.')
         if args.expand:
+            scoped = participation.replace('Scopes = {s1}', 'Scopes = {s1, s2}')
+            scoped = scoped.replace('GuestMessages = {g1, g2}', 'GuestMessages = {g1}')
+            workflow('participation-scopes', scoped)
             (snapshot / 'Expanded.cfg').write_text(config.replace('Threads = {t1}', 'Threads = {t1, t2}'))
             run('tlc-expanded', tlc + ['-config', '/proof/Expanded.cfg', '/proof/Guest.tla'], marker='Model checking completed. No error has been found.')
             matrix = config.replace('Sparse = FALSE', 'Sparse = TRUE')

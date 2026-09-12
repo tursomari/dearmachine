@@ -100,3 +100,37 @@ An OpenMail-only diagnostic then stopped at HTTP 429 while sending an
 invitation. All created inboxes were deleted and absence verified. Consequently
 provider-delivered shared answers and private continuations remain unverified
 live; these diagnostics are not a completed participant/model evaluation.
+
+## Proposed participation protocol, 2026-09-12
+
+`Participation.tla` adds design verification for authenticated owner To/CC
+invitations, independent approval of every guest message, private owner
+continuations, exact revocation tokens, and explicit reinvitation after
+revocation. This change does not implement that protocol in the daemon or
+establish real provider sender authentication. The existing production Gobra
+contracts and admission-flow model remain separate and unchanged.
+
+The pinned TLC runner exhausted these additional configurations with `Safety`,
+`TypeOK` and `AnswerPrivacy` intact:
+
+| Configuration | Distinct states | Generated states | Maximum depth |
+| --- | ---: | ---: | ---: |
+| One scope, two guest messages, one owner instruction | 5,820 | 26,499 | 16 |
+| Two scopes, one guest message and owner instruction each | 518,400 | 3,970,081 | 23 |
+
+All 17 deliberately weakened workflow configurations produced the required
+`Safety` counterexample and invariant-failure exit status. Three separate
+reachability checks found repeated shared guest answers, private owner answers
+while the guest remained authorized, and an approved answer after explicit
+reinvitation. They exclude a vacuous result from simply disabling participation.
+The runner retains model sources, exact workflow configurations and logs.
+
+Gobra again verified the three current production Boolean policy bodies with
+zero errors. The host `nix flake check`, installation documentation contract and
+credential-free Installation Procedure self-test passed. No live email,
+credentials or running service state were used by these checks.
+
+The [verification guide](README.md#proposed-participation-workflow) records the
+finite bounds, trusted authentication/visibility facts, separate provider model,
+and implementation obligations. The results do not prove transport evidence,
+parser behavior, database refinement, delivery or unbounded progress.

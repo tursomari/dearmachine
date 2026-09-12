@@ -3,6 +3,12 @@
 See the [validation record](VALIDATION.md) for finite-state results, live
 provider diagnostics and the remaining participant evaluation gaps.
 
+This suite contains two specifications. `Guest.tla` and the Gobra contracts
+describe the existing admission/approval policy and provider reconciliation.
+`Participation.tla` specifies the proposed owner To/CC invitation workflow with
+one approval per guest message. It is a design verification, **not a claim that
+the current application implements that workflow or rejects forged senders**.
+
 Run from the repository root after pulling the digest-pinned Gobra image:
 
 ```console
@@ -33,6 +39,75 @@ execution, replayed invitation resurrection, and deletion without ownership.
 The runner requires TLC's invariant-failure exit status, not an arbitrary
 failure such as a syntax error. Logs and the verified Go source hash are retained
 in the requested artifact directory.
+
+The same runner also checks `Participation.tla`, its intentional counterexamples
+and reachable success scenarios. It retains both model sources and the new
+workflow's exact configurations alongside the logs.
+
+## Proposed participation workflow
+
+Each scope represents exactly one owner pair, provider inbox, guest address and
+provider thread. Initial authenticated owner To/CC evidence admits that guest
+without a separate admission exchange. Every authenticated guest message has
+its own durable request, private approval prompt and owner decision; there is
+no permanent trust shortcut or thread-wide instruction approval. Approval
+tokens bind the scope, original message ID and grant generation. Authentication
+is required independently for invitations, owner instructions, guest messages,
+approvals and revocations.
+
+`Invite` persists fresh, visible outer-header evidence. Invitation processing
+precedes accepting the associated owner instruction in `ReceiveOwner`.
+`ReceiveGuest` holds each exact guest request without executing it. `Approve`
+authorizes only that request; `Start` rechecks active status and generation.
+`Submit` selects the owner and includes the guest only when the original
+instruction made the guest visible and its grant is still active in the same
+generation. Recipient sets abstract To/CC encoding; the intended encoding is
+To owner, CC guest, which needs adapter conformance tests.
+`Retry` preserves the first submission's envelope, even if revocation follows.
+Owner continuations omitting the guest neither copy nor revoke that guest.
+
+`Revoke` models an authenticated owner command whose token binds the exact scope
+and current generation. A copyable footer command can carry that token; its
+syntax, parsing and rendering are implementation work. Revocation immediately
+blocks unstarted guest work and old approval tokens. It leaves a tombstone:
+neither repeated evidence nor an ordinary fresh reply-all restores access.
+Restoration requires explicit owner reinvitation with fresh evidence, followed
+by fresh guest messages and approvals. Already-started effects and submitted
+mail cannot be recalled. Grants have no modeled clock or automatic expiry.
+
+The default bound has one scope, two independent guest messages, one owner
+instruction, two invitation evidence IDs and two grant generations. `--expand`
+also checks two scopes with one guest message and one owner instruction each.
+Seventeen mutations must fail `Safety`, covering forged senders in all five
+roles, replay and implicit reinvitation, misbound approvals, public prompts,
+reused approvals, revoked/stale execution, historical/retry recipients,
+omission-as-revocation, and wrong-scope delivery/revocation. Three additional
+expected counterexamples establish reachability of repeated shared guest
+answers, a private owner answer while the guest remains authorized, and an
+answer after explicit reinvitation. `AnswerPrivacy` independently checks every
+submitted envelope's owner, scope and original visibility.
+
+These are bounded safety checks, not a liveness or implementation proof. Scope
+values abstract the complete four-part routing key; messages and evidence are
+immutable identities, not raw email. Restarts retain all modeled state. The
+model does not verify token secrecy, MIME parsing, header provenance, approval
+text interpretation, database atomicity, multi-guest envelope composition,
+network delivery, process scheduling or agent behavior. Trusted sender evidence
+must establish the exact mailbox for this message and inbox; the model cannot
+establish that any real transport supplies it.
+
+Provider list ownership, shared references, lost responses and retries remain
+checked by `Guest.tla`. Implementing the new workflow must connect its grant
+transitions to that existing durable reconciliation path. These two models
+are checked separately; no composed refinement proof is claimed.
+
+The existing Gobra contracts and Go conformance tests remain attached to the
+current production policy. Implementation must update them together with
+adapter authentication tests, individual-message decision tests, revocation
+command tests and recipient persistence tests. In particular, the current
+delivery/execution Boolean functions do not require sender authentication, and
+the existing flow has a separate admission step. Passing this suite does not
+close those application gaps or enable automatic invitations.
 
 ## Model boundary
 
@@ -106,8 +181,10 @@ Migration preserves the existing receive entry identity and does not adopt
 pre-existing outbound rules. Directional migration, partial failure and final
 reference removal have Go conformance tests; no new refinement claim is made.
 
-Answer-recipient selection and persisted outbound envelopes are covered by Go
-integration and adapter tests. They are outside the three Gobra-verified Boolean
-contracts and the finite TLC execution-start model. Recipient selection uses the
-original instruction's visible headers and exact active grants when first
-submitting the result. Retries preserve that already-submitted envelope.
+Current answer-recipient selection and persisted outbound envelopes are covered
+by Go integration and adapter tests. They are outside the three Gobra-verified
+Boolean contracts and `Guest.tla`. The proposed `Participation.tla` adds abstract
+recipient checks but does not prove the current Go implementation. Recipient
+selection uses the original instruction's visible headers and exact active
+grants when first submitting the result. Retries preserve that already-submitted
+envelope.
