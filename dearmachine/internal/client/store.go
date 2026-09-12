@@ -1,6 +1,7 @@
 package client
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -981,8 +982,16 @@ func (s *Store) MaterializeForwardRequest(
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	canonicalThreadID, knownThread, err := resolveThreadAlias(tx, request.ExternalThreadID)
+	if err != nil {
+		return PendingMessage{}, fmt.Errorf("resolve forwarded conversation thread: %w", err)
+	}
+	newThreadID := request.ExternalThreadID
+	if knownThread {
+		newThreadID = forwardedThreadID(request.RequestMessageID)
+	}
 	session := Session{
-		ThreadID:     request.ExternalThreadID,
+		ThreadID:     newThreadID,
 		Sequence:     0,
 		Status:       "active",
 		IsNew:        !fork,
@@ -992,17 +1001,30 @@ func (s *Store) MaterializeForwardRequest(
 	if err != nil {
 		return PendingMessage{}, fmt.Errorf("create forwarded conversation: %w", err)
 	}
-	if _, err := tx.Exec(
+	if knownThread {
+		result, err := tx.Exec(
+			`UPDATE thread_aliases SET canonical_thread_id = ?
+			  WHERE external_thread_id = ? AND canonical_thread_id = ?`,
+			newThreadID, request.ExternalThreadID, canonicalThreadID,
+		)
+		if err != nil {
+			return PendingMessage{}, fmt.Errorf("rebind forwarded conversation thread: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed != 1 {
+			return PendingMessage{}, fmt.Errorf("rebind forwarded conversation thread: mapping changed")
+		}
+	} else if _, err := tx.Exec(
 		`INSERT INTO thread_aliases (external_thread_id, canonical_thread_id) VALUES (?, ?)`,
-		request.ExternalThreadID, request.ExternalThreadID,
+		request.ExternalThreadID, newThreadID,
 	); err != nil {
 		return PendingMessage{}, fmt.Errorf("bind forwarded conversation thread: %w", err)
 	}
 	pending := PendingMessage{
 		MessageID: request.RequestMessageID,
-		ThreadID:  request.ExternalThreadID,
+		ThreadID:  newThreadID,
 		Session: Session{
-			ThreadID:     request.ExternalThreadID,
+			ThreadID:     newThreadID,
 			SessionID:    session.SessionID,
 			Sequence:     1,
 			Status:       session.Status,
@@ -1037,6 +1059,11 @@ func (s *Store) MaterializeForwardRequest(
 		return PendingMessage{}, fmt.Errorf("commit forward decision: %w", err)
 	}
 	return pending, nil
+}
+
+func forwardedThreadID(messageID string) string {
+	sum := sha256.Sum256([]byte("dearmachine-forward-thread\x00" + messageID))
+	return fmt.Sprintf("forward-%x", sum[:16])
 }
 
 func (s *Store) CancelForwardRequest(externalThreadID, controlMessageID string) error {

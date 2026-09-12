@@ -141,6 +141,117 @@ func TestForwardConfirmationYesForksWithoutSendingControlMailToAgent(t *testing.
 	}
 }
 
+func TestKnownProviderThreadForwardUsesNormalizedReferenceAndRebindsContinuation(t *testing.T) {
+	rig, transport, source := forwardTestRig(t)
+	forward := Message{
+		MessageID: "known-thread-forward",
+		ThreadID:  source.ThreadID,
+		From:      "user@example.com",
+		Body: "Please adapt this for the new customer.\n\n---------- Forwarded message ---------\n" +
+			"From: Dear Machine <machine@example.com>\nDate: Today\nTo: User <user@example.com>\nSubject: Plan\n\nEarlier answer.",
+		RawBody: "Please adapt this for the new customer.\n\n---------- Forwarded message ---------\n" +
+			"From: Dear Machine <machine@example.com>\nDate: Today\nTo: User <user@example.com>\nSubject: Plan\n\nEarlier answer.",
+		InReplyTo:              "provider-reply-id",
+		References:             []string{"provider-reply-id"},
+		ConversationReferences: []string{source.SessionID},
+	}
+	transport.setPoll([]Message{forward})
+	mustProcess(t, rig)
+	if got := rig.capture("count"); got != "1" {
+		t.Fatalf("known-thread forward invoked agent before confirmation: count=%q", got)
+	}
+	if got := transport.replies[len(transport.replies)-1].Text; !strings.Contains(got, source.SessionID) || !strings.Contains(got, "Reply with only") {
+		t.Fatalf("confirmation = %q", got)
+	}
+
+	rig.setAnswer("Forked answer.")
+	transport.setPoll([]Message{{MessageID: "known-thread-yes", ThreadID: source.ThreadID, From: forward.From, Body: "Yes!"}})
+	mustProcess(t, rig)
+	child := rig.session(source.ThreadID)
+	if child.SessionID == source.SessionID || child.ThreadID == source.ThreadID || child.Sequence != 1 {
+		t.Fatalf("known provider thread was not rebound to a child session: source=%+v child=%+v", source, child)
+	}
+	if got := strings.TrimSpace(rig.capture("forked-sessions")); got != source.SessionID {
+		t.Fatalf("fork source = %q, want %q", got, source.SessionID)
+	}
+	prompt := rig.capture("text-2")
+	if !strings.Contains(prompt, "Please adapt this for the new customer.") {
+		t.Fatalf("fork prompt omitted authored request:\n%s", prompt)
+	}
+	for _, excluded := range []string{"Earlier answer", "Forwarded message", "Yes!"} {
+		if strings.Contains(prompt, excluded) {
+			t.Fatalf("fork prompt contains forwarded or control text %q:\n%s", excluded, prompt)
+		}
+	}
+
+	rig.setAnswer("Continued child answer.")
+	transport.setPoll([]Message{{MessageID: "known-thread-follow-up", ThreadID: source.ThreadID, From: forward.From, Body: "Add one detail.", InReplyTo: "known-thread-yes"}})
+	mustProcess(t, rig)
+	continued := rig.session(source.ThreadID)
+	if continued.SessionID != child.SessionID || continued.Sequence != 2 {
+		t.Fatalf("follow-up did not continue rebound child: child=%+v continued=%+v", child, continued)
+	}
+}
+
+func TestQuotedForwardHistoryInKnownThreadDoesNotRetriggerConfirmation(t *testing.T) {
+	rig, transport, source := forwardTestRig(t)
+	quoted := Message{
+		MessageID: "quoted-forward-history",
+		ThreadID:  source.ThreadID,
+		From:      "user@example.com",
+		Body: "Use concise wording.\n\n> ---------- Forwarded message ---------\n" +
+			"> From: Dear Machine <machine@example.com>\n> Date: Today\n> To: User <user@example.com>\n> Subject: Plan\n>\n> Earlier answer.\n> " +
+			strings.ReplaceAll(conversationFooter(source.SessionID), "\n", "\n> "),
+		InReplyTo:              "provider-reply-id",
+		References:             []string{"provider-reply-id"},
+		ConversationReferences: []string{source.SessionID},
+	}
+	rig.setAnswer("Concise answer.")
+	transport.setPoll([]Message{quoted})
+	mustProcess(t, rig)
+	if got := rig.capture("count"); got != "2" {
+		t.Fatalf("ordinary reply did not invoke agent: count=%q", got)
+	}
+	if got := len(transport.replies); got != 2 {
+		t.Fatalf("ordinary reply triggered control mail: replies=%d", got)
+	}
+	continued := rig.session(source.ThreadID)
+	if continued.SessionID != source.SessionID || continued.Sequence != 2 {
+		t.Fatalf("ordinary reply changed session: source=%+v continued=%+v", source, continued)
+	}
+}
+
+func TestKnownProviderThreadForwardNoStartsNewSessionWithCompleteMessage(t *testing.T) {
+	rig, transport, source := forwardTestRig(t)
+	body := "Please assess this.\n\nBegin forwarded message:\nFrom: Dear Machine <machine@example.com>\n" +
+		"Date: Today\nTo: User <user@example.com>\nSubject: Details\n\nOriginal details.\n\n" +
+		minimalConversationFooter(source.SessionID)
+	forward := Message{
+		MessageID: "known-thread-no-forward", ThreadID: source.ThreadID, From: "user@example.com",
+		Body: body, RawBody: body, InReplyTo: "provider-reply-id", References: []string{"provider-reply-id"},
+		ConversationReferences: []string{source.SessionID},
+	}
+	transport.setPoll([]Message{forward})
+	mustProcess(t, rig)
+
+	rig.setAnswer("Ordinary answer.")
+	transport.setPoll([]Message{{MessageID: "known-thread-no", ThreadID: source.ThreadID, From: forward.From, Body: "No,"}})
+	mustProcess(t, rig)
+	ordinary := rig.session(source.ThreadID)
+	if ordinary.SessionID == source.SessionID || ordinary.ThreadID == source.ThreadID || ordinary.Sequence != 1 {
+		t.Fatalf("No did not rebind the provider thread to an ordinary session: source=%+v ordinary=%+v", source, ordinary)
+	}
+	prompt := rig.capture("text-2")
+	for _, included := range []string{"Begin forwarded message", "Original details.", minimalConversationFooter(source.SessionID)} {
+		if !strings.Contains(prompt, included) {
+			t.Fatalf("ordinary prompt omitted %q:\n%s", included, prompt)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(rig.captureDir, "forked-sessions")); !os.IsNotExist(err) {
+		t.Fatalf("No decision unexpectedly forked a session: %v", err)
+	}
+}
+
 func TestForwardConfirmationNoPreservesCompleteForward(t *testing.T) {
 	rig, transport, source := forwardTestRig(t)
 	body := "Please assess this.\n\nBegin forwarded message:\nFrom: Dear Machine <machine@example.com>\n" +

@@ -27,7 +27,10 @@ func forwardedConversationReferences(
 	if body == "" {
 		body = message.Body
 	}
-	references := inlineForwardReferences(body)
+	references := mergeConversationReferences(
+		inlineForwardReferences(body),
+		message.ConversationReferences,
+	)
 	for _, attachment := range message.Attachments {
 		if !isEMLAttachment(attachment) {
 			continue
@@ -79,7 +82,7 @@ func inlineForwardReferences(body string) []string {
 	return references
 }
 
-func hasForwardStructure(message Message) bool {
+func hasTopLevelForwardStructure(message Message) bool {
 	for _, attachment := range message.Attachments {
 		if isEMLAttachment(attachment) {
 			return true
@@ -91,6 +94,9 @@ func hasForwardStructure(message Message) bool {
 	}
 	lines := strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
 	for index, raw := range lines {
+		if emailQuoteDepth(raw) > 0 {
+			continue
+		}
 		line := strings.ToLower(strings.TrimSpace(stripEmailQuotePrefix(raw)))
 		if strings.Contains(line, "forwarded message") ||
 			strings.Contains(line, "begin forwarded") ||

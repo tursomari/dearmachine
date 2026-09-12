@@ -277,7 +277,8 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		if err != nil {
 			return err
 		}
-		if !knownThread && strings.TrimSpace(original.InReplyTo) == "" && len(original.References) == 0 {
+		topLevelForward := hasTopLevelForwardStructure(original)
+		if topLevelForward || (!knownThread && strings.TrimSpace(original.InReplyTo) == "" && len(original.References) == 0) {
 			forwardReferences, detectionErr := forwardedConversationReferences(ctx, a.transport, original)
 			if detectionErr != nil {
 				a.logger.Printf("forward detection skipped message=%s: %v", message.MessageID, detectionErr)
@@ -302,7 +303,7 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 					continue
 				}
 			}
-			preserveForward = preserveForward || hasForwardStructure(original)
+			preserveForward = preserveForward || topLevelForward
 		}
 		if preserveForward {
 			conversationReference = ""

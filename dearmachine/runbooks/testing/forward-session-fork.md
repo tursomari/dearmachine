@@ -20,26 +20,32 @@ Run these scenarios in order:
    session ID.
 2. Start a new mail thread and inline-forward that reply with a new instruction.
    Prove the client sends a confirmation without starting a machtiani turn.
-3. Reply with invalid authored text. Prove the clearer prompt gives exact Yes,
+3. Repeat with a provider that groups the forward into the source thread and
+   supplies reply ancestry. Prove the normalized HTML footer still triggers the
+   confirmation, `Yes!` rebinds later replies to the fork, and the model receives
+   only the newly authored instruction.
+4. Send an ordinary reply whose quoted history contains a forwarding marker and
+   session footer. Prove it continues normally without another confirmation.
+5. Reply with invalid authored text. Prove the clearer prompt gives exact Yes,
    No, and Cancel examples and no machtiani turn starts.
-4. Reply `Yes!`. Prove the saved instruction runs in a distinct session, the
+6. Reply `Yes!`. Prove the saved instruction runs in a distinct session, the
    session reports the source as its fork ancestor, and neither confirmation
    email nor control reply appears in the model transcript.
-5. Repeat with `No,`. Prove no fork is created and the model receives the full
+7. Repeat with `No,`. Prove no fork is created and the model receives the full
    forwarded headers, body, footer, and attachment metadata.
-6. Repeat with `Cancel.`. Prove no model turn or session is created for the
+8. Repeat with `Cancel.`. Prove no model turn or session is created for the
    request.
-7. Forward two distinct local session footers. Select the second by number,
+9. Forward two distinct local session footers. Select the second by number,
    confirm it, and prove the second session is the fork source.
-8. Forward an older reply, add a newer source turn before confirming, and prove
+10. Forward an older reply, add a newer source turn before confirming, and prove
    Yes forks the current committed source state.
-9. Attach the source reply as `message/rfc822` or `.eml`; prove it follows the
+11. Attach the source reply as `message/rfc822` or `.eml`; prove it follows the
    same confirmation path. Exercise a nested multipart alternative containing
    both text and HTML.
-10. Stop the container after the initial prompt, restart it against the same
+12. Stop the container after the initial prompt, restart it against the same
     isolated state, and complete the decision. Prove one fork and one model
     turn occur.
-11. Run once with the default footer and once with `--minimal-footer`. Prove
+13. Run once with the default footer and once with `--minimal-footer`. Prove
     the minimal form contains only `session dm1-...` after the answer.
 
 Capture the effective model configuration, sanitized transport events,
