@@ -72,3 +72,31 @@ passed 100 race-enabled repetitions. A separate failing-first integration test
 also exposed approval of new guest work on a historically granted provider
 thread without a local session. Approved work now creates that session in the
 same transaction, without turning the old invitation into executable work.
+
+## Per-request answer recipients, 2026-09-12
+
+Task answers now put the owner in To and copy active guests for the exact
+pair/inbox/thread who appear in the original instruction's From, To or CC.
+Owner continuations omitting guests stay private. Admission and approval
+prompts remain private, and the first submission persists its recipient
+envelope so retries cannot expand it.
+
+Failing-first regressions cover shared owner answers, approved guest answers,
+private continuations, recipient encoding and separate provider permission
+directions. Additional tests cover revoked and unrelated guests, BCC exclusion,
+restart/retry envelopes, private-prompt versus result receipts, SQLite migration
+and uncertain outbound permission ownership. The complete offline Go suite,
+race tests and vet passed, as did the host Nix checks. Installer prompt contract,
+typecheck, full tests and runtime build passed. The existing Boolean proofs
+are unchanged; they do not prove the new recipient selection or persistence.
+
+Two disposable cross-provider diagnostics confirmed candidate reconciliation
+created the AgentMail receive/reply/send entries and OpenMail inbound/outbound
+entries. OpenMail-to-AgentMail guest requests arrived, but the reverse guest
+request did not arrive within the diagnostic deadlines despite AgentMail
+accepting it. Scoped OpenMail rejection audits returned no entries; the cause
+was not established. These runs stopped before sending candidate task answers.
+An OpenMail-only diagnostic then stopped at HTTP 429 while sending an
+invitation. All created inboxes were deleted and absence verified. Consequently
+provider-delivered shared answers and private continuations remain unverified
+live; these diagnostics are not a completed participant/model evaluation.

@@ -842,7 +842,7 @@ func (a *App) handleParticipantControl(
 
 func (a *App) ensureForwardPrompt(ctx context.Context, message Message, request ForwardRequest) error {
 	if request.PromptMessageID == "" {
-		outboundMessageID, found, err := a.resultReplyReceipt(ctx, message)
+		outboundMessageID, found, err := a.transport.ReplyReceipt(ctx, message, "")
 		if err != nil {
 			return err
 		}
@@ -953,7 +953,7 @@ func (a *App) replyForwardControl(
 	message Message,
 	text, kind string,
 ) (string, error) {
-	outbound, found, err := a.resultReplyReceipt(ctx, message)
+	outbound, found, err := a.transport.ReplyReceipt(ctx, message, "")
 	if err != nil {
 		return "", err
 	}
