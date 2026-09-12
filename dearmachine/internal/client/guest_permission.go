@@ -28,6 +28,14 @@ type GuestPermissionStatus struct {
 }
 
 func (s *GuestStore) PermanentReceive(inboxID, address string) error {
+	unlock, err := s.providerLock(context.Background())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.permanentReceive(inboxID, address)
+}
+func (s *GuestStore) permanentReceive(inboxID, address string) error {
 	canonical, err := canonicalMessageAddress(address)
 	if err != nil || canonical != address || inboxID == "" {
 		return errors.New("exact inbox and canonical paired address are required")
@@ -177,4 +185,23 @@ func (s *GuestStore) reconcileEntry(ctx context.Context, inbox, address string, 
 		return tx.Commit()
 	}
 	return errors.New("receive permission changed repeatedly; reconciliation remains pending")
+}
+
+// AuthorizePair records permanent receive intent before the adapter establishes
+// all permissions needed by a permanent pair. An interrupted creation retains
+// its conservative permanent reservation and can safely resume.
+func (s *GuestStore) AuthorizePair(ctx context.Context, inbox Inbox, address string, authorize func() error) error {
+	unlock, err := s.providerLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	canonical, err := canonicalMessageAddress(address)
+	if err != nil {
+		return err
+	}
+	if err := s.permanentReceive(guestInboxKey(inbox), canonical); err != nil {
+		return err
+	}
+	return authorize()
 }

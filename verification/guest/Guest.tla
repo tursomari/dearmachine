@@ -1,8 +1,15 @@
 ----------------------------- MODULE Guest -----------------------------
 EXTENDS Naturals, FiniteSets, TLC
 CONSTANTS Pairs, Inboxes, Guests, Threads, Evidence, MaxGeneration,
-          KnownOnly, StaleDecision, ReplayInvitation, DeleteUnowned
-Keys == Pairs \X Inboxes \X Guests \X Threads
+          KnownOnly, StaleDecision, ReplayInvitation, DeleteUnowned, Sparse
+Primary(S) == CHOOSE x \in S: TRUE
+AllKeys == Pairs \X Inboxes \X Guests \X Threads
+Keys == IF Sparse THEN {k \in AllKeys:
+           (k[1] = Primary(Pairs) /\ k[2] = Primary(Inboxes) /\
+            k[3] = Primary(Guests) /\ k[4] = Primary(Threads)) \/
+           (k[1] # Primary(Pairs) /\ k[2] # Primary(Inboxes) /\
+            k[3] # Primary(Guests) /\ k[4] # Primary(Threads))}
+        ELSE AllKeys
 VARIABLES grant, seen, work, remote, owned, intent, violation, permanent
 vars == <<grant, seen, work, remote, owned, intent, violation, permanent>>
 EmptyGrant == [active |-> FALSE, generation |-> 0]
@@ -20,9 +27,9 @@ Needed(e) == e \in permanent \/ (\E k \in Keys: Entry(k) = e /\ grant[k].active)
 Invite(k, m, explicit, authenticated, visible, paired) ==
   /\ authenticated /\ visible /\ ~paired
   /\ explicit \/ m \notin seen[k] \/ ReplayInvitation
-  /\ grant[k].generation < MaxGeneration
+  /\ grant[k].active \/ grant[k].generation < MaxGeneration
   /\ grant' = [grant EXCEPT ![k] =
-       [active |-> TRUE, generation |-> @.generation + 1]]
+       [active |-> TRUE, generation |-> IF @.active THEN @.generation ELSE @.generation + 1]]
   /\ seen' = [seen EXCEPT ![k] = @ \cup {m}]
   /\ intent' = intent \cup {Entry(k)}
   /\ violation' = (violation \/

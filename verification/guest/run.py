@@ -57,6 +57,12 @@ def main():
         if args.expand:
             (snapshot / 'Expanded.cfg').write_text(config.replace('Threads = {t1}', 'Threads = {t1, t2}'))
             run('tlc-expanded', tlc + ['-config', '/proof/Expanded.cfg', '/proof/Guest.tla'], marker='Model checking completed. No error has been found.')
+            matrix = config.replace('Sparse = FALSE', 'Sparse = TRUE')
+            for dimension, first, second in [('Pairs', 'p1', 'p2'), ('Inboxes', 'i1', 'i2'), ('Guests', 'g1', 'g2'), ('Threads', 't1', 't2')]:
+                matrix = matrix.replace(f'{dimension} = {{{first}}}', f'{dimension} = {{{first}, {second}}}')
+            (snapshot / 'Matrix.cfg').write_text(matrix)
+            run('tlc-matrix', tlc + ['-config', '/proof/Matrix.cfg', '/proof/Guest.tla'], marker='Model checking completed. No error has been found.')
+
 
 
 if __name__ == '__main__':

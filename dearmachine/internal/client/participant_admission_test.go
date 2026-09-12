@@ -94,7 +94,7 @@ func TestParticipantControlAcceptsOnlyExactChoices(t *testing.T) {
 			seedAdmittedParticipants(t, rig.store, "guest@example.test")
 			participant := Message{
 				MessageID: "guest-exact", ThreadID: "thread-exact",
-				From: "guest@example.test", To: []string{inbox.Address}, Body: "HELD_EXACT_BODY",
+				From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "HELD_EXACT_BODY",
 				Timestamp: time.Now().UTC(),
 			}
 			raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -148,7 +148,7 @@ func TestParticipantDecisionsRequireControllerAndOriginalThreadCorrelation(t *te
 	seedAdmittedParticipants(t, rig.store, "guest@example.test")
 	participant := Message{
 		MessageID: "guest-correlation", ThreadID: "thread-correlation",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: "HELD_CORRELATION_BODY",
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "HELD_CORRELATION_BODY",
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -159,7 +159,7 @@ func TestParticipantDecisionsRequireControllerAndOriginalThreadCorrelation(t *te
 
 	guestDecision := Message{
 		MessageID: "guest-false-yes", ThreadID: participant.ThreadID,
-		From: "guest@example.test", To: []string{inbox.Address}, Body: "Yes",
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "Yes",
 		InReplyTo: approval.ReceiptID, Timestamp: participant.Timestamp.Add(time.Minute),
 	}
 	raw.setThread(guestDecision.ThreadID, append(raw.thread(guestDecision.ThreadID), guestDecision))
@@ -199,7 +199,7 @@ func TestParticipantApprovalReleasesOnlyFrozenRequestAndIsolatesLateArrival(t *t
 	seedAdmittedParticipants(t, rig.store, "first-guest@example.test", "second-guest@example.test")
 	first := Message{
 		MessageID: "guest-frozen", ThreadID: "thread-late-arrival",
-		From: "first-guest@example.test", To: []string{inbox.Address}, Body: "FROZEN_REQUEST_ONLY",
+		From: "first-guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "FROZEN_REQUEST_ONLY",
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(first.ThreadID, append(raw.thread(first.ThreadID), first))
@@ -210,7 +210,7 @@ func TestParticipantApprovalReleasesOnlyFrozenRequestAndIsolatesLateArrival(t *t
 
 	late := Message{
 		MessageID: "guest-late", ThreadID: first.ThreadID,
-		From: "second-guest@example.test", To: []string{inbox.Address}, Body: "LATE_REQUEST_MUST_REMAIN_HELD",
+		From: "second-guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "LATE_REQUEST_MUST_REMAIN_HELD",
 		Timestamp: first.Timestamp.Add(time.Minute),
 	}
 	raw.setThread(late.ThreadID, append(raw.thread(late.ThreadID), late))
@@ -264,7 +264,7 @@ func TestParticipantDecisionRequiresReplyCorrelationEvenWithSingleActiveRequest(
 	seedAdmittedParticipants(t, rig.store, "guest@example.test")
 	participant := Message{
 		MessageID: "guest-thread-only", ThreadID: "thread-only-correlation",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: "THREAD_ONLY_APPROVED_BODY",
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "THREAD_ONLY_APPROVED_BODY",
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -300,12 +300,12 @@ func TestParticipantAmbiguousReferencesResolveNoRequest(t *testing.T) {
 	seedAdmittedParticipants(t, rig.store, "first@example.test", "second@example.test")
 	first := Message{
 		MessageID: "guest-ambiguous-first", ThreadID: "thread-ambiguous",
-		From: "first@example.test", To: []string{inbox.Address}, Body: "AMBIGUOUS_FIRST_HELD",
+		From: "first@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "AMBIGUOUS_FIRST_HELD",
 		Timestamp: time.Now().UTC(),
 	}
 	second := Message{
 		MessageID: "guest-ambiguous-second", ThreadID: first.ThreadID,
-		From: "second@example.test", To: []string{inbox.Address}, Body: "AMBIGUOUS_SECOND_HELD",
+		From: "second@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "AMBIGUOUS_SECOND_HELD",
 		Timestamp: first.Timestamp.Add(time.Minute),
 	}
 	for _, participant := range []Message{first, second} {
@@ -349,7 +349,7 @@ func TestParticipantDecisionAndDeliveryDuplicatesAreIdempotent(t *testing.T) {
 	seedAdmittedParticipants(t, rig.store, "guest@example.test")
 	participant := Message{
 		MessageID: "guest-duplicate", ThreadID: "thread-duplicates",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: "RUN_ONCE_GUEST_BODY",
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "RUN_ONCE_GUEST_BODY",
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -386,7 +386,7 @@ func TestParticipantApprovalRequestRecoversWithoutBodyPersistenceOrDuplicateProm
 	const secret = "RESTART_SECRET_MUST_STAY_PROVIDER_SIDE"
 	participant := Message{
 		MessageID: "guest-restart", ThreadID: "thread-restart",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: secret,
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: secret,
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -440,7 +440,7 @@ func TestParticipantApprovalRecoversReceiptSentBeforePromptCommit(t *testing.T) 
 	establishParticipantThread(t, rig, raw, router, pair, inbox, "thread-receipt-recovery")
 	participant := Message{
 		MessageID: "guest-receipt-recovery", ThreadID: "thread-receipt-recovery",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: "RECEIPT_RECOVERY_HELD",
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "RECEIPT_RECOVERY_HELD",
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -540,7 +540,7 @@ func TestParticipantApprovedInstructionRecoveryDoesNotTreatApprovalAsFinalReply(
 	seedAdmittedParticipants(t, rig.store, "guest@example.test")
 	participant := Message{
 		MessageID: "guest-approved-recovery", ThreadID: "thread-approved-recovery",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: "APPROVED_RECOVERY_BODY",
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "APPROVED_RECOVERY_BODY",
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -593,7 +593,7 @@ func TestParticipantApprovalPromptRetriesAfterSendFailure(t *testing.T) {
 	seedAdmittedParticipants(t, rig.store, "guest@example.test")
 	participant := Message{
 		MessageID: "guest-send-retry", ThreadID: "thread-send-retry",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: "HELD_SEND_RETRY_BODY",
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "HELD_SEND_RETRY_BODY",
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -628,7 +628,7 @@ func TestParticipantNoDisposesBodyAndOtherRunsOnlyControllerReplacement(t *testi
 			establishParticipantThread(t, rig, raw, router, pair, inbox, "thread-"+strings.ToLower(decision))
 			seedAdmittedParticipants(t, rig.store, "guest@example.test")
 			secret := "REJECTED_" + strings.ToUpper(decision) + "_BODY"
-			participant := Message{MessageID: "guest-" + strings.ToLower(decision), ThreadID: "thread-" + strings.ToLower(decision), From: "guest@example.test", To: []string{inbox.Address}, Body: secret, Timestamp: time.Now().UTC()}
+			participant := Message{MessageID: "guest-" + strings.ToLower(decision), ThreadID: "thread-" + strings.ToLower(decision), From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: secret, Timestamp: time.Now().UTC()}
 			raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
 			raw.setPoll([]Message{participant})
 			router.lastPoll = time.Time{}
@@ -698,7 +698,7 @@ func TestParticipantReplacementRecoverySanitizesProviderRefetch(t *testing.T) {
 	const secret = "RECOVERY_REJECTED_GUEST_BODY"
 	participant := Message{
 		MessageID: "guest-recovery-other", ThreadID: "thread-replacement-recovery",
-		From: "guest@example.test", To: []string{inbox.Address}, Body: secret,
+		From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: secret,
 		Timestamp: time.Now().UTC(),
 	}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
@@ -765,7 +765,7 @@ func TestOrdinaryControllerInstructionInvalidatesOlderParticipantRequest(t *test
 	rig, raw, router, pair, inbox := newParticipantTestRig(t)
 	establishParticipantThread(t, rig, raw, router, pair, inbox, "thread-precedence")
 	seedAdmittedParticipants(t, rig.store, "guest@example.test")
-	participant := Message{MessageID: "guest-old", ThreadID: "thread-precedence", From: "guest@example.test", To: []string{inbox.Address}, Body: "STALE_GUEST_BODY", Timestamp: time.Now().UTC()}
+	participant := Message{MessageID: "guest-old", ThreadID: "thread-precedence", From: "guest@example.test", To: []string{inbox.Address, pair.UserEmail}, Body: "STALE_GUEST_BODY", Timestamp: time.Now().UTC()}
 	raw.setThread(participant.ThreadID, append(raw.thread(participant.ThreadID), participant))
 	raw.setPoll([]Message{participant})
 	router.lastPoll = time.Time{}
@@ -806,6 +806,14 @@ func newParticipantTestRig(t *testing.T) (*testRig, *fakeTransport, *InboxRouter
 	if err != nil {
 		t.Fatal(err)
 	}
+	guests, err := OpenGuestStore(filepath.Join(t.TempDir(), "authorization.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = guests.Close() })
+	if err := router.ConfigureGuests(guests, []Pair{pair}); err != nil {
+		t.Fatal(err)
+	}
 	endpoint, err := router.Endpoint(pair.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -815,6 +823,13 @@ func newParticipantTestRig(t *testing.T) (*testRig, *fakeTransport, *InboxRouter
 
 func establishParticipantThread(t *testing.T, rig *testRig, raw *fakeTransport, router *InboxRouter, pair Pair, inbox Inbox, threadID string) {
 	t.Helper()
+	// These admission/trust tests start with explicit delivery authorization.
+	// Grant eligibility and missing-grant cases live in guest_router_test.go.
+	for _, address := range []string{"guest@example.test", "first@example.test", "second@example.test", "first-guest@example.test", "second-guest@example.test"} {
+		if _, err := router.guests.Allow(GuestKey{pair.ID, guestInboxKey(inbox), address, threadID}, "fixture-invitation-"+threadID, true); err != nil {
+			t.Fatal(err)
+		}
+	}
 	controller := Message{MessageID: "controller-root-" + threadID, ThreadID: threadID, From: pair.UserEmail, To: []string{inbox.Address}, Body: "Establish controlled work.", Timestamp: time.Date(2026, 9, 11, 20, 0, 0, 0, time.UTC)}
 	raw.setThread(threadID, []Message{controller})
 	raw.setPoll([]Message{controller})

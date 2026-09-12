@@ -152,10 +152,20 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 			if deps.authorizePair == nil {
 				return fmt.Errorf("transport %q cannot authorize pair creation", inbox.Transport)
 			}
-			if err := deps.authorizePair(
-				context.Background(), inbox.Transport, inbox.ProviderID, request.email,
-			); err != nil {
-				return fmt.Errorf("authorize %s pair: %w", inbox.Transport, err)
+			guestPath, err := client.DefaultGuestDatabasePath(deps.userHomeDir)
+			if err != nil {
+				return err
+			}
+			guests, err := client.OpenGuestStore(guestPath)
+			if err != nil {
+				return err
+			}
+			err = guests.AuthorizePair(context.Background(), inbox, request.email, func() error {
+				return deps.authorizePair(context.Background(), inbox.Transport, inbox.ProviderID, request.email)
+			})
+			closeErr := guests.Close()
+			if err != nil || closeErr != nil {
+				return fmt.Errorf("authorize %s pair: %w", inbox.Transport, errors.Join(err, closeErr))
 			}
 			transaction.Phase = createPhasePairAuthorized
 			if err := saveCreateTransaction(transactionPath, transaction); err != nil {

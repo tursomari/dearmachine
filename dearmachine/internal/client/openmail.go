@@ -849,6 +849,9 @@ func (transport *OpenMailTransport) doJSON(request *http.Request, target any) er
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return openMailStatusError(response)
 	}
+	if response.StatusCode == http.StatusNoContent && target == nil {
+		return nil
+	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(target); err != nil {
 		return fmt.Errorf("decode OpenMail response: %w", err)
 	}

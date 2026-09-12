@@ -288,6 +288,9 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 }
 
 func run(args []string, getenv func(string) string, deps dependencies) error {
+	if len(args) > 0 && args[0] == "guest" {
+		return runGuest(args[1:], deps)
+	}
 	if len(args) > 0 && args[0] == "update" {
 		return runUpdate(args[1:], getenv, deps)
 	}
@@ -341,6 +344,7 @@ Commands:
   restart       restart through the existing supervisor
   status [--details] show runtime, crash recovery, startup configuration, and pairs
   inbox         maintain pair inbox state
+  guest         allow, list or revoke thread-scoped guest access
   init          initialize the entry-point repository
   setup-agents  configure agent backends
   systemd on|off|status     explicitly choose service use (no reboot persistence)

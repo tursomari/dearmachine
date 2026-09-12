@@ -230,6 +230,15 @@ func (a *App) recoverParticipantPrompts(ctx context.Context) error {
 		return err
 	}
 	for _, request := range requests {
+		if checker, ok := a.transport.(interface {
+			checkGuestRequest(ParticipantRequest) error
+		}); ok {
+			if err := checker.checkGuestRequest(request); errors.Is(err, ErrGuestUnauthorized) {
+				continue
+			} else if err != nil {
+				return err
+			}
+		}
 		parentMessageID := request.PromptParentMessageID
 		if parentMessageID == "" {
 			parentMessageID = request.RequestMessageID
@@ -257,6 +266,11 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 	messages, err := a.transport.Poll(ctx)
 	if err != nil {
 		return err
+	}
+	if syncer, ok := a.transport.(interface{ syncGuestPermissions(context.Context) error }); ok {
+		if err := syncer.syncGuestPermissions(ctx); err != nil {
+			a.logger.Printf("guest provider synchronization pending: %v", err)
+		}
 	}
 	if a.verbose {
 		a.logger.Printf("poll: %d unread messages", len(messages))
@@ -606,6 +620,20 @@ func (a *App) handleParticipantControl(
 	expectedState string,
 	work *threadWorkQueue,
 ) error {
+	if expectedState != participantAmbiguousCorrelation {
+		if checker, ok := a.transport.(interface {
+			checkGuestRequest(ParticipantRequest) error
+		}); ok {
+			if err := checker.checkGuestRequest(request); errors.Is(err, ErrGuestUnauthorized) {
+				if err := a.store.RecordControlMessage(message.MessageID, message.ThreadID, ""); err != nil {
+					return err
+				}
+				return a.transport.MarkProcessed(ctx, message.MessageID)
+			} else if err != nil {
+				return err
+			}
+		}
+	}
 	if expectedState == participantAmbiguousCorrelation {
 		if err := a.store.RecordControlMessage(message.MessageID, message.ThreadID, ""); err != nil {
 			return err
@@ -714,6 +742,15 @@ func (a *App) handleParticipantControl(
 				return err
 			}
 			return a.transport.MarkProcessed(ctx, message.MessageID)
+		}
+		if binder, ok := a.transport.(interface {
+			bindGuestReplacement(ParticipantRequest, string) error
+		}); ok {
+			if err := binder.bindGuestReplacement(request, message.MessageID); errors.Is(err, ErrGuestUnauthorized) {
+				return a.transport.MarkProcessed(ctx, message.MessageID)
+			} else if err != nil {
+				return err
+			}
 		}
 		pending, err := a.store.MaterializeParticipantExecution(
 			request,
@@ -997,6 +1034,9 @@ func (a *App) recoverPending(ctx context.Context, work *threadWorkQueue) error {
 		pending := grouped[slot.ThreadID][index]
 		groupIndexes[slot.ThreadID] = index + 1
 		message, err := a.transport.Message(ctx, pending.MessageID)
+		if errors.Is(err, ErrGuestUnauthorized) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -1057,8 +1097,18 @@ func (a *App) processWork(ctx context.Context, work messageWork, started func())
 		}
 		return fmt.Errorf("pending message disappeared before dispatch")
 	}
+	if checker, ok := a.transport.(interface {
+		guestExecutionContext(context.Context, Message, PendingMessage) (context.Context, error)
+	}); ok {
+		ctx, err = checker.guestExecutionContext(ctx, work.message, pending)
+		if errors.Is(err, ErrGuestUnauthorized) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
 	err = a.processPending(ctx, work.message, pending, work.recovering, started)
-	if errors.Is(err, ErrGracefullyStopped) {
+	if errors.Is(err, ErrGracefullyStopped) || errors.Is(err, ErrGuestUnauthorized) {
 		return nil
 	}
 	return err
@@ -1216,6 +1266,9 @@ func (a *App) processPending(
 		footerQuote,
 	)
 	payload := ReplyPayload{Text: replyText}
+	if pending.Authority == authorityParticipant || pending.Authority == authorityTrustedParticipant {
+		payload = participantPrivatePayload(replyText, pending.ControllingParticipant)
+	}
 	tier := a.tierFor(pending)
 	if tier != TierPlain {
 		payload.HTML = replyHTML(replyText)

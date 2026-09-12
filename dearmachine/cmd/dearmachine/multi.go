@@ -50,6 +50,23 @@ func runPairStates(cfg config, getenv func(string) string, deps dependencies, st
 	if newRawTransport == nil {
 		newRawTransport = transports.NewRaw
 	}
+	guestPath, err := client.DefaultGuestDatabasePath(deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	guests, err := client.OpenGuestStore(guestPath)
+	if err != nil {
+		return err
+	}
+	defer guests.Close()
+	registryPath, err := client.DefaultPairRegistryPath(deps.userHomeDir)
+	if err != nil {
+		return err
+	}
+	registry, err := client.LoadPairRegistry(registryPath)
+	if err != nil {
+		return err
+	}
 	byInbox := make(map[string][]client.PairState)
 	inboxOrder := make([]string, 0)
 	for _, state := range states {
@@ -74,6 +91,10 @@ func runPairStates(cfg config, getenv func(string) string, deps dependencies, st
 		if err != nil {
 			return err
 		}
+		if err := router.ConfigureGuests(guests, registry.Pairs); err != nil {
+			return err
+		}
+		logger.Printf("inbox %s: automatic guest invitations disabled; exact mailbox-owner attribution is unavailable", inbox.ID)
 		for _, state := range group {
 			endpoint, err := router.Endpoint(state.Pair.ID)
 			if err != nil {

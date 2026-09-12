@@ -12,8 +12,9 @@ Adapters preserve `To`, `CC`, and `BCC` separately. They attach the exact
 provider inbox used for retrieval, the provider inbox address when available,
 the delivery role, and an explicit read state. The shared polling seam performs
 final unread selection and message-ID deduplication. The inbox router authorizes
-delivery by the trusted provider inbox identity, not by merging or searching
-untrusted recipient headers.
+paired delivery by the trusted provider inbox identity. Guest delivery additionally
+requires an active exact grant and visible Reply All recipients. To/CC visibility
+is distinct from provider inbox attribution; BCC never qualifies as an invitation.
 
 AgentMail needs an additional recovery assertion. Its `labels=unread` listing
 may omit a received message with multiple recipients even though an unfiltered
@@ -60,10 +61,42 @@ closed, and a duplicate candidate is emitted once.
 7. Repeat with the controller in `To` and the receiver in `CC`. If the sending
    provider supports BCC without exposing the recipient header, repeat with the
    receiver in `BCC`. Routing must still use the recorded provider inbox.
-8. Have the second OpenMail address reply-all in the established thread. The
+8. Inspect automatic grant capability. Current adapters lack exact mailbox-owner
+   attribution, so record automatic granting as blocked. Exercise explicit allow
+   using the controller invitation from step 5; verify the local grant and the
+   service-created receive entry without manually pre-allowing the guest.
+   Have the second OpenMail address reply-all in the established thread. The
    participant admission request must go only to the controller, with empty
    CC/BCC and no quoted participant content. Complete admission and instruction
    approval independently and require exactly one lower-authority agent turn.
+
+## Persistent guest lifecycle extension
+
+Run the exact source candidate through the production OCI/Compose path. Record
+provider receipt separately from local acceptance. An automatic-grant success
+requires a supported sender-attribution contract; never treat explicit allow as
+passing that row. Do not alter the protected `david-8699@agentmail.to` inbox.
+
+1. While guest receive permission is open, send a new guest thread and a guest
+   message into another known thread without a grant. Prove provider delivery
+   and zero local prompts/executions for both.
+2. Attempt guest-authored invitations and BCC-only invitations. Neither may
+   create a grant. Assert only BCC metadata genuinely observable to the receiver.
+3. Restart and verify durable grants and no duplicate prompts/executions. Run
+   explicit allow against a historical visible invitation.
+4. Grant a second thread, revoke the first, and verify receive permission stays
+   open while the first thread is locally rejected. Test stale approvals.
+5. Revoke the final grant. Verify removal only of the exact owned entry. Replay
+   the old invitation, verify no automatic resurrection, then explicitly
+   reauthorize. Previously held work must remain invalid.
+6. Verify permanent-pair and pre-existing-entry protection in disposable state.
+   Separate injected provider failures/recovery from actual provider observations.
+
+Repeat the core grant/reply/revoke flow with an OpenMail receiver. Attempt the
+Sendmux row with scoped credentials and classify it pass, fail or blocked with
+the concrete preflight reason; an HTTP 401 is not a pass. Preserve applicable
+backend requirements from `participant-approval.md`; report exact-model behavior
+probes separately from deterministic authorization results.
 
 ## Adapter matrix
 

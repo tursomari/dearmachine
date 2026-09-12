@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -115,6 +116,12 @@ func (s *GuestStore) Grant(k GuestKey) (GuestGrant, error) {
 // Allow is internal persistence after invitation validation. Explicit means a
 // local operator deliberately reauthorizes; automatic replay never resurrects.
 func (s *GuestStore) Allow(k GuestKey, evidence string, explicit bool) (GuestGrant, error) {
+	unlock, err := s.providerLock(context.Background())
+	if err != nil {
+		return GuestGrant{}, err
+	}
+	defer unlock()
+
 	if err := k.validate(); err != nil {
 		return GuestGrant{}, err
 	}
@@ -271,4 +278,33 @@ func guestKey(pair Pair, inbox Inbox, message Message) (GuestKey, error) {
 		return GuestKey{}, fmt.Errorf("guest sender: %w", err)
 	}
 	return GuestKey{pair.ID, guestInboxKey(inbox), address, message.ThreadID}, nil
+}
+
+// BoundWorkKey distinguishes a controller's independent message from a queued
+// replacement instruction released by a participant request.
+func (s *GuestStore) BoundWorkKey(pairID, inboxID, messageID string) (GuestKey, bool, error) {
+	k := GuestKey{PairID: pairID, InboxID: inboxID}
+	err := s.db.QueryRow(`SELECT address,thread_id FROM guest_work WHERE pair_id=? AND inbox_id=? AND message_id=?`, pairID, inboxID, messageID).Scan(&k.Address, &k.ThreadID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return k, false, nil
+	}
+	return k, err == nil, err
+}
+func (s *GuestStore) BindReplacement(k GuestKey, requestID, replacementID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = checkGuestWork(tx, k, requestID); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`INSERT OR IGNORE INTO guest_work SELECT pair_id,inbox_id,?,address,thread_id,generation FROM guest_work WHERE pair_id=? AND inbox_id=? AND message_id=?`, replacementID, k.PairID, k.InboxID, requestID)
+	if err != nil {
+		return err
+	}
+	if err = checkGuestWork(tx, k, replacementID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

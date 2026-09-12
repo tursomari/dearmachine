@@ -23,7 +23,8 @@ or the complete application. Exhaustive Boolean Go tests exercise the same
 production functions independently.
 
 TLC explores `Guest.tla` and its finite configuration. `--expand` adds a second
-thread sharing one provider entry. Four intentionally weakened configurations
+thread sharing one provider entry, then a sparse matrix with two pairs, two
+inboxes, two guests and two threads (two diagonal scope keys). Four intentionally weakened configurations
 must produce a `Safety` violation: known-thread-only delivery, stale-generation
 execution, replayed invitation resurrection, and deletion without ownership.
 The runner requires TLC's invariant-failure exit status, not an arbitrary

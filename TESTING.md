@@ -182,9 +182,26 @@ resolved from the host installation.
 
 ## Guest authorization verification
 
+[Guest operations](docs/guest-authorization.md) documents the supported commands
+and current automatic-invitation limitation.
+
 [The guest verification guide](verification/guest/README.md) documents the
 pinned Gobra/TLC runner, finite model, intentional counterexamples, production
 policy correspondence and trusted boundaries. Run its credential-free container
 checks alongside `go test ./internal/client -run '^TestGuest' -count=1` when the
 guest authorization lifecycle changes. These checks do not authenticate external
 email providers or establish model obedience.
+
+For a candidate source snapshot (including reviewed uncommitted changes), run:
+
+```console
+python3 scripts/test-guest-container.py --output /tmp/dearmachine-guest-check
+```
+
+The runner builds a disposable image from source-only files with pinned Go
+1.24 tooling, downloads module dependencies during the build, then runs the
+complete Go suite, race suite and vet with `--network none`, a read-only image,
+and scratch state. It mounts no host state or credentials and removes its exact
+image afterward. Source hashes and logs stay in the new output directory.
+Use `--docker-host unix:///var/run/docker.sock` when needed. The host Nix gate
+remains mandatory and checks the repository's own pinned production toolchain.

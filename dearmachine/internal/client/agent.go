@@ -327,7 +327,7 @@ func (r *AgentRunner) run(
 	var runOutput bytes.Buffer
 	command.Stdout = &runOutput
 	command.Stderr = &runOutput
-	err = r.runActiveCommand(session.ThreadID, command, started)
+	err = r.runActiveCommand(ctx, session.ThreadID, command, started)
 	stopped := r.releaseActive(session.ThreadID, command)
 	if stopped {
 		return RunResult{}, fmt.Errorf("%w: thread %s", ErrGracefullyStopped, session.ThreadID)
@@ -357,19 +357,26 @@ func (r *AgentRunner) run(
 }
 
 func (r *AgentRunner) runActiveCommand(
+	ctx context.Context,
 	threadID string,
 	command *exec.Cmd,
 	started func(),
 ) error {
+	guard, _ := ctx.Value(guestStartContextKey{}).(guestStartGuard)
+	if guard == nil {
+		guard = func(start func() error) error { return start() }
+	}
 	if r.invoke != nil {
 		// Injected invokers model the entire command lifecycle in component tests.
-		r.registerActive(threadID, command)
-		if started != nil {
-			started()
-		}
-		return r.invoke(command)
+		return guard(func() error {
+			r.registerActive(threadID, command)
+			if started != nil {
+				started()
+			}
+			return r.invoke(command)
+		})
 	}
-	if err := command.Start(); err != nil {
+	if err := guard(command.Start); err != nil {
 		return err
 	}
 	// Do not expose Cmd to Stop until Start has finished initializing Process.

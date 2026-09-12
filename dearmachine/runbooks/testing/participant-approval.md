@@ -7,14 +7,16 @@ senders. It is opt-in: do not provision inboxes, change policy entries, send
 mail, or call a model without the credentials and explicit authorizations in
 that reference.
 
-The transport must deliver the temporary guest's mail to the test receiver.
-If its normal pair allow-list prevents that, add an exact, run-owned inbound
-policy entry for only the temporary guest and record it for teardown. Do not
-weaken a production policy or use a normal inbox. Dear Machine's local routing
-must still reject the guest on a new thread and route guest traffic only on an
-existing thread owned unambiguously by the temporary pair. Local admission is
-pair-scoped policy; it does not create a pair or make the guest a controlling
-participant.
+The guest must have an active exact pair/inbox/thread grant before admission.
+Use `dearmachine guest allow <guest> --pair <pair> --message-id <invitation>`
+against a real controller invitation visibly including Dear Machine and the
+guest in To/CC. Current adapters cannot attribute the exact controller mailbox,
+so automatic granting is unsupported; record that row as blocked, then label
+explicit-CLI scenarios separately. Do not manually pre-allow the guest to make
+an automatic-grant test pass. The grant service must create its receive entry.
+Guest mail must use Reply All visibly including Dear Machine and the controller.
+Provider delivery, admission, and trust cannot authorize an unrelated thread.
+Local admission never creates a permanent pair or controller authority.
 
 First contact from a non-paired sender starts an admission decision. Exact
 `Yes` admits only the participant and is immediately followed by a distinct
@@ -41,6 +43,7 @@ available; never mount a checkout, normal home, production state, or session
 store. The required tests are:
 
 ```text
+TestGuest*
 TestParticipant*
 TestMailboxReplyMapsPrivateRecipientWithoutReplyAll
 TestOpenMailReplyPreservesThreadWithPrivateRecipient
@@ -213,6 +216,12 @@ Run these scenarios in order:
 12. While a guest request is unresolved, send an ordinary controller
    instruction. Prove it invalidates the older request and a late `Yes` cannot
    release it.
+
+13. Revoke while approval or trusted work is queued, including a stopped/restarted
+    candidate. Prove zero subsequent execution starts. Reauthorize explicitly,
+    submit a stale Yes from the previous generation, and prove no old work starts.
+    Retained admission/trust must not bypass a revoked or unrelated-thread grant.
+    Already-started effects are outside the cancellation guarantee.
 
 Capture only sanitized recipient sets, provider thread/message identifiers,
 state transitions, invocation counts, model/config preflight, and presence or

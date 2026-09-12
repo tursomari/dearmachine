@@ -25,15 +25,18 @@ func DefaultDaemonLockPath(userHomeDir func() (string, error)) (string, error) {
 // InboxRouter gives every pair a private Transport view while retaining one
 // poller and one provider adapter for the shared inbox.
 type InboxRouter struct {
-	mu       sync.Mutex
-	raw      Transport
-	inbox    Inbox
-	pairs    map[string]Pair
-	interval time.Duration
-	lastPoll time.Time
-	pending  map[string][]Message
-	known    map[string]map[string]struct{}
-	stores   map[string]*Store
+	mu          sync.Mutex
+	raw         Transport
+	inbox       Inbox
+	pairs       map[string]Pair
+	interval    time.Duration
+	lastPoll    time.Time
+	pending     map[string][]Message
+	known       map[string]map[string]struct{}
+	stores      map[string]*Store
+	guests      *GuestStore
+	controllers map[string]bool
+	cached      map[string]Message
 }
 
 var errNoPairRoute = errors.New("message has no pair route")
@@ -51,6 +54,7 @@ func NewInboxRouter(raw Transport, inbox Inbox, pairs []Pair, interval time.Dura
 	}
 	router := &InboxRouter{
 		raw: raw, inbox: inbox, interval: interval,
+		controllers: make(map[string]bool), cached: make(map[string]Message),
 		pairs: make(map[string]Pair, len(pairs)), pending: make(map[string][]Message), known: make(map[string]map[string]struct{}), stores: make(map[string]*Store),
 	}
 	routes := make(map[string]string, len(pairs))
@@ -69,6 +73,7 @@ func NewInboxRouter(raw Transport, inbox Inbox, pairs []Pair, interval time.Dura
 			return nil, fmt.Errorf("ambiguous inbox route for %s: pairs %s and %s", pair.UserEmail, previous, pair.ID)
 		}
 		router.pairs[pair.ID] = pair
+		router.controllers[pair.UserEmail] = true
 		routes[pair.UserEmail] = pair.ID
 		router.known[pair.ID] = make(map[string]struct{})
 	}
@@ -112,6 +117,18 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 			if err != nil {
 				return nil, err
 			}
+			if err := router.observeInvitations(ctx, routed, message); err != nil {
+				return nil, err
+			}
+			from, _ := canonicalMessageAddress(message.From)
+			if from != routed.UserEmail {
+				key, _ := guestKey(routed, router.inbox, message)
+				if err := router.guests.BindWork(key, message.MessageID); errors.Is(err, ErrGuestUnauthorized) {
+					continue
+				} else if err != nil {
+					return nil, err
+				}
+			}
 			distributed[routed.ID] = append(distributed[routed.ID], message)
 		}
 		for id, batch := range distributed {
@@ -124,7 +141,16 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 	}
 	batch := append([]Message(nil), router.pending[pairID]...)
 	delete(router.pending, pairID)
-	return batch, nil
+	allowed := batch[:0]
+	for _, message := range batch {
+		if err := router.authorize(pairID, message); errors.Is(err, ErrGuestUnauthorized) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		allowed = append(allowed, message)
+	}
+	return allowed, nil
 }
 
 func (router *InboxRouter) routeInbound(message Message) (Pair, error) {
@@ -142,20 +168,11 @@ func (router *InboxRouter) routeInbound(message Message) (Pair, error) {
 		}
 	}
 	if len(matches) == 0 {
-		// Non-paired participants may enter only a thread already owned by one
-		// unambiguous pair. This preserves the unknown-sender boundary for new
-		// threads, including inboxes that currently have only one pair.
-		for id, pair := range router.pairs {
-			store := router.stores[id]
-			if store == nil {
-				continue
-			}
-			known, storeErr := store.KnownThread(message.ThreadID)
-			if storeErr != nil {
-				return Pair{}, fmt.Errorf("route participant message %s: %w", message.MessageID, storeErr)
-			}
-			if known {
+		for _, pair := range router.pairs {
+			if err := router.guestAllowed(pair, message); err == nil {
 				matches = append(matches, pair)
+			} else if !errors.Is(err, ErrGuestUnauthorized) {
+				return Pair{}, err
 			}
 		}
 		if len(matches) == 0 {
@@ -177,17 +194,15 @@ func (router *InboxRouter) authorize(pairID string, message Message) error {
 	inboundRecipient := router.deliveredToInbox(message)
 	inbound := from == pair.UserEmail && inboundRecipient
 	if !inbound && inboundRecipient {
-		store := router.stores[pairID]
-		if store != nil {
-			inbound, err = store.KnownThread(message.ThreadID)
-			if err != nil {
-				return err
-			}
+		routed, routeErr := router.routeInbound(message)
+		inbound = routeErr == nil && routed.ID == pairID
+		if routeErr != nil && !errors.Is(routeErr, errNoPairRoute) && !errors.Is(routeErr, ErrGuestUnauthorized) {
+			return routeErr
 		}
 	}
 	outbound := from == router.inbox.Address && containsCanonicalAddress(message.To, pair.UserEmail)
 	if !inbound && !outbound {
-		return fmt.Errorf("message %s is not routed to pair %s", message.MessageID, pairID)
+		return fmt.Errorf("%w: message %s is not routed to pair %s", ErrGuestUnauthorized, message.MessageID, pairID)
 	}
 	return nil
 }
@@ -231,8 +246,10 @@ func (router *InboxRouter) deliveredToInbox(message Message) bool {
 
 func (router *InboxRouter) remember(pairID string, message Message) {
 	router.known[pairID][message.MessageID] = struct{}{}
+	router.cached[message.MessageID] = message
 	for _, attachment := range message.Attachments {
 		router.known[pairID]["attachment:"+attachment.AttachmentID] = struct{}{}
+		router.cached["attachment:"+attachment.AttachmentID] = message
 	}
 }
 
@@ -351,6 +368,9 @@ func (endpoint *pairEndpoint) MarkProcessed(ctx context.Context, messageID strin
 func (endpoint *pairEndpoint) FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error) {
 	endpoint.router.mu.Lock()
 	_, allowed := endpoint.router.known[endpoint.pairID]["attachment:"+attachmentID]
+	if allowed {
+		allowed = endpoint.router.authorize(endpoint.pairID, endpoint.router.cached["attachment:"+attachmentID]) == nil
+	}
 	endpoint.router.mu.Unlock()
 	if !allowed {
 		return nil, fmt.Errorf("attachment %s is not routed to pair %s", attachmentID, endpoint.pairID)
@@ -361,10 +381,12 @@ func (endpoint *pairEndpoint) FetchAttachment(ctx context.Context, attachmentID 
 func (endpoint *pairEndpoint) ensureMessage(ctx context.Context, messageID string) error {
 	endpoint.router.mu.Lock()
 	_, known := endpoint.router.known[endpoint.pairID][messageID]
-	endpoint.router.mu.Unlock()
 	if known {
-		return nil
+		err := endpoint.router.authorize(endpoint.pairID, endpoint.router.cached[messageID])
+		endpoint.router.mu.Unlock()
+		return err
 	}
+	endpoint.router.mu.Unlock()
 	_, err := endpoint.Message(ctx, messageID)
 	return err
 }

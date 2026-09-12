@@ -304,6 +304,10 @@ func (api *sendmuxSDKManagementAPI) GetMailboxFilters(ctx context.Context, inbox
 }
 
 func (api *sendmuxSDKManagementAPI) SetMailboxFilters(ctx context.Context, inboxID string, state sendmuxFilterState) error {
+	_, err := api.SetMailboxFiltersWithRevision(ctx, inboxID, state)
+	return err
+}
+func (api *sendmuxSDKManagementAPI) SetMailboxFiltersWithRevision(ctx context.Context, inboxID string, state sendmuxFilterState) (string, error) {
 	rules := make([]management.FilterRule, 0, len(state.Rules))
 	for _, rule := range state.Rules {
 		rules = append(rules, management.FilterRule{Type: management.FilterRuleType(rule.Type), Pattern: rule.Pattern})
@@ -316,10 +320,12 @@ func (api *sendmuxSDKManagementAPI) SetMailboxFilters(ctx context.Context, inbox
 		Mode: management.SetFilterStateBodyMode(state.Mode), Rules: rules,
 	}), params)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, ok := response.(*management.FilterStateResponseHeaders); !ok {
-		return sendmuxUnexpectedResponse("set mailbox filters", response)
+	success, ok := response.(*management.FilterStateResponseHeaders)
+	if !ok {
+		return "", sendmuxUnexpectedResponse("set mailbox filters", response)
 	}
-	return nil
+	revision, _ := success.GetETag().Get()
+	return revision, nil
 }

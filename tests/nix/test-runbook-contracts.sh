@@ -125,3 +125,13 @@ for credential in AGENTMAIL_API_KEY_FILE OPENMAIL_API_KEY_FILE SENDMUX_API_KEY_F
 done
 
 printf 'runbook contract tests passed\n'
+
+# Guest authorization must be described on both delivery and admission paths.
+for guest_runbook in recipient-delivery participant-approval; do
+  grep -F 'guest' "$PROJECT_ROOT/dearmachine/runbooks/testing/$guest_runbook.md" >/dev/null
+  grep -F 'automatic' "$PROJECT_ROOT/dearmachine/runbooks/testing/$guest_runbook.md" >/dev/null
+  grep -F 'Reply All' "$PROJECT_ROOT/dearmachine/runbooks/testing/$guest_runbook.md" >/dev/null
+done
+grep -F 'dearmachine guest allow' "$PROJECT_ROOT/docs/guest-authorization.md" >/dev/null
+grep -F 'dearmachine guest revoke' "$PROJECT_ROOT/docs/guest-authorization.md" >/dev/null
+grep -F 'Already-started work' "$PROJECT_ROOT/docs/guest-authorization.md" >/dev/null
