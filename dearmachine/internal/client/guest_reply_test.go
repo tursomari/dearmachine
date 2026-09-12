@@ -84,6 +84,12 @@ func TestResultReceiptRequiresTheSubmittedRecipientEnvelope(t *testing.T) {
 	answer.MessageID = "answer"
 	answer.CC = []string{"Guest <guest@example.test>"}
 	raw.setThread("thread", []Message{m, private, answer})
+	if id, found, err := rig.app.resultReplyReceipt(context.Background(), m); err != nil || !found || id != "answer" {
+		t.Fatalf("ordered answer recovery: %s %v %v", id, found, err)
+	}
+	// AgentMail correlates by InReplyTo; its thread result need not be ordered.
+	answer.InReplyTo = m.MessageID
+	raw.setThread("thread", []Message{answer, m, private})
 	rig.restartStore(t)
 	if id, found, err := rig.app.resultReplyReceipt(context.Background(), m); err != nil || !found || id != "answer" {
 		t.Fatalf("answer recovery: %s %v %v", id, found, err)

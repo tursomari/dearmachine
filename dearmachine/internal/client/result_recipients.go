@@ -101,7 +101,8 @@ func (a *App) resultReplyReceipt(ctx context.Context, message Message) (string, 
 				seen = true
 				continue
 			}
-			if seen && candidate.ThreadID == message.ThreadID && (candidate.InReplyTo == "" || candidate.InReplyTo == message.MessageID) && containsFold(candidate.Labels, "sent") && sameRecipientSet(candidate.To, envelope.To) && sameRecipientSet(candidate.CC, envelope.CC) && len(candidate.BCC) == 0 {
+			repliesToOriginal := candidate.InReplyTo == message.MessageID || (candidate.InReplyTo == "" && seen)
+			if repliesToOriginal && candidate.ThreadID == message.ThreadID && containsFold(candidate.Labels, "sent") && sameRecipientSet(candidate.To, envelope.To) && sameRecipientSet(candidate.CC, envelope.CC) && len(candidate.BCC) == 0 {
 				return candidate.MessageID, true, nil
 			}
 		}
