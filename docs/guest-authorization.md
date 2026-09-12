@@ -64,8 +64,8 @@ REMOVE GUEST <code>
 The owner replies in that thread with the actual command from the footer.
 The random token binds the exact pair, inbox, guest, thread and grant generation.
 It is not included in shared answers. Local revocation blocks subsequent guest
-execution starts, including queued, held and recovered work. It cannot undo
-already-started effects or recall submitted email. Replaying a completed removal
+execution starts, including queued, held and recovered work. Already-started work
+can still have effects, and submitted email cannot be recalled. Replaying a completed removal
 command is harmless; an old token cannot revoke a later grant generation.
 
 Ordinary reply-all and replayed invitations cannot restore a revoked grant.
