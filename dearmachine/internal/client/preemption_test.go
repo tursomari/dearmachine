@@ -58,6 +58,24 @@ func (c *manualPreemptionClock) Advance(elapsed time.Duration) {
 	c.mu.Unlock()
 }
 
+// Wait until dispatch has computed and registered its relative timer before
+// jumping time. Otherwise a jump between Now and After moves the timer's
+// deadline forward, a fixture race which cannot occur as an atomic real jump.
+func (c *manualPreemptionClock) AwaitTimer(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		pending := len(c.waiters) > 0
+		c.mu.Unlock()
+		if pending {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("preemption timer was not registered")
+}
+
 func useManualPreemptionClock(app *App, clock *manualPreemptionClock) {
 	app.preemptionNow = clock.Now
 	app.preemptionAfter = clock.After
@@ -87,10 +105,12 @@ func TestCoClaimedSameThreadBurstStartsAndPreemptsEverySupersededTurn(t *testing
 	if got := awaitGatedRun(t, started); got.sequence != 1 {
 		t.Fatalf("run 1 = %+v", got)
 	}
+	clock.AwaitTimer(t)
 	clock.Advance(app.pollInterval)
 	if got := awaitGatedRun(t, started); got.sequence != 2 {
 		t.Fatalf("run 2 = %+v", got)
 	}
+	clock.AwaitTimer(t)
 	clock.Advance(app.pollInterval)
 	if got := awaitGatedRun(t, started); got.sequence != 3 {
 		t.Fatalf("run 3 = %+v", got)
@@ -143,6 +163,7 @@ func TestRecoveredSameThreadBacklogUsesGracePreemption(t *testing.T) {
 	if got := awaitGatedRun(t, started); got.sequence != 1 {
 		t.Fatalf("run 1 = %+v", got)
 	}
+	clock.AwaitTimer(t)
 	clock.Advance(app.pollInterval)
 	if got := awaitGatedRun(t, started); got.sequence != 2 {
 		t.Fatalf("run 2 = %+v", got)
@@ -191,6 +212,7 @@ func TestNewerMessageWaitsForRemainingGraceBeforePreemption(t *testing.T) {
 		t.Fatal("run was interrupted before its grace deadline")
 	default:
 	}
+	clock.AwaitTimer(t)
 	clock.Advance(3 * time.Second)
 	select {
 	case <-interrupted:
