@@ -94,10 +94,11 @@ passing that row. Do not alter any existing production inbox or normal service.
 
 ## Adapter matrix
 
-AgentMail is the current supported inbound authentication path. OpenMail and
-Sendmux receivers must report unsupported evidence and reject inbound work.
-Their normalization, scoped permission changes and outbound envelope encoding
-remain covered by adapter tests. Record any direct provider diagnostic separately;
+AgentMail and Sendmux support local exact-domain DKIM verification of original
+messages. OpenMail supports the restricted unencoded single-part plain-text
+subset documented in [guest authorization](../../../docs/guest-authorization.md);
+unsupported or invalid evidence must reject inbound work. Normalization, scoped
+permission changes and outbound envelope encoding remain covered by adapter tests. Record any direct provider diagnostic separately;
 it cannot pass an authenticated application workflow row. Never weaken sender
 checks to make a transport row pass. Preserve backend requirements from
 `participant-approval.md` and report model behavior probes separately.

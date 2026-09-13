@@ -7,11 +7,13 @@ senders. It is opt-in: do not provision inboxes, change policy entries, send
 mail, or call a model without the credentials and explicit authorizations in
 that reference.
 
-Use an AgentMail receiver. The sender domain must provide exact-domain DKIM
+Use an AgentMail or Sendmux receiver. The sender domain must provide exact-domain DKIM
 covering all present author/routing/correlation and MIME headers; the domain's
 operator is trusted to enforce mailbox ownership. Check candidate authentication
-before interpreting a provider delivery as accepted work. OpenMail and Sendmux
-receivers currently fail closed for all inbound work and are blocked live rows.
+before interpreting a provider delivery as accepted work. Sendmux verifies original MIME through read-only IMAP. OpenMail can be tested
+only with its supported unencoded single-part plain-text evidence; HTML,
+multipart and attachments remain rejected. Inspect the installed authentication
+status before selecting the receiver.
 
 The owner establishes participation by visibly including Dear Machine and the
 guest in To/CC. Verify the automatic exact pair/inbox/guest/thread grant and
