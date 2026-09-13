@@ -85,5 +85,9 @@ func authoredControlBody(message Message) string {
 	}
 	body = stripReplyHistory(body)
 	body, _ = stripConversationFooters(body)
-	return strings.TrimSpace(body)
+	// AgentMail appends this branding even to an otherwise exact control reply.
+	// Remove only its complete trailing footer, not arbitrary signatures or
+	// additional instructions after a control word.
+	body = strings.TrimSpace(body)
+	return strings.TrimSpace(strings.TrimSuffix(body, "\n\n--\nSent via AgentMail"))
 }

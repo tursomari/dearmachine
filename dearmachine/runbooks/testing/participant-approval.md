@@ -15,6 +15,18 @@ only with its supported unencoded single-part plain-text evidence; HTML,
 multipart and attachments remain rejected. Inspect the installed authentication
 status before selecting the receiver.
 
+Reserve capacity for three disposable identities before starting. They may use
+different providers. Verify actual delivery of an owner message with the managed
+exact-address receive policy enabled: a provider may filter the SMTP envelope
+sender, which can differ from the authenticated From address. A diagnostic domain
+allow rule does not establish that automatic exact-address synchronization works.
+Record that provider row as blocked if such an exception is required.
+
+Confirm every outbound message in its destination inbox. An API queue receipt or
+a Sent-folder copy does not prove delivery; inspect delivery logs and sending
+limits when a reply is missing. Provider-added branding must not invalidate an
+otherwise exact owner decision, and other extra text must remain invalid.
+
 The owner establishes participation by visibly including Dear Machine and the
 guest in To/CC. Verify the automatic exact pair/inbox/guest/thread grant and
 service-created receive/reply/send permissions; do not manually grant or pre-allow

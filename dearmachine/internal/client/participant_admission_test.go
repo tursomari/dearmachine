@@ -64,6 +64,7 @@ func TestParticipantInstructionRequiresPrivateCorrelatedApproval(t *testing.T) {
 	yes := Message{
 		MessageID: "controller-yes", ThreadID: participant.ThreadID,
 		From: pair.UserEmail, To: []string{inbox.Address}, Body: "Yes",
+		RawBody:   "Yes\n\n--\nSent via AgentMail\n\nOn Mon, Jan 2, 2006 Owner <owner@example.test> wrote:\n> quoted approval prompt",
 		InReplyTo: approval.ReceiptID, Timestamp: participant.Timestamp.Add(time.Minute),
 	}
 	raw.setThread(yes.ThreadID, append(raw.thread(yes.ThreadID), yes))
@@ -85,7 +86,7 @@ func TestParticipantInstructionRequiresPrivateCorrelatedApproval(t *testing.T) {
 }
 
 func TestParticipantControlAcceptsOnlyExactChoices(t *testing.T) {
-	tests := []string{"yes", "Yes.", "Yes please", "Skip", ""}
+	tests := []string{"yes", "Yes.", "Yes please", "Skip", "", "Yes\n\n--\nNo", "Yes\n\n--\nSent via AgentMail\nNo", "Yes\nDo something else\n\n--\nSent via AgentMail"}
 	for _, body := range tests {
 		name := body
 		if name == "" {
