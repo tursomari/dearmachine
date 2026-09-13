@@ -80,6 +80,10 @@ Current behavior and test commands are documented in
   database, pidfile, or agent session.
 - Keep agent execution at the local user's permissions; do not introduce
   automatic elevation or unsafe approval behavior.
+- Authenticated owner-invited guest participation with private per-message
+  owner approval and strictly lower authority is landed; see
+  [`docs/guest-authorization.md`](docs/guest-authorization.md) and
+  [`verification/guest/VALIDATION.md`](verification/guest/VALIDATION.md); the full live participant evaluation remains outstanding.
 
 ## 4. Add durable scheduling
 

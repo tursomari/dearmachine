@@ -9,3 +9,7 @@
 - **Archived evidence:** Additional maintainer-local recovery evidence exists but is not distributed with the repository. The session identifiers and transcript location above are the portable reproduction references.
 - **Suspected cause:** The final "answer_the_user" / finalize step (planner op `finalize`, model deepseek-v4-flash) regenerated a stale answer to an earlier turn instead of answering the latest user turn — it appears to have replayed a previously rejected/duplicated completion rather than incorporating the latest work_result into the final reply.
 - **Suggested next steps:** Reproduce from the session transcript; audit how the finalize prompt selects/references the latest user turn; consider verifying the final reply addresses the latest user message before sending.
+
+## 2. [validation] Complete the guest participant live evaluation
+
+- Follow [`verification/guest/VALIDATION.md`](verification/guest/VALIDATION.md); Sendmux remains limited by the scoped-mailbox credential and recipient allowance blockers.
