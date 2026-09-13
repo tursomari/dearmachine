@@ -67,6 +67,93 @@ credential values, addresses, guest bodies or body-derived hashes.
   runtime root was removed. Pre-existing provider resources and the normal
   service were untouched.
 
+## Participant-approval continuation live evaluation, 2026-09-13
+
+This continuation used exact candidate `b88d58e942722fac1c372501c45a9aee535296f6`
+and predecessor `3ca9fd16302fc3afca18093d6e6304d6fe63f7a3` source snapshots. The
+credential-free network-isolated Go/race/vet gate and the explicit
+participant-named selection passed. OpenRouter preflight found one exact
+`z-ai/glm-5.3-flash` catalog match and 26 eligible endpoints with the required
+reasoning parameters; the isolated startup sync used high reasoning. The
+disposable AgentMail receiver/owner and OpenMail guest stack was provisioned,
+and the recipient-delivery prelude plus scenarios 1--3 were recreated only as
+prerequisite state; their results are not re-recorded here.
+
+- **PASS — scenario 4, independent decisions.** Two guest messages produced two
+  distinct held requests and private prompts. An old `Yes` replay, a
+  guest-authored `Yes`, and a wrong-thread owner `Yes` released neither; an
+  exact approval resolved only its target and advanced the turn sequence once.
+- **PASS — scenario 5, `No` and `Other`.** `No` resolved its request with zero
+  turn change. `Other` entered replacement state; quoted-only replacement text
+  left it there with zero turn change, while one newly authored owner
+  replacement resolved it and advanced the turn sequence exactly once.
+- **PASS — scenario 6, trust controls do not bypass approval.** Owner and guest
+  trust commands created no agent turn or trust row in the per-message guest
+  flow. The next guest message still produced its own prompt, and its exact
+  approval produced one turn with the lower-authority marker present.
+- **PASS — scenario 7, restart durability.** A forced candidate-container
+  restart retained one pending request and three earlier `resolved_yes`
+  requests. After a fresh poll, prompt rows, processed rows and turn sequence
+  all had zero delta; no prompt or execution was duplicated.
+- **BLOCKED — scenario 8, private owner continuation.** AgentMail rejected the
+  owner send before delivery with HTTP 429 `rate_limit_exceeded` and
+  `Retry-After: 48340`; the exact prerequisite is reset availability for the
+  disposable owner's send allowance.
+- **BLOCKED — scenario 9, removal while work is held.** The authenticated owner
+  removal command could not be sent under the same AgentMail allowance window.
+  The exact prerequisite is the same allowance reset; no substitute identity
+  or policy widening was used.
+- **BLOCKED — scenario 10, reinvitation and generation isolation.** This row
+  depends on scenario 9's authenticated removal and further owner sends, all
+  unavailable before the recorded allowance reset.
+- **PASS — scenario 11, forged owner invitation provider rejection.** OpenMail
+  rejected the attempted forged invitation with HTTP 403; it was not delivered
+  and produced no authorization mutation or invocation.
+- **PASS — scenario 11, forged owner instruction local rejection.** OpenMail
+  accepted the send but preserved its authenticated guest identity. The
+  provider-delivered message remained unread at the receiver, with no grant,
+  participant request or turn change.
+- **PASS — scenario 11, forged approval local rejection.** A provider-delivered
+  guest-authored exact `Yes` resolved neither of the two target requests and
+  caused no invocation; it was held as separate guest control-plane work.
+- **PASS — scenario 11, forged removal local rejection.** A provider-delivered
+  guest-authored command carrying a valid generation-1 removal token left one
+  active generation-1 grant, participant requests and turn sequence unchanged.
+- **BLOCKED — scenario 11, forged guest request.** OpenMail normalized the
+  claimed author to its authenticated sender and delivered ordinary signed
+  guest work. Local state held it with zero invocation, but AgentMail's same
+  429 window prevented the private prompt, so this did not exercise forged
+  sender evidence end to end.
+- **BLOCKED — scenario 11, raw unsigned variants.** The managed disposable
+  sender APIs do not expose controlled unsigned RFC822 injection. The exact
+  prerequisite for unsigned owner invitations, guest requests, owner
+  instructions, approvals and removals is a scoped disposable raw-send path
+  that preserves provider-delivery attribution; none was available this run.
+- **BLOCKED — scenario 12, lower-authority override attempts.** The exact-model
+  attempts require private owner approvals, which could not be sent before the
+  same AgentMail allowance reset. Deterministic routing remained covered by the
+  passing container gate, but it does not substitute for this live row.
+- **BLOCKED — live `TestParticipantAuthorityLive` probe (not run).** The exact
+  prerequisite remains a dedicated egress-restricted network allowing only
+  `openrouter.ai:443`, with DNS and a denied non-OpenRouter probe recorded, plus
+  a spend-limited key. An unrestricted default bridge is not acceptable.
+- **BLOCKED — Sendmux live rows.** The exact prerequisites remain a scoped
+  Sendmux mailbox credential and availability of the shared account's
+  two-recipient hourly allowance.
+
+The decisive anomaly was the account-wide AgentMail send window: the first 429
+occurred on the scenario-8 owner send, and a later held guest request could not
+receive its private receiver-sent prompt. No product defect was established.
+Retained evidence contains only counts, states, recipient-shape verdicts,
+provider status/identifiers and configuration facts, with no addresses,
+message bodies, credential values or body-derived hashes.
+
+- **PASS — teardown.** The Compose project, isolated secret, containers, image
+  and validated runtime root were removed. Fourteen exact run-created policy
+  entries and the two AgentMail plus one OpenMail disposable inboxes were
+  deleted and verified absent; pre-existing provider ID sets and normal state
+  were unchanged.
+
 ## Sendmux submission and filtering follow-up, 2026-09-13
 
 Sendmux now uses local DKIM and owner/guest authorization without managing SMTP
