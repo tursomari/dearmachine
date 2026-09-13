@@ -59,16 +59,30 @@ encoded bodies, missing evidence and reconstruction failures are rejected.
 The header field is currently undocumented; if its shape changes, verification
 fails closed. A provider verdict never substitutes for the signature.
 
-OpenMail's API message IDs remain distinct from signed Internet Message-IDs.
+OpenMail and Sendmux API message IDs remain distinct from signed Internet Message-IDs.
 Approval replies resolve signed references against outbound records in the same
 inbox/thread before looking up the exact private approval prompt. Provider
 inbox/thread metadata and that ID mapping remain trusted.
 
-**Sendmux still rejects all inbound work, including owner messages.** Its REST
-raw-body API supplies parsed text/HTML. IMAP may supply the original message,
-but that route has not yet been verified with a valid mailbox credential.
-Provider permission synchronization and native guest inspection/revocation
-remain available. Daemon startup and `guest list` report authentication support.
+**Sendmux retrieves original RFC 822 messages over verified TLS IMAP** at
+`mail.sendmux.ai:993`, using the same mailbox-scoped credential as REST. The
+infrastructure key is only for provisioning. Original MIME, including HTML,
+encoded bodies and attachments, must pass the same exact-domain DKIM and
+signed-header policy. The adapter checks the REST record's normalized fingerprint
+and single Internet Message-ID against the retrieved message. REST inbox/thread,
+MIME extraction and attachment mapping remain part of the provider trust boundary.
+Sent status requires provider Sent-folder membership, not just a matching From.
+
+IMAP opens folders read-only and uses `BODY.PEEK`, preserving unread flags.
+It reads Message-ID headers directly because provider HEADER searches did not
+find a newly delivered message in a live probe. A verification scans at most 64
+folders and 10,000 messages, downloads at most 64 MiB in total, limits individual
+header responses to 64 KiB and original messages to 32 MiB, and times out after
+30 seconds. Missing evidence, duplicate matches (including folder copies), changed
+UID validity, exceeded limits and invalid signatures never authorize work.
+Successful verification is cached in memory for up to 2,048 exact message
+fingerprints; changing a cached request is rejected. Daemon startup and `guest
+list` report the available authentication path.
 
 ## Remove and reinvite
 

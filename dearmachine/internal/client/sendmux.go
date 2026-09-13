@@ -35,6 +35,11 @@ type SendmuxTransport struct {
 
 	resolveMu sync.Mutex
 	resolved  sendmuxMailboxInfo
+
+	authRaw       sendmuxRawFetcher
+	authLookupTXT func(context.Context, string) ([]string, error)
+	authMu        sync.Mutex
+	authenticated map[string]string
 }
 
 type sendmuxTransportConfig struct {
@@ -44,6 +49,7 @@ type sendmuxTransportConfig struct {
 	HTTPClient       *http.Client
 	AllowMutation    bool
 	AllowInsecureURL bool
+	RawFetcher       sendmuxRawFetcher
 }
 
 type sendmuxTransportAPI interface {
@@ -62,9 +68,10 @@ type sendmuxOutboundAPI interface {
 }
 
 type sendmuxMailboxInfo struct {
-	ID     string
-	Email  string
-	Status string
+	ID            string
+	Email         string
+	Status        string
+	SentFolderIDs []string
 }
 
 type sendmuxRawAttachment struct {
@@ -94,6 +101,7 @@ type sendmuxRawMessage struct {
 	InReplyTo     string
 	References    []string
 	RFCMessageIDs []string
+	FolderIDs     []string
 }
 
 type sendmuxSendFile struct {
@@ -124,6 +132,7 @@ func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
 	}
 	config := sendmuxTransportConfig{
 		API: api, Inbox: inboxID, HTTPClient: http.DefaultClient, AllowMutation: true,
+		RawFetcher: newSendmuxIMAPFetcher(apiKey),
 	}
 	if sendAPIKey, configured, err := loadSendmuxSendCredential(); err != nil {
 		return nil, err
@@ -163,6 +172,7 @@ func newSendmuxTransport(config sendmuxTransportConfig) (*SendmuxTransport, erro
 	return &SendmuxTransport{
 		api: config.API, outbound: config.Outbound, inbox: strings.TrimSpace(config.Inbox), httpClient: httpClient,
 		allowMutation: config.AllowMutation, allowInsecureURL: config.AllowInsecureURL,
+		authRaw: config.RawFetcher,
 	}, nil
 }
 
@@ -477,9 +487,14 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 		bodyReferences,
 		conversationReferencesInBodies(raw.Text, htmlToText(raw.HTML)),
 	)
-	labels := append([]string(nil), raw.Keywords...)
+	labels := make([]string, 0, len(raw.Keywords)+3)
+	for _, keyword := range raw.Keywords {
+		if !containsFold([]string{"sent", "outbound", "inbound"}, keyword) {
+			labels = append(labels, keyword)
+		}
+	}
 	mailboxAddress := strings.ToLower(transport.resolved.Email)
-	if strings.EqualFold(raw.From, mailboxAddress) {
+	if strings.EqualFold(raw.From, mailboxAddress) && sendmuxInSentFolder(raw.FolderIDs, transport.resolved.SentFolderIDs) {
 		labels = append(labels, "outbound", "sent")
 	} else {
 		labels = append(labels, "inbound")
@@ -503,7 +518,7 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 		})
 	}
 	return Message{
-		MessageID: raw.ID, ThreadID: raw.ThreadID, From: strings.ToLower(raw.From), To: to,
+		MessageID: raw.ID, RFCMessageID: sendmuxRFCMessageID(raw), ThreadID: raw.ThreadID, From: strings.ToLower(raw.From), To: to,
 		CC: append([]string(nil), raw.CC...), BCC: append([]string(nil), raw.BCC...),
 		Delivery: normalizeMessageDelivery(
 			transport.resolved.ID, transport.resolved.Email,
@@ -664,7 +679,38 @@ func (api *sendmuxSDKAPI) ResolveMailbox(ctx context.Context, inbox string) (sen
 		return sendmuxMailboxInfo{}, sendmuxUnexpectedResponse("get mailbox", response)
 	}
 	data := success.Response.GetData()
-	return sendmuxMailboxInfo{ID: data.GetID(), Email: data.GetEmail(), Status: data.GetStatus()}, nil
+	info := sendmuxMailboxInfo{ID: data.GetID(), Email: data.GetEmail(), Status: data.GetStatus()}
+	cursor := ""
+	folderCount := 0
+	for {
+		params := mailbox.MailboxListFoldersParams{MailboxID: mailbox.NewOptString(info.ID), Limit: mailbox.NewOptInt(maxSendmuxIMAPFolders)}
+		if cursor != "" {
+			params.Cursor = mailbox.NewOptString(cursor)
+		}
+		page, err := api.client.MailboxListFolders(ctx, params)
+		if err != nil {
+			return sendmuxMailboxInfo{}, err
+		}
+		folderCount += len(page.GetData())
+		if folderCount > maxSendmuxIMAPFolders {
+			return sendmuxMailboxInfo{}, errors.New("Sendmux folder limit exceeded")
+		}
+		for _, folder := range page.GetData() {
+			if strings.EqualFold(nilString(folder.GetRole()), "sent") {
+				info.SentFolderIDs = append(info.SentFolderIDs, folder.GetID())
+			}
+		}
+		pagination := page.GetPagination()
+		next, hasNext := pagination.GetNextCursor().Get()
+		if !pagination.GetHasMore() {
+			break
+		}
+		if !hasNext || next == "" || next == cursor {
+			return sendmuxMailboxInfo{}, errors.New("Sendmux folder pagination did not advance")
+		}
+		cursor = next
+	}
+	return info, nil
 }
 
 func (api *sendmuxSDKAPI) ListUnread(ctx context.Context, mailboxID string) ([]string, error) {
@@ -715,9 +761,10 @@ func (api *sendmuxSDKAPI) Message(ctx context.Context, mailboxID, messageID stri
 	}
 	contentResponse, err := api.client.MailboxListContent(ctx, mailbox.MailboxListContentParams{
 		MessageID: messageID, MailboxID: mailbox.NewOptString(mailboxID),
-		Part:               mailbox.NewOptMailboxListContentPart(mailbox.MailboxListContentPartAuto),
-		IncludeHTML:        mailbox.NewOptBool(true),
-		IncludeHeaders:     mailbox.NewOptMailboxListContentIncludeHeaders(mailbox.MailboxListContentIncludeHeadersSelected),
+		Part:           mailbox.NewOptMailboxListContentPart(mailbox.MailboxListContentPartAuto),
+		IncludeHTML:    mailbox.NewOptBool(true),
+		StripSignature: mailbox.NewOptBool(false), StripQuotes: mailbox.NewOptBool(false),
+		IncludeHeaders:     mailbox.NewOptMailboxListContentIncludeHeaders(mailbox.MailboxListContentIncludeHeadersFull),
 		IncludeAttachments: mailbox.NewOptMailboxListContentIncludeAttachments(mailbox.MailboxListContentIncludeAttachmentsMetadata),
 	})
 	if err != nil {
@@ -869,11 +916,19 @@ func sendmuxRawFromSDK(detail mailbox.MailboxMessage, content mailbox.MailboxMes
 	headers := content.GetHeaders()
 	var inReplyTo string
 	var references, messageIDs []string
-	if selected, ok := headers.GetSelected().Get(); ok {
-		inReplyTo, _ = selected.GetInReplyTo().Get()
-		references = append([]string(nil), selected.GetReferences()...)
-		messageIDs = append([]string(nil), selected.GetMessageID()...)
+	// Selected headers strip Message-ID brackets. Full headers preserve the
+	// exact signed Internet IDs and reply ancestry independently of REST IDs.
+	for _, header := range headers.GetFull() {
+		switch strings.ToLower(header.GetName()) {
+		case "message-id":
+			messageIDs = append(messageIDs, strings.TrimSpace(header.GetValue()))
+		case "in-reply-to":
+			inReplyTo = strings.TrimSpace(header.GetValue())
+		case "references":
+			references = append(references, strings.Fields(header.GetValue())...)
+		}
 	}
+
 	body := content.GetBody()
 	textBody, _ := body.GetText().Get()
 	htmlBody, _ := body.GetHTML().Get()
@@ -887,8 +942,8 @@ func sendmuxRawFromSDK(detail mailbox.MailboxMessage, content mailbox.MailboxMes
 		BCC: mailboxAddressStrings(participants.GetBcc()), ReplyTo: mailboxAddressStrings(participants.GetReplyTo()),
 		Subject: nilString(content.GetSubject()), Text: textBody, HTML: htmlBody,
 		ReceivedAt: receivedAt, SentAt: sentAt, Seen: flags.GetSeen(),
-		Keywords: append([]string(nil), detail.GetKeywords()...), InReplyTo: inReplyTo,
-		References: references, RFCMessageIDs: messageIDs,
+		Keywords: append([]string(nil), detail.GetKeywords()...), InReplyTo: strings.TrimSpace(inReplyTo),
+		References: references, RFCMessageIDs: messageIDs, FolderIDs: append([]string(nil), detail.GetFolderIds()...),
 	}
 	for _, attachment := range content.GetAttachments() {
 		downloadURL, _ := attachment.GetDownloadURL().Get()
@@ -969,4 +1024,15 @@ func sendmuxValidationDetails(response any) []mailbox.ApiErrorDetail {
 	}
 	errorBody := apiError.GetError()
 	return errorBody.GetErrors()
+}
+
+func sendmuxInSentFolder(folders, sent []string) bool {
+	for _, folder := range folders {
+		for _, id := range sent {
+			if folder != "" && folder == id {
+				return true
+			}
+		}
+	}
+	return false
 }

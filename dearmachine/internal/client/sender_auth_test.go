@@ -22,10 +22,6 @@ import (
 
 func signedMailFixture(t *testing.T, message Message, domain string, signedHeaders []string, extraHeaders ...string) ([]byte, func(context.Context, string) ([]string, error)) {
 	t.Helper()
-	public, private, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
 	raw := fmt.Sprintf("From: %s\r\nTo: %s\r\nMessage-ID: %s\r\nSubject: %s\r\nDate: Sat, 12 Sep 2026 10:00:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n", message.From, strings.Join(message.To, ", "), message.MessageID, message.Subject)
 	if len(message.CC) > 0 {
 		raw += "Cc: " + strings.Join(message.CC, ", ") + "\r\n"
@@ -40,6 +36,15 @@ func signedMailFixture(t *testing.T, message Message, domain string, signedHeade
 		raw += header + "\r\n"
 	}
 	raw += "\r\n" + message.Body + "\r\n"
+	return signedRawFixture(t, raw, domain, signedHeaders)
+}
+
+func signedRawFixture(t *testing.T, raw, domain string, signedHeaders []string) ([]byte, func(context.Context, string) ([]string, error)) {
+	t.Helper()
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var signed bytes.Buffer
 	if err := dkim.Sign(&signed, strings.NewReader(raw), &dkim.SignOptions{Domain: domain, Selector: "fixture", Signer: private, HeaderKeys: signedHeaders}); err != nil {
 		t.Fatal(err)

@@ -24,7 +24,7 @@ const maxAuthenticationMessageBytes = 32 << 20
 // SenderAuthenticationStatus describes the shipped evidence path, without
 // loading credentials or contacting a provider.
 func SenderAuthenticationStatus(transport string) string {
-	if transport == "agentmail" {
+	if transport == "agentmail" || transport == "sendmux" {
 		return "enabled: locally verified exact-domain DKIM, signed author and routing headers; trusts the sender domain's mailbox controls"
 	}
 	if transport == "openmail" {
@@ -208,8 +208,4 @@ func verifySignedMessage(ctx context.Context, raw []byte, expected Message, look
 		}
 	}
 	return ErrMessageUnauthenticated
-}
-
-func (*SendmuxTransport) AuthenticateMessage(context.Context, Message) error {
-	return ErrSenderAttributionUnsupported
 }

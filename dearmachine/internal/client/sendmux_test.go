@@ -42,7 +42,7 @@ func newFakeSendmuxAPI(downloadURL string) *fakeSendmuxAPI {
 	base := time.Date(2026, time.August, 19, 10, 0, 0, 0, time.UTC)
 	conversationReference := newConversationReference()
 	return &fakeSendmuxAPI{
-		mailbox:               sendmuxMailboxInfo{ID: "mbx-test", Email: "device@myagent.mx", Status: "active"},
+		mailbox:               sendmuxMailboxInfo{ID: "mbx-test", Email: "device@myagent.mx", Status: "active", SentFolderIDs: []string{"folder-sent"}},
 		conversationReference: conversationReference,
 		data: map[string][]sendmuxRawMessage{
 			"thread-old": {
@@ -99,7 +99,7 @@ func (fake *fakeSendmuxAPI) Send(_ context.Context, _ string, request sendmuxSen
 	}
 	receipt := "outbound-1"
 	fake.data[inbound.ThreadID] = append(fake.data[inbound.ThreadID], sendmuxRawMessage{
-		ID: receipt, ThreadID: inbound.ThreadID, From: fake.mailbox.Email, To: request.To,
+		ID: receipt, FolderIDs: []string{"folder-sent"}, ThreadID: inbound.ThreadID, From: fake.mailbox.Email, To: request.To,
 		Subject: request.Subject, Text: request.Text, HTML: request.HTML,
 		SentAt: time.Date(2026, time.August, 19, 13, 0, 0, 0, time.UTC), Seen: true,
 	})

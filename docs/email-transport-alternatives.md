@@ -152,6 +152,10 @@ The adapter keeps these provider deltas explicit:
   reply receive a new provider-local thread ID;
 - native idempotency is passed on every send, while SDK retries are currently
   disabled until Dear Machine adopts one deliberate operational retry policy;
+- sender evidence comes from original MIME over verified TLS IMAP, with exact
+  Message-ID binding to REST and local DKIM verification; see
+  [the authentication limits](guest-authorization.md);
+- outbound status requires membership in a provider folder whose role is `sent`;
 - processed state maps to the message's `seen` flag; and
 - attachment metadata provides a short-lived presigned URL, which is fetched
   over HTTPS without forwarding the mailbox credential and with the shared

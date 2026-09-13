@@ -64,7 +64,7 @@ The suite is organized by responsibility:
   ordering, checkpoints, and retries.
 
 The default transport tests remain offline. AgentMail and OpenMail use local
-HTTP servers, Sendmux uses a credential-free mailbox fake, and the agent fixture
+HTTP servers, Sendmux uses credential-free REST and IMAP protocol fakes, and the agent fixture
 runs as a real local subprocess. Live provider behavior is intentionally kept
 out of `go test ./...`.
 

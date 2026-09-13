@@ -35,6 +35,29 @@ path from that shared runbook.
 - Do not stop, reconfigure, or point this test at the normal Dear Machine
   service. Use a unique runtime root and database.
 
+## Sender authentication integration check
+
+The adapter uses the mailbox credential for both REST and verified TLS IMAP at
+`mail.sendmux.ai:993`. Keep that port reachable. A message must have an exact
+From-domain DKIM signature covering its entire body and every present author,
+routing and MIME header. Parsed text, SPF verdicts and From matching alone are
+not sufficient. See [the authentication contract](../../../docs/guest-authorization.md).
+
+The narrow integration check may insert one locally generated, DKIM-signed
+multipart fixture into a run-created mailbox using IMAP APPEND, then exercise
+REST polling and the production IMAP fetcher. Inject only the generated fixture's
+DNS public key in the test verifier. Verify opaque/RFC ID binding, decoded
+attachment presence, successful signature verification, unchanged unread flags,
+and provider Sent-folder role discovery. Delete exactly the created mailbox.
+This validates adapter wiring without sending external mail; it does not replace
+the external two-turn scenario below or prove the sender domain's real DNS keys.
+
+The deterministic suite also rejects changed recipients and bodies, attachment
+byte tampering, ambiguous Internet IDs, changed UID validity, oversized literals,
+scan-limit exhaustion, connection failures and forged inbox From/keywords. These
+checks run without live credentials. Private live fixtures and credentials must
+remain outside tracked source.
+
 ## Private operator configuration
 
 Create an untracked file outside the repository, owned by the operator and
