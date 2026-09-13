@@ -120,8 +120,13 @@ No raw From match or supplied Authentication-Results verdict replaces verificati
 OpenMail verifies the same signature contract for reconstructable, unencoded
 single-part plain text. Unsupported MIME formats and missing evidence are
 rejected. Its provider IDs are mapped separately from signed Internet
-Message-IDs using scoped outbound records. Sendmux remains disabled pending a
-verified evidence path. The model does not prove these provider adapters.
+Message-IDs using scoped outbound records. Sendmux verifies original MIME fetched
+through mailbox-scoped TLS IMAP. Its SMTP filters do not represent authenticated
+From identities, so local authorization replaces managed address entries.
+Sendmux private approval references are matched only in authenticated owner
+bodies against private Sent records in the same inbox and thread. Nonce secrecy,
+provider storage and parsing remain trusted boundaries; the model abstracts
+correct correlation and does not prove these provider adapters.
 
 The explicit native `guest allow` path instead carries trusted local operator
 authorization, with provider-resolved visible invitation facts. It cannot bypass

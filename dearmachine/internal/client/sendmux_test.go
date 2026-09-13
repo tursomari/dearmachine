@@ -100,7 +100,7 @@ func (fake *fakeSendmuxAPI) Send(_ context.Context, _ string, request sendmuxSen
 	receipt := "outbound-1"
 	fake.data[inbound.ThreadID] = append(fake.data[inbound.ThreadID], sendmuxRawMessage{
 		ID: receipt, FolderIDs: []string{"folder-sent"}, ThreadID: inbound.ThreadID, From: fake.mailbox.Email, To: request.To,
-		Subject: request.Subject, Text: request.Text, HTML: request.HTML,
+		Subject: request.Subject, Text: request.Text, HTML: request.HTML, InReplyTo: request.ParentRFCMessageID,
 		SentAt: time.Date(2026, time.August, 19, 13, 0, 0, 0, time.UTC), Seen: true,
 	})
 	return receipt, nil

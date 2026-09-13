@@ -16,11 +16,11 @@ multipart and attachments remain rejected. Inspect the installed authentication
 status before selecting the receiver.
 
 Reserve capacity for three disposable identities before starting. They may use
-different providers. Verify actual delivery of an owner message with the managed
-exact-address receive policy enabled: a provider may filter the SMTP envelope
-sender, which can differ from the authenticated From address. A diagnostic domain
-allow rule does not establish that automatic exact-address synchronization works.
-Record that provider row as blocked if such an exception is required.
+different providers. For AgentMail, verify actual delivery with managed exact-address
+policies enabled. Sendmux intentionally leaves SMTP filters unmanaged because
+envelope senders differ from authenticated From addresses; verify its default
+filter mode and local DKIM/grant enforcement. Do not widen a provider policy as
+a diagnostic workaround and then report automatic synchronization as passing.
 
 Confirm every outbound message in its destination inbox. An API queue receipt or
 a Sent-folder copy does not prove delivery; inspect delivery logs and sending
@@ -29,7 +29,7 @@ otherwise exact owner decision, and other extra text must remain invalid.
 
 The owner establishes participation by visibly including Dear Machine and the
 guest in To/CC. Verify the automatic exact pair/inbox/guest/thread grant and
-service-created receive/reply/send permissions; do not manually grant or pre-allow
+service-created provider permissions where applicable; do not manually grant or pre-allow
 the guest to make this row pass. Guests must Reply All visibly to Dear Machine
 and the owner. BCC, provider delivery or thread knowledge cannot authorize work.
 

@@ -175,12 +175,30 @@ authentication failure is a credential blocker, not evidence about delivery.
      no pending rows; and
    - a repeated poll creates neither a third agent turn nor a duplicate reply.
 
-Sendmux's HTTP send API rejects caller-supplied RFC `In-Reply-To` and
-`References` headers and has no distinct reply operation. A Dear Machine
-Sendmux response may therefore start a new provider-local thread. Conversation
-continuity is judged on the receiver side by the Gmail thread ID together with
-the stable Dear Machine conversation reference in the reply, even when the
-Sendmux provider-local thread changes.
+Sendmux replies use native JMAP over verified HTTPS at `mail.sendmux.ai`, using
+only the mailbox-scoped credential. The native API preserves `In-Reply-To` and
+`References`, stores the outgoing message, and returns a durable submission.
+The legacy `SENDMUX_SEND_API_KEY` configuration is rejected: the separate Sending
+API cannot express the required reply ancestry. SMTP alone lacks a recoverable
+Sent receipt and is not used.
+
+The relay can rewrite the delivered Message-ID. Private guest approval prompts
+include an unguessable reference bound to a private Sent message in the same
+inbox and thread. The authenticated owner must quote that prompt or copy the
+reference line below their exact decision. Test missing, wrong, ambiguous and
+cross-thread references; none may approve a request. Public replies must not
+contain private approval references.
+
+Do not enable SMTP envelope allow-lists for paired or guest From identities.
+Provisioned test inboxes retain their default filter mode; local authentication
+and grants enforce access. Preserve all pre-existing operator filters.
+
+Check sending capacity before the scenario. Shared quotas count recipients, not
+messages. An answer to owner plus guest requires two recipient slots. Queued
+submissions and SMTP acceptance are not inbox delivery evidence: inspect with
+`dearmachine inbox delivery --pair <pair> <outbound-message-id>` and independently
+observe each recipient's inbox. Keep accepted but delayed mail distinct from
+failed requests. Do not retry a queued submission to work around the quota.
 
 ## Backend-native completion live probe
 

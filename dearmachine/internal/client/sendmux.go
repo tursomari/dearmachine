@@ -111,14 +111,17 @@ type sendmuxSendFile struct {
 }
 
 type sendmuxSendRequest struct {
-	CC, BCC          []string
-	ReplyToMessageID string
-	To               []string
-	Subject          string
-	Text             string
-	HTML             string
-	Files            []sendmuxSendFile
-	CustomHeaders    map[string]string
+	CC, BCC            []string
+	ReplyToMessageID   string
+	ParentRFCMessageID string
+	References         []string
+	IdempotencyKey     string
+	To                 []string
+	Subject            string
+	Text               string
+	HTML               string
+	Files              []sendmuxSendFile
+	CustomHeaders      map[string]string
 }
 
 func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
@@ -132,17 +135,14 @@ func NewSendmuxTransport(inboxID string) (*SendmuxTransport, error) {
 	}
 	config := sendmuxTransportConfig{
 		API: api, Inbox: inboxID, HTTPClient: http.DefaultClient, AllowMutation: true,
-		RawFetcher: newSendmuxIMAPFetcher(apiKey),
+		RawFetcher: newSendmuxIMAPFetcher(apiKey), Outbound: newSendmuxJMAPSender(apiKey),
 	}
-	if sendAPIKey, configured, err := loadSendmuxSendCredential(); err != nil {
+	if _, configured, err := loadSendmuxSendCredential(); err != nil {
 		return nil, err
 	} else if configured {
-		outbound, err := newSendmuxSDKSendingAPI(sendAPIKey)
-		if err != nil {
-			return nil, fmt.Errorf("create Sendmux sending client: %w", err)
-		}
-		config.Outbound = outbound
+		return nil, errors.New("Sendmux threaded replies require the mailbox credential; remove SENDMUX_SEND_API_KEY and SENDMUX_SEND_API_KEY_FILE")
 	}
+
 	return newSendmuxTransport(config)
 }
 
@@ -336,13 +336,18 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 		recipients = append([]string(nil), payload.To...)
 	}
 	request := sendmuxSendRequest{
-		ReplyToMessageID: messageID,
-		To:               append([]string(nil), recipients...),
-		CC:               append([]string(nil), payload.CC...),
-		BCC:              append([]string(nil), payload.BCC...),
-		Subject:          sendmuxReplySubject(inbound.Subject),
-		Text:             payload.Text,
-		HTML:             sendmuxReplyHTML(payload.Text, payload.HTML),
+		ReplyToMessageID:   messageID,
+		ParentRFCMessageID: sendmuxRFCMessageID(inbound),
+		References:         append([]string(nil), inbound.References...),
+		To:                 append([]string(nil), recipients...),
+		CC:                 append([]string(nil), payload.CC...),
+		BCC:                append([]string(nil), payload.BCC...),
+		Subject:            sendmuxReplySubject(inbound.Subject),
+		Text:               payload.Text,
+		HTML:               sendmuxReplyHTML(payload.Text, payload.HTML),
+	}
+	if request.ParentRFCMessageID != "" && !containsFold(request.References, request.ParentRFCMessageID) {
+		request.References = append(request.References, request.ParentRFCMessageID)
 	}
 	if strings.TrimSpace(request.Text) == "" && strings.TrimSpace(request.HTML) == "" {
 		return "", fmt.Errorf("reply to Sendmux message %s: body is required", messageID)
@@ -382,13 +387,17 @@ func (transport *SendmuxTransport) ReplyReceipt(ctx context.Context, message Mes
 	if err != nil {
 		return "", false, err
 	}
+	parent := message.RFCMessageID
 	foundInbound := false
 	for _, candidate := range messages {
 		if candidate.MessageID == message.MessageID {
 			foundInbound = true
+			if parent == "" {
+				parent = candidate.RFCMessageID
+			}
 			continue
 		}
-		if foundInbound && containsFold(candidate.Labels, "sent") &&
+		if foundInbound && parent != "" && candidate.InReplyTo == parent && containsFold(candidate.Labels, "sent") &&
 			containsMessageAddress(candidate.To, replyReceiptRecipient(message, recipient)) {
 			return candidate.MessageID, true, nil
 		}

@@ -89,5 +89,10 @@ func authoredControlBody(message Message) string {
 	// Remove only its complete trailing footer, not arbitrary signatures or
 	// additional instructions after a control word.
 	body = strings.TrimSpace(body)
-	return strings.TrimSpace(strings.TrimSuffix(body, "\n\n--\nSent via AgentMail"))
+	body = strings.TrimSpace(strings.TrimSuffix(body, "\n\n--\nSent via AgentMail"))
+	// A manually copied private approval reference is evidence, not an instruction.
+	if at := strings.LastIndex(body, "\n"); at >= 0 && approvalReferenceLine.MatchString(strings.TrimSpace(body[at+1:])) {
+		body = strings.TrimSpace(body[:at])
+	}
+	return body
 }

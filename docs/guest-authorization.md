@@ -140,8 +140,11 @@ to owner-only answers; existing persisted submission envelopes remain unchanged.
 
 Provider permissions are shared across applicable grants and permanent pairs in
 an inbox. AgentMail needs receive, reply and send entries (`reply` filters incoming
-replies). OpenMail has inbound/outbound rules; Sendmux has a receive filter and
-configured sending capability. Only a final unneeded entry established as owned
+replies). OpenMail has inbound/outbound rules. Sendmux uses local authorization and DKIM
+verification without managing SMTP sender filters: envelope senders can differ
+from authenticated From addresses. Existing operator filters remain unchanged;
+an older DearMachine-managed allow-list may need to be turned off in Sendmux
+before legitimate messages arrive. Sendmux runtime needs only the mailbox key. Only a final unneeded entry established as owned
 by DearMachine may be removed. Directional ownership is independent. Pre-existing
 entries, uncertain additions after lost responses and externally changed entries
 are preserved. No guest action changes global policy mode or unrelated rules.
@@ -155,3 +158,18 @@ recover a message the provider already rejected; send it again after sync succee
 The [verification guide](../verification/guest/README.md) and
 [validation record](../verification/guest/VALIDATION.md) distinguish bounded
 proofs, adapter tests, trusted boundaries and live evaluation gaps.
+
+
+Sendmux replies use its native mailbox submission API to preserve `In-Reply-To`
+and `References` and keep a durable Sent receipt. The outbound relay may rewrite
+Message-ID. Private approval prompts therefore include a random approval
+reference: reply with `Yes` while quoting the prompt, or copy its reference line
+beneath `Yes`. DearMachine requires an authenticated owner, the same inbox and
+thread, and a matching private prompt for the exact pending request. Missing or
+ambiguous references never approve work. The reference is not sent in shared
+answers and does not grant continuing approval.
+
+A Sent receipt proves submission, not arrival. Inspect a Sendmux outbound message
+with `dearmachine inbox delivery --pair owner@example.test <outbound-message-id>`.
+Queued or unconfirmed statuses must not be reported as delivery. Shared sending
+limits count recipients, including CC; quota delays can hold an accepted reply.

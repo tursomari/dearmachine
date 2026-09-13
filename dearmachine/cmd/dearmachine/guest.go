@@ -21,11 +21,14 @@ func guestHelp(output io.Writer) error {
   dearmachine guest revoke <address> --pair <pair> --all
 
 Guest grants persist for the exact pair, inbox, guest and provider thread.
-On AgentMail, an authenticated owner's To or CC automatically invites guests.
+An authenticated owner's To or CC automatically invites guests.
 DearMachine locally verifies exact-domain DKIM and signed author/routing headers;
 this trusts the sender domain's operator to control its mailboxes. Raw From or
-SPF/DKIM/DMARC verdicts alone are insufficient. OpenMail and Sendmux currently
-lack supported evidence and reject all inbound work, including owner messages.
+SPF/DKIM/DMARC verdicts alone are insufficient. OpenMail supports reconstructable,
+unencoded single-part plain text. Sendmux
+verifies original MIME through TLS IMAP. Missing or invalid evidence rejects
+inbound work, including owner messages. Sendmux SMTP sender filters are not
+managed; authenticated From identities and local grants enforce participation.
 
 Guests must Reply All to Dear Machine and the owner. Every guest instruction
 requires its own private owner approval; there is no separate admission exchange

@@ -22,6 +22,8 @@ func runInbox(args []string, deps dependencies) error {
 			return inboxHelp(deps.flagOutput)
 		}
 		return runInboxHelp(args[1:], deps.flagOutput)
+	case "delivery":
+		return runInboxDelivery(args[1:], deps)
 	case "skip":
 		return runInboxSkip(args[1:], deps)
 	case "abandon":
@@ -43,6 +45,8 @@ func runInboxHelp(args []string, output io.Writer) error {
 		return fmt.Errorf("help requires an inbox subcommand")
 	}
 	switch args[0] {
+	case "delivery":
+		return inboxDeliveryHelp(output)
 	case "skip":
 		return inboxSkipHelp(output)
 	case "abandon":
@@ -455,6 +459,7 @@ func inboxHelp(output io.Writer) error {
   dearmachine inbox <command> [flags]
 
 Commands:
+  delivery  Inspect a Sendmux reply submission and delivery status
   skip      Locally suppress messages that have not started
   abandon   Force-skip one running follow-up using a clean session fork
   unskip    Make locally skipped messages eligible again
