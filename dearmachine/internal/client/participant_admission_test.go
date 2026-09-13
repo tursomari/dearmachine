@@ -86,7 +86,7 @@ func TestParticipantInstructionRequiresPrivateCorrelatedApproval(t *testing.T) {
 }
 
 func TestParticipantControlAcceptsOnlyExactChoices(t *testing.T) {
-	tests := []string{"yes", "Yes.", "Yes please", "Skip", "", "Yes\n\n--\nNo", "Yes\n\n--\nSent via AgentMail\nNo", "Yes\nDo something else\n\n--\nSent via AgentMail"}
+	tests := []string{"Yes.", "Yes please", "Skip", "", "Yes\n\n--\nNo", "Yes\n\n--\nSent via AgentMail\nNo", "Yes\nDo something else\n\n--\nSent via AgentMail"}
 	for _, body := range tests {
 		name := body
 		if name == "" {
@@ -127,6 +127,10 @@ func TestParticipantControlAcceptsOnlyExactChoices(t *testing.T) {
 			assertNoPendingParticipantWork(t, rig, participant.MessageID)
 
 			retryPrompt := raw.sentReplies()[2]
+			assertPrivateParticipantControlReply(t, retryPrompt, control.MessageID, pair.UserEmail)
+			if retryPrompt.Text != approval.Text {
+				t.Fatal("retry did not preserve the original guest preview and approval instructions")
+			}
 			yes := Message{
 				MessageID: "valid-after-invalid", ThreadID: participant.ThreadID,
 				From: pair.UserEmail, To: []string{inbox.Address}, Body: "Yes",
@@ -454,7 +458,7 @@ func TestParticipantApprovalRecoversReceiptSentBeforePromptCommit(t *testing.T) 
 	}
 	receipt, err := rig.app.transport.Reply(
 		context.Background(), participant.MessageID,
-		participantPrivatePayload(participantApprovalPrompt(request), pair.UserEmail),
+		participantPrivatePayload(participantApprovalPrompt(request, participant.Body), pair.UserEmail),
 		controlIdempotencyKey("participant-approval", participant.MessageID),
 	)
 	if err != nil {

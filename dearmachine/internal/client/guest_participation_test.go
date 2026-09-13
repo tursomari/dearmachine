@@ -88,7 +88,7 @@ func TestGuestAutomaticParticipationApprovalPrivacyAndRemoval(t *testing.T) {
 		t.Fatal("private continuation recipient/footer mismatch")
 	}
 	yes := private
-	yes.MessageID, yes.Body, yes.InReplyTo = "approve-1", "Yes", prompt.ReceiptID
+	yes.MessageID, yes.Body, yes.InReplyTo = "approve-1", "yes\n\nOn Mon, Jan 2, 2006 at 1:29 AM AgentMail <inbox@example.test> wrote:\n> Yes — approve this one instruction.", prompt.ReceiptID
 	process(yes)
 	answer = raw.sentReplies()[3]
 	if rig.capture("count") != "3" || !equalFoldSlice(answer.To, []string{pair.UserEmail}) || !equalFoldSlice(answer.CC, []string{key.Address}) || strings.Contains(answer.Text, command) {

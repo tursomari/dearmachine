@@ -846,10 +846,18 @@ func (a *App) handleParticipantControl(
 			return err
 		}
 		if !found {
+			original, err := a.transport.Message(ctx, request.RequestMessageID)
+			if err != nil {
+				return err
+			}
+			text, err := a.guestApprovalText(original, request)
+			if err != nil {
+				return err
+			}
 			outbound, err = a.transport.Reply(
 				ctx,
 				message.MessageID,
-				participantPrivatePayload(invalidParticipantApprovalPrompt(request), request.ControllingParticipant),
+				participantPrivatePayload(text, request.ControllingParticipant),
 				controlIdempotencyKey("participant-invalid", message.MessageID),
 			)
 			if err != nil {

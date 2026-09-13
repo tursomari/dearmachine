@@ -19,3 +19,28 @@ func TestParticipantControlWithAgentMailBranding(t *testing.T) {
 		}
 	}
 }
+
+func TestParticipantControlCaseInsensitive(t *testing.T) {
+	for _, choice := range []struct {
+		text string
+		want participantControl
+	}{
+		{"Yes", participantControlYes},
+		{"No", participantControlNo},
+		{"Other", participantControlOther},
+	} {
+		for _, body := range []string{choice.text, strings.ToLower(choice.text), strings.ToUpper(choice.text), " \t" + choice.text + "\r\n"} {
+			if got := parseParticipantControl(body); got != choice.want {
+				t.Fatalf("decision for %q = %v, want %v", body, got, choice.want)
+			}
+		}
+	}
+	if got := parseParticipantControl("oThEr"); got != participantControlOther {
+		t.Fatalf("mixed-case choice = %v, want Other", got)
+	}
+	for _, body := range []string{"yes please", "YES\nNO", "no, run this instead", "other instruction", "yes."} {
+		if parseParticipantControl(body) != participantControlInvalid {
+			t.Fatalf("additional text accepted as a decision: %q", body)
+		}
+	}
+}

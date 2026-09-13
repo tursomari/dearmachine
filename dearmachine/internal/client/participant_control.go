@@ -33,13 +33,13 @@ const (
 )
 
 func parseParticipantControl(body string) participantControl {
-	value := strings.TrimSpace(body)
+	value := strings.ToLower(strings.TrimSpace(body))
 	switch value {
-	case "Yes":
+	case "yes":
 		return participantControlYes
-	case "No":
+	case "no":
 		return participantControlNo
-	case "Other":
+	case "other":
 		return participantControlOther
 	default:
 		return participantControlInvalid
@@ -102,17 +102,17 @@ func participantPrivatePayload(text, controller string) ReplyPayload {
 	}
 }
 
-func participantApprovalPrompt(request ParticipantRequest) string {
+func participantApprovalPrompt(request ParticipantRequest, preview string) string {
 	return fmt.Sprintf(
-		"A non-paired participant (%s) sent an instruction in this thread. The instruction is held privately and has not been shown to the agent.\n\n"+
-			"Dear Machine's interpretation: this is one lower-authority participant request. Planned action: run only this frozen provider message as one agent turn if you approve it.\n\n"+
-			"Reply with only:\n"+
+		"A guest (%s) sent an email in this thread.\n\n"+
+			"Guest message:\n> %s\n\n"+
+			"To approve, reply with only Yes, No, or Other.\n\n"+
 			"Yes — approve this one instruction.\n"+
 			"No — discard this instruction.\n"+
 			"Other — provide your own replacement instruction.\n\n"+
-			"This decision applies only to provider message %s.",
+			"Reply with exactly Yes, No, or Other and no additional text.",
 		request.ParticipantAddress,
-		request.RequestMessageID,
+		strings.ReplaceAll(preview, "\n", "\n> "),
 	)
 }
 
@@ -156,11 +156,6 @@ func trustControlResultPrompt(control parsedParticipantTrustControl, admitted bo
 		return fmt.Sprintf("Trust granted for %s. Routine instruction confirmations are disabled, but authority, pairing, routing, and scheduling priority are unchanged.", control.Address)
 	}
 	return fmt.Sprintf("Trust revoked for %s. Routine instruction confirmations are restored; authority, pairing, routing, and scheduling priority are unchanged.", control.Address)
-}
-
-func invalidParticipantApprovalPrompt(request ParticipantRequest) string {
-	return participantApprovalPrompt(request) +
-		"\n\nReply with exactly Yes, No, or Other and no additional text."
 }
 
 func participantReplacementPrompt(request ParticipantRequest) string {

@@ -102,7 +102,12 @@ func (e *pairEndpoint) guestRemovalFooter(threadID, address string) (string, err
 }
 
 func (a *App) guestApprovalText(message Message, request ParticipantRequest) (string, error) {
-	text := participantApprovalPrompt(request)
+	body := authoredControlBody(message)
+	if len(body) > 16000 {
+		body = body[:16000] + "\n[Preview truncated; review the original guest email.]"
+	}
+	// The preview is for the owner's review, never an instruction to the agent.
+	text := participantApprovalPrompt(request, body)
 	e, ok := a.transport.(*pairEndpoint)
 	if !ok {
 		return text, nil
@@ -111,12 +116,6 @@ func (a *App) guestApprovalText(message Message, request ParticipantRequest) (st
 	if err != nil {
 		return "", err
 	}
-	body := authoredControlBody(message)
-	if len(body) > 16000 {
-		body = body[:16000] + "\n[Preview truncated; review the original guest email.]"
-	}
-	// The preview is for the owner's review, never an instruction to the agent.
-	text += "\n\nGuest message:\n> " + strings.ReplaceAll(body, "\n", "\n> ")
 	return text + foot, nil
 }
 
