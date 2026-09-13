@@ -176,47 +176,15 @@ func loadSendmuxManagementCredential() (credential string, configured bool, err 
 	return credential, true, nil
 }
 
-func AuthorizeSendmuxPair(ctx context.Context, inboxID, email string) error {
-	credential, configured, err := loadSendmuxManagementCredential()
-	if err != nil {
-		return err
+// AuthorizeSendmuxPair validates the pair identity without changing SMTP
+// filters. The caller records the pair's durable local authorization.
+func AuthorizeSendmuxPair(_ context.Context, inboxID, email string) error {
+	if strings.TrimSpace(inboxID) == "" {
+		return errors.New("Sendmux inbox is required")
 	}
-	if !configured {
-		return fmt.Errorf("SENDMUX_API_KEY or SENDMUX_API_KEY_FILE is required to authorize a Sendmux pair")
-	}
-	sdk, err := management.New(credential, management.WithRetryOptions(core.RetryOptions{MaxAttempts: 1}))
-	if err != nil {
-		return fmt.Errorf("create Sendmux management client: %w", err)
-	}
-	return authorizeSendmuxPair(ctx, &sendmuxSDKManagementAPI{client: sdk}, inboxID, email)
-}
-
-func authorizeSendmuxPair(ctx context.Context, api sendmuxManagementAPI, inboxID, email string) error {
 	parsed, err := mail.ParseAddress(strings.TrimSpace(email))
 	if err != nil || parsed.Address == "" {
-		return fmt.Errorf("authorize Sendmux pair: must be an RFC 5322 address")
-	}
-	address := strings.ToLower(strings.TrimSpace(parsed.Address))
-	state, err := api.GetMailboxFilters(ctx, inboxID)
-	if err != nil {
-		return fmt.Errorf("get Sendmux mailbox filters: %w", err)
-	}
-	present := false
-	for _, rule := range state.Rules {
-		if rule.Type == "allow" && strings.EqualFold(rule.Pattern, address) {
-			present = true
-			break
-		}
-	}
-	if present && state.Mode == "allowlist" {
-		return nil
-	}
-	if !present {
-		state.Rules = append(state.Rules, sendmuxFilterRule{Type: "allow", Pattern: address})
-	}
-	state.Mode = "allowlist"
-	if err := api.SetMailboxFilters(ctx, inboxID, state); err != nil {
-		return fmt.Errorf("set Sendmux mailbox filters: %w", err)
+		return errors.New("authorize Sendmux pair: must be an RFC 5322 address")
 	}
 	return nil
 }

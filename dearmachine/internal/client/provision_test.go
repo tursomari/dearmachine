@@ -164,21 +164,19 @@ func TestProvisionSendmuxInboxStoresScopedCredentialAndAuthorizesPair(t *testing
 		t.Fatalf("stored credential by address = %q, %v", credential, err)
 	}
 
-	if err := authorizeSendmuxPair(context.Background(), fake, inbox.ProviderID, "Pair <PAIR@Example.test>"); err != nil {
+	if err := AuthorizeSendmuxPair(context.Background(), inbox.ProviderID, "Pair <PAIR@Example.test>"); err != nil {
 		t.Fatalf("authorizeSendmuxPair: %v", err)
 	}
-	if len(fake.setFilters) != 1 || fake.filters.Mode != "allowlist" || !slices.Equal(fake.filters.Rules, []sendmuxFilterRule{
-		{Type: "allow", Pattern: "existing@example.test"},
-		{Type: "allow", Pattern: "pair@example.test"},
-	}) {
-		t.Fatalf("filters = %+v", fake.filters)
+	if len(fake.setFilters) != 0 || fake.filters.Mode != "off" || len(fake.filters.Rules) != 1 {
+		t.Fatalf("pairing changed operator SMTP filters: %+v", fake.filters)
 	}
-	if err := authorizeSendmuxPair(context.Background(), fake, inbox.ProviderID, "pair@example.test"); err != nil {
+	if err := AuthorizeSendmuxPair(context.Background(), inbox.ProviderID, "pair@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.setFilters) != 1 {
-		t.Fatalf("idempotent authorization rewrote filters: %+v", fake.setFilters)
+	if len(fake.setFilters) != 0 {
+		t.Fatal("repeat pairing changed SMTP filters")
 	}
+
 }
 
 func TestProvisionSendmuxInboxDeletesMailboxWhenCredentialCannotBeStored(t *testing.T) {

@@ -126,49 +126,24 @@ func TestGuestOpenMailReceiveOnlyAndExactRuleID(t *testing.T) {
 	}
 }
 
-func TestGuestSendmuxPreservesFilterModeAndOtherRules(t *testing.T) {
-	api := &fakeSendmuxManagementAPI{filters: sendmuxFilterState{Mode: "allowlist", Revision: "r1", Rules: []sendmuxFilterRule{{Type: "allow", Pattern: "pair@example.test"}, {Type: "block", Pattern: "blocked.example.test"}}}}
-	p := &sendmuxReceiveAuthorizer{api: api, inboxID: "inbox"}
-	created, err := p.AddReceive(context.Background(), "guest@example.test")
-	if err != nil || !created.Present {
-		t.Fatalf("add=%+v %v", created, err)
+func TestGuestSendmuxUsesLocalAuthorizationWithoutInfrastructureCredential(t *testing.T) {
+	t.Setenv("SENDMUX_API_KEY", "")
+	t.Setenv("SENDMUX_API_KEY_FILE", "/nonexistent/sendmux-infrastructure-key")
+	transport := &SendmuxTransport{}
+	permission, err := transport.AddReceive(context.Background(), "guest@example.test")
+	if err != nil || !permission.Present || permission.Token != "" {
+		t.Fatalf("local authorization = %+v, %v", permission, err)
 	}
-	if len(api.filters.Rules) != 3 || api.filters.Mode != "allowlist" {
-		t.Fatalf("filters=%+v", api.filters)
-	}
-	if err = p.RemoveReceive(context.Background(), "guest@example.test", created.Token); err != nil {
+	if err := transport.RemoveReceive(context.Background(), "guest@example.test", "legacy-owned-filter-token"); err != nil {
 		t.Fatal(err)
 	}
-	if len(api.filters.Rules) != 2 {
-		t.Fatalf("rules=%+v", api.filters.Rules)
+	if _, err := transport.InspectReceive(context.Background(), "*@example.test"); err == nil {
+		t.Fatal("accepted a wildcard identity")
 	}
-}
-
-type racyGuestSendmuxAPI struct {
-	fakeSendmuxManagementAPI
-	gets int
-}
-
-func (f *racyGuestSendmuxAPI) GetMailboxFilters(ctx context.Context, id string) (sendmuxFilterState, error) {
-	f.gets++
-	if f.gets > 1 {
-		f.filters.Revision = "external-revision"
-	}
-	return f.fakeSendmuxManagementAPI.GetMailboxFilters(ctx, id)
-}
-func TestGuestSendmuxDoesNotAdoptRevisionObservedAfterCreate(t *testing.T) {
-	api := &racyGuestSendmuxAPI{fakeSendmuxManagementAPI: fakeSendmuxManagementAPI{filters: sendmuxFilterState{Mode: "allowlist", Revision: "initial"}}}
-	p := &sendmuxReceiveAuthorizer{api: api, inboxID: "inbox"}
-	created, err := p.AddReceive(context.Background(), "guest@example.test")
-	if err != nil {
+	if err := AuthorizeSendmuxPair(context.Background(), "inbox", "owner@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	if created.Token != "" {
-		t.Fatalf("adopted uncertain post-create revision %q", created.Token)
+	if err := AuthorizeSendmuxPair(context.Background(), "inbox", "invalid"); err == nil {
+		t.Fatal("accepted invalid owner")
 	}
-}
-
-func (f *fakeSendmuxManagementAPI) SetMailboxFiltersWithRevision(ctx context.Context, id string, state sendmuxFilterState) (string, error) {
-	err := f.SetMailboxFilters(ctx, id, state)
-	return state.Revision, err
 }
