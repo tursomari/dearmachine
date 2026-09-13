@@ -1,5 +1,30 @@
 # Guest authorization validation
 
+## Sendmux submission and filtering follow-up, 2026-09-13
+
+Sendmux now uses local DKIM and owner/guest authorization without managing SMTP
+sender filters. Native JMAP submissions preserve reply ancestry and retain
+recoverable Sent records. Private approval references compensate for the relay's
+rewritten Message-ID, while preserving authenticated owner, inbox, thread and
+pending-request checks. Deterministic tests cover forged preview references,
+concurrent and lost-response recovery, changed recipient envelopes and delivery
+status that does not equate SMTP acceptance with arrival.
+
+A disposable production Compose run with separate AgentMail owner and guest
+inboxes verified automatic owner-CC participation and the shared owner answer
+arriving in both destination inboxes. A subsequent authenticated guest reply was
+held for its own private approval, with no guest instruction entering local
+application or agent storage. The approval submission was accepted, but remained
+pending in the relay with zero attempts after the account's two-recipient hourly
+allowance was consumed. The complete Sendmux guest approval conversation is
+therefore **inconclusive**, not passed. Its shared sending account cannot have
+its hourly quota changed through the provider update API; the shared limit-request
+endpoint concerns reviewed daily increases.
+
+These observations do not replace the full participant LSE. The earlier sections
+below describe their named revisions and may have since-superseded provider
+limitations; use the operational contract for current capabilities.
+
 ## Implemented participation workflow, 2026-09-12
 
 The current implementation enables authenticated AgentMail owner To/CC
