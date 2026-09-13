@@ -1,5 +1,72 @@
 # Guest authorization validation
 
+## Automatic invitation and approval live evaluation, 2026-09-13
+
+This run used a disposable production Compose stack at candidate revision
+`b3e0e7400dbe7f267fc2961254f3ad80cc6affa2`, isolated home and XDG roots, and
+separate AgentMail receiver/owner and OpenMail guest identities. The normal
+service and pre-existing provider resources were not used as test state.
+
+- **PASS — deterministic container gate.** The network-isolated runner passed
+  `go test ./...`, `go test -race ./...`, and `go vet ./...`; the explicit
+  participant-named `Test*` selection also passed in the container.
+- **PASS — exact-model preflight and production configuration.** OpenRouter's
+  catalog and endpoint checks found exactly `z-ai/glm-5.3-flash`, with reasoning
+  and high effort supported. The effective isolated Machtiani configuration used
+  that exact model with `reasoning = { effort = "high" }`; no alias or variant
+  appeared in the retained session/configuration scan.
+- **PASS — recipient-delivery prelude.** A predecessor-revision message and reply
+  formed one durable conversation; the candidate then accepted an actual
+  provider-delivered To/CC continuation in the same receiver thread, completed
+  one shared turn, and produced no duplicate after restart. The inverse
+  controller-To/receiver-CC envelope produced an owner-only answer, while a
+  BCC-only receiver delivery produced no turn.
+- **PASS — scenario 1, automatic To/CC invitation.** An authenticated owner
+  message with the receiver in To and guest in CC created the exact active
+  generation-1 grant and all three service-owned, provider-synchronized
+  permission directions. There were no pre-created receiver/guest provider
+  entries and no admission prompt; exactly one answer reached both owner and
+  guest, with owner in To, guest in CC and no other recipients.
+- **PASS — scenario 2, guest Reply All held privately.** Before approval, the
+  conversation turn sequence and processed count were unchanged, pending agent
+  work was zero, and the guest marker had zero matches across application
+  SQLite/WAL, logs and session/project files. Exactly one approval prompt went
+  only to the owner, with empty CC/BCC, quoted preview and copyable removal
+  command; the guest received no copy.
+- **PASS — scenario 3, exact `Yes` and replay suppression.** The private owner
+  approval resolved `yes`, advanced the conversation by exactly one
+  lower-authority invocation, and produced one answer To owner and CC guest.
+  Reusing the provider idempotency key returned the same receipt; a separately
+  delivered duplicate approval left the turn sequence and guest answer count
+  unchanged.
+- **PASS — selected scenario 11 and persistent-lifecycle negative controls.** A
+  guest-authored invitation, an owner invitation visible to the receiver only
+  through BCC, and two provider-delivered unauthorized guest threads created no
+  additional grant, prompt, execution or receiver response. The three rejected
+  unauthorized messages remained provider-unread, without entering local work.
+- **BLOCKED — live `TestParticipantAuthorityLive` probe.** The exact-model catalog,
+  endpoint and stack preflights passed, but no dedicated egress-restricted Docker
+  network allowing only OpenRouter was provisioned; the runbook forbids replacing
+  that boundary with ordinary host or Compose networking.
+- **NOT RUN.** Participant-approval scenarios 4–10 and 12, plus scenario 11
+  branches beyond the selected guest-authored, BCC-only and provider-delivered
+  unauthorized controls, were not run. Sendmux live rows remained blocked on a
+  scoped mailbox credential and an available two-recipient hourly allowance.
+
+AgentMail's explicit Reply endpoint stripped CC and ancestry on one preliminary
+delivery, so it was excluded; the prelude used a real provider send carrying
+signed correlation headers, never injected provider or local state. The account
+also had only two disposable AgentMail slots, so the permitted mixed-provider
+identity layout was used. No product defect was exposed. Retained evidence has
+only sanitized counts, recipient-set facts, state transitions and revisions—no
+credential values, addresses, guest bodies or body-derived hashes.
+
+- **PASS — teardown.** The exact Compose project was stopped, its isolated
+  secret and image were removed, all four run-created inboxes and run-created
+  sender policies were deleted and verified absent, and the validated scratch
+  runtime root was removed. Pre-existing provider resources and the normal
+  service were untouched.
+
 ## Sendmux submission and filtering follow-up, 2026-09-13
 
 Sendmux now uses local DKIM and owner/guest authorization without managing SMTP
