@@ -67,7 +67,11 @@ func (s *GuestStore) PermissionStatus(inboxID string) ([]GuestPermissionStatus, 
 // The advisory lock serializes provider reconcilers across daemon and CLI.
 // Local revocation never needs this lock and commits while remote I/O is slow.
 func (s *GuestStore) providerLock(ctx context.Context) (func(), error) {
-	f, err := os.OpenFile(s.path+".reconcile.lock", os.O_CREATE|os.O_RDWR, 0600)
+	return privateFileLock(ctx, s.path+".reconcile.lock")
+}
+
+func privateFileLock(ctx context.Context, path string) (func(), error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}

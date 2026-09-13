@@ -13,15 +13,16 @@ import (
 
 // Stateful JMAP fake exercises response-loss recovery, not just request encoding.
 type jmapFixture struct {
-	delivered, undo string
-	mu              sync.Mutex
-	url             string
-	email           map[string]any
-	submissions     int
-	state, substate int
-	lose            string
-	conflict        bool
-	foreign         bool
+	delivered, undo           string
+	hideEmail, hideSubmission bool
+	mu                        sync.Mutex
+	url                       string
+	email                     map[string]any
+	submissions               int
+	state, substate           int
+	lose                      string
+	conflict                  bool
+	foreign                   bool
 }
 
 func (f *jmapFixture) handler(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +71,7 @@ func (f *jmapFixture) handler(w http.ResponseWriter, r *http.Request) {
 		}
 	case "Email/query":
 		result["ids"] = []string{}
-		if f.email != nil {
+		if f.email != nil && !f.hideEmail {
 			key := args["filter"].(map[string]any)["hasKeyword"].(string)
 			if f.email["keywords"].(map[string]any)[key] == true {
 				result["ids"] = []string{"email"}
@@ -108,7 +109,7 @@ func (f *jmapFixture) handler(w http.ResponseWriter, r *http.Request) {
 		}
 	case "EmailSubmission/query":
 		result["ids"] = []string{}
-		if f.submissions > 0 {
+		if f.submissions > 0 && !f.hideSubmission {
 			result["ids"] = []string{"submission"}
 		}
 	case "EmailSubmission/set":
@@ -137,6 +138,7 @@ func newJMAPFixture(t *testing.T) (*sendmuxJMAPSender, *jmapFixture) {
 	t.Cleanup(server.Close)
 	f.url = server.URL
 	s := newSendmuxJMAPSender("test-mailbox-credential")
+	s.journalDir = t.TempDir()
 	s.origin = server.URL
 	s.client = server.Client()
 	return s, f
@@ -268,5 +270,46 @@ func TestSendmuxJMAPConcurrentRecoverySubmitsOnce(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.submissions != 1 {
 		t.Fatalf("concurrent recovery made %d submissions", f.submissions)
+	}
+}
+
+func TestSendmuxJournalSurvivesLostResponsesAndStaleReads(t *testing.T) {
+	for _, phase := range []string{"Email/set", "EmailSubmission/set"} {
+		t.Run(phase, func(t *testing.T) {
+			s, f := newJMAPFixture(t)
+			f.lose = phase
+			if _, err := s.Send(context.Background(), "machine@example.test", jmapTestReply(), "uncertain-key"); err == nil {
+				t.Fatal("lost response accepted")
+			}
+			f.mu.Lock()
+			if phase == "Email/set" {
+				f.hideEmail = true
+			} else {
+				f.hideSubmission = true
+			}
+			f.mu.Unlock()
+			// A new transport has no in-memory state; only the durable journal remains.
+			recovered := newSendmuxJMAPSender("test-mailbox-credential")
+			recovered.origin = s.origin
+			recovered.client = s.client
+			recovered.journalDir = s.journalDir
+			for i := 0; i < 2; i++ {
+				if _, err := recovered.Send(context.Background(), "machine@example.test", jmapTestReply(), "uncertain-key"); err == nil || !strings.Contains(err.Error(), "refusing duplicate") {
+					t.Fatalf("stale receipt did not fail closed: %v", err)
+				}
+			}
+			f.mu.Lock()
+			f.hideEmail = false
+			f.hideSubmission = false
+			f.mu.Unlock()
+			if _, err := recovered.Send(context.Background(), "machine@example.test", jmapTestReply(), "uncertain-key"); err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.submissions != 1 {
+				t.Fatalf("%d submissions", f.submissions)
+			}
+		})
 	}
 }

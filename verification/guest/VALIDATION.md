@@ -7,7 +7,7 @@ sender filters. Native JMAP submissions preserve reply ancestry and retain
 recoverable Sent records. Private approval references compensate for the relay's
 rewritten Message-ID, while preserving authenticated owner, inbox, thread and
 pending-request checks. Deterministic tests cover forged preview references,
-concurrent and lost-response recovery, changed recipient envelopes and delivery
+concurrent and lost-response recovery with stale reads across restart, changed recipient envelopes and delivery
 status that does not equate SMTP acceptance with arrival.
 
 A disposable production Compose run with separate AgentMail owner and guest

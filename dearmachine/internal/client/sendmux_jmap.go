@@ -22,6 +22,7 @@ const sendmuxRequestHashHeader = "header:X-DearMachine-Request-Hash"
 
 type sendmuxJMAPSender struct {
 	credential, origin string
+	journalDir         string
 	client             *http.Client
 }
 type sendmuxJMAPSession struct{ Account, Identity, Drafts, Sent, API, Upload string }
@@ -232,8 +233,8 @@ func (s *sendmuxJMAPSender) email(ctx context.Context, from string, session send
 	return email, nil
 }
 
-// Both creation steps use a state read BEFORE their lookup. A concurrent or
-// response-lost mutation changes that state, so a retry cannot submit twice.
+// Durable intent precedes each remote creation. Conditional states handle
+// contention; the local journal also prevents duplicates when reads lag writes.
 func (s *sendmuxJMAPSender) Send(ctx context.Context, from string, request sendmuxSendRequest, idempotencyKey string) (string, error) {
 	if _, err := canonicalMessageAddress(from); err != nil {
 		return "", err
@@ -249,12 +250,21 @@ func (s *sendmuxJMAPSender) Send(ctx context.Context, from string, request sendm
 		return "", err
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	journal, unlock, err := s.openSubmissionJournal(ctx, key, hash)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	session, err := s.session(ctx, from)
 	if err != nil {
 		return "", err
 	}
-	emailID := ""
-	for attempt := 0; attempt < 6; attempt++ {
+	if journal.Account != "" && journal.Account != session.Account {
+		return "", errors.New("Sendmux submission belongs to a different mailbox account")
+	}
+	journal.Account = session.Account
+	emailID := journal.EmailID
+	for attempt := 0; emailID == "" && attempt < 6; attempt++ {
 		var state struct{ State string }
 		if err = s.call(ctx, from, session, "Email/get", map[string]any{"ids": []string{}}, &state); err != nil {
 			return "", err
@@ -278,7 +288,14 @@ func (s *sendmuxJMAPSender) Send(ctx context.Context, from string, request sendm
 				return "", errors.New("Sendmux idempotency key belongs to a different reply")
 			}
 			emailID = found.IDs[0]
+			journal.EmailID = emailID
+			if err = journal.save(); err != nil {
+				return "", err
+			}
 			break
+		}
+		if journal.EmailAttempted {
+			return "", errors.New("Sendmux reply creation is awaiting a visible receipt; refusing duplicate creation")
 		}
 		email, buildErr := s.email(ctx, from, session, request, key, hash)
 		if buildErr != nil {
@@ -288,21 +305,43 @@ func (s *sendmuxJMAPSender) Send(ctx context.Context, from string, request sendm
 			Created    map[string]struct{ ID string }
 			NotCreated map[string]json.RawMessage
 		}
+		journal.EmailAttempted = true
+		if err = journal.save(); err != nil {
+			return "", err
+		}
 		err = s.call(ctx, from, session, "Email/set", map[string]any{"ifInState": state.State, "create": map[string]any{"reply": email}}, &created)
 		if errors.Is(err, sendmuxJMAPError("stateMismatch")) {
+			journal.EmailAttempted = false
+			if err = journal.save(); err != nil {
+				return "", err
+			}
 			continue
 		}
 		if err != nil {
 			return "", err
 		}
 		if len(created.NotCreated) > 0 || created.Created["reply"].ID == "" {
+			// Only an explicit per-object rejection proves that creation did not occur.
+			if _, rejected := created.NotCreated["reply"]; rejected && len(created.Created) == 0 {
+				journal.EmailAttempted = false
+				if err = journal.save(); err != nil {
+					return "", err
+				}
+			}
 			return "", errors.New("Sendmux could not store the reply")
 		}
 		emailID = created.Created["reply"].ID
+		journal.EmailID = emailID
+		if err = journal.save(); err != nil {
+			return "", err
+		}
 		break
 	}
 	if emailID == "" {
 		return "", errors.New("Sendmux mailbox changed repeatedly; reply remains pending")
+	}
+	if journal.SubmissionID != "" {
+		return s.recordSent(ctx, from, session, emailID, key)
 	}
 	for attempt := 0; attempt < 6; attempt++ {
 		var state struct{ State string }
@@ -320,21 +359,46 @@ func (s *sendmuxJMAPSender) Send(ctx context.Context, from string, request sendm
 			return "", errors.New("ambiguous Sendmux submission")
 		}
 		if len(found.IDs) == 1 {
+			journal.SubmissionID = found.IDs[0]
+			if err = journal.save(); err != nil {
+				return "", err
+			}
 			return s.recordSent(ctx, from, session, emailID, key)
+		}
+		if journal.SubmissionAttempted {
+			return "", errors.New("Sendmux submission is awaiting a visible receipt; refusing duplicate submission")
 		}
 		var created struct {
 			Created    map[string]struct{ ID string }
 			NotCreated map[string]json.RawMessage
 		}
+		journal.SubmissionAttempted = true
+		if err = journal.save(); err != nil {
+			return "", err
+		}
 		err = s.call(ctx, from, session, "EmailSubmission/set", map[string]any{"ifInState": state.State, "create": map[string]any{"send": map[string]string{"identityId": session.Identity, "emailId": emailID}}}, &created)
 		if errors.Is(err, sendmuxJMAPError("stateMismatch")) {
+			journal.SubmissionAttempted = false
+			if err = journal.save(); err != nil {
+				return "", err
+			}
 			continue
 		}
 		if err != nil {
 			return "", err
 		}
 		if len(created.NotCreated) > 0 || created.Created["send"].ID == "" {
+			if _, rejected := created.NotCreated["send"]; rejected && len(created.Created) == 0 {
+				journal.SubmissionAttempted = false
+				if err = journal.save(); err != nil {
+					return "", err
+				}
+			}
 			return "", errors.New("Sendmux did not accept the submission; reply remains pending")
+		}
+		journal.SubmissionID = created.Created["send"].ID
+		if err = journal.save(); err != nil {
+			return "", err
 		}
 		return s.recordSent(ctx, from, session, emailID, key)
 	}

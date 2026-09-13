@@ -161,7 +161,9 @@ proofs, adapter tests, trusted boundaries and live evaluation gaps.
 
 
 Sendmux replies use its native mailbox submission API to preserve `In-Reply-To`
-and `References` and keep a durable Sent receipt. The outbound relay may rewrite
+and `References` and keep a durable Sent receipt. A local submission journal
+persists intent and identifiers before remote changes. When a response is lost
+and provider reads lag, it waits for a positive receipt instead of resubmitting. The outbound relay may rewrite
 Message-ID. Private approval prompts therefore include a random approval
 reference: reply with `Yes` while quoting the prompt, or copy its reference line
 beneath `Yes`. DearMachine requires an authenticated owner, the same inbox and

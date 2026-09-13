@@ -225,7 +225,7 @@ The four Gobra contracts cover invitation, delivery, execution and recipient
 eligibility; `Participation.tla` checks the abstract per-message workflow.
 
 `sendmux_jmap_test.go` exercises durable outgoing message/submission recovery after
-lost responses, conditional-state contention, changed-envelope idempotency
+lost responses and stale reads across restart, conditional-state contention, changed-envelope idempotency
 rejection, reply ancestry, private approval references, attachments, credential
 destination checks and queued-versus-delivered reporting. Scoped authenticated
 approval correlation is covered by `message_references_test.go`.
