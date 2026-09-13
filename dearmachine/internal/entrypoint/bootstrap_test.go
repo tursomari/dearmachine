@@ -274,7 +274,10 @@ func TestInitializeResumeRejectsPublicBootstrapJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(repo, ".git", bootstrapMarkerName)
-	if err := os.WriteFile(marker, []byte(`{"version":1,"phase":"repository-initialized"}`), 0o644); err != nil {
+	if err := os.WriteFile(marker, []byte(`{"version":1,"phase":"repository-initialized"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(marker, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Initialize(context.Background(), Options{RepoPath: repo, AgentBinary: "/fake/machtiani", Resume: true})
