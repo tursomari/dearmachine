@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/machtianiconfig"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -48,6 +49,9 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 func DefaultCommandRunner(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
+	if err := machtianiconfig.Apply(command); err != nil {
+		return nil, err
+	}
 	return command.CombinedOutput()
 }
 

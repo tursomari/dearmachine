@@ -546,3 +546,18 @@ deployment when an explicit container boundary is useful.
 The intended hosted `dearmachine up` onboarding and OpenPGP commands described
 above remain product direction rather than commands implemented by the current
 alpha client.
+
+### Machtiani configuration ownership
+
+DearMachine invokes the harness with
+`MACHTIANI_CONFIG=~/.config/dearmachine/machtiani/config.toml` (expanded to an
+absolute path). This applies to initialization, sync, agent turns, and session
+commands. Native Machtiani reads credentials referenced by that configuration;
+its direct provider keys live beside it in a private `credentials.env` file.
+Backend-agent credentials remain in `~/.config/dearmachine/backends.env`.
+
+Ordinary terminal invocations of `machtiani` use its personal configuration under
+`~/.config/machtiani/`. The shared executable and updater do not imply shared
+configuration. On startup of an existing installation, the DearMachine launcher
+imports the former shared configuration once, preserving the original and any
+already-existing managed configuration.

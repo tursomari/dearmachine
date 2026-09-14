@@ -339,3 +339,16 @@ func assertFileNotContains(t *testing.T, path, unwanted string) {
 		t.Fatalf("%s unexpectedly contains %q:\n%s", path, unwanted, data)
 	}
 }
+
+func TestDefaultCommandRunnerSelectsManagedConfiguration(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MACHTIANI_CONFIG", filepath.Join(home, "personal.toml"))
+	output, err := DefaultCommandRunner(context.Background(), home, "sh", "-c", `printf '%s' "$MACHTIANI_CONFIG"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != filepath.Join(home, ".config/dearmachine/machtiani/config.toml") {
+		t.Fatal("bootstrap child did not use DearMachine configuration")
+	}
+}

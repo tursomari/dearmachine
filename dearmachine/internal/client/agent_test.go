@@ -838,3 +838,28 @@ func writeTestFile(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestAgentCommandsSelectDearMachineConfiguration(t *testing.T) {
+	fixture := newAgentTestFixture(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MACHTIANI_CONFIG", filepath.Join(home, "personal.toml"))
+	seen := 0
+	fixture.runner.invoke = func(command *exec.Cmd) error {
+		expected := "MACHTIANI_CONFIG=" + filepath.Join(home, ".config/dearmachine/machtiani/config.toml")
+		if !slices.Contains(command.Env, expected) {
+			t.Errorf("child did not select DearMachine config: %s", command.Args[1])
+		}
+		seen++
+		return command.Run()
+	}
+	if err := fixture.runner.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.runner.Run(context.Background(), fixture.session, "prompt", fixture.finalPath, fixture.turn); err != nil {
+		t.Fatal(err)
+	}
+	if seen < 3 {
+		t.Fatal("expected sync, run, and session inspection")
+	}
+}

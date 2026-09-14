@@ -16,6 +16,7 @@ import (
 
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/entrypoint"
+	"github.com/dearmachine/dearmachine/internal/machtianiconfig"
 	"github.com/dearmachine/dearmachine/internal/supervisor"
 )
 
@@ -77,6 +78,15 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 	if found {
 		cfg, err = mergeRuntimeConfig(cfg, persisted)
 		if err != nil {
+			return err
+		}
+	}
+	if found || len(registry.Pairs) > 0 {
+		home, err := deps.userHomeDir()
+		if err != nil {
+			return err
+		}
+		if err := machtianiconfig.Migrate(context.Background(), cfg.agentBinary, home); err != nil {
 			return err
 		}
 	}

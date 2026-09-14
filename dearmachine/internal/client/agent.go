@@ -14,6 +14,7 @@ import (
 	"time"
 
 	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
+	"github.com/dearmachine/dearmachine/internal/machtianiconfig"
 )
 
 type ResultKind string
@@ -362,6 +363,9 @@ func (r *AgentRunner) runActiveCommand(
 	command *exec.Cmd,
 	started func(),
 ) error {
+	if err := machtianiconfig.Apply(command); err != nil {
+		return err
+	}
 	guard, _ := ctx.Value(guestStartContextKey{}).(guestStartGuard)
 	if guard == nil {
 		guard = func(start func() error) error { return start() }
@@ -617,6 +621,9 @@ func (r *AgentRunner) showSession(ctx context.Context, sessionID string) (sessio
 }
 
 func (r *AgentRunner) runCommand(command *exec.Cmd) error {
+	if err := machtianiconfig.Apply(command); err != nil {
+		return err
+	}
 	if r.invoke != nil {
 		return r.invoke(command)
 	}
