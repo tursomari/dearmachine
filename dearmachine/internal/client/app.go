@@ -308,6 +308,16 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			}
 			continue
 		}
+		// Durable execution owns this message until completion. In particular,
+		// an Other replacement still references a private control prompt, but
+		// must not be recorded as stale control traffic on a later poll.
+		// ProcessOnce recovers pending work before polling; active dispatch and
+		// maintenance claims likewise retain it for dispatch or recovery.
+		if _, pending, err := a.store.PendingByID(message.MessageID); err != nil {
+			return err
+		} else if pending {
+			continue
+		}
 		controller, controlling, participantBoundaryEnabled := participantBoundary(a.transport, original)
 		if handled, err := a.handleGuestRemoval(ctx, original); handled || err != nil {
 			if err != nil {

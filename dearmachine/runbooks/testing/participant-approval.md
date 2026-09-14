@@ -195,6 +195,14 @@ Run these scenarios in order:
 5. Resolve one with `No`, proving no execution. Resolve another with `Other`,
    proving only a correlated newly authored owner replacement executes; quoted
    text and empty replacements cannot substitute for a new owner instruction.
+   Keep replacement execution active across at least two inbox polls. Require
+   one pending row and no processed row until completion, then exactly one
+   owner-only answer and one sequence advance. Restart after saving the result
+   and after provider delivery but before local completion; neither recovery may
+   rerun the saved instruction or duplicate the delivered answer. Include an
+   isolated legacy fixture with the old empty control record and verify recovery
+   replaces it with the existing answer receipt. Never inject this fixture into
+   the normal service database.
 6. Send owner and guest trust commands. Prove neither enables an approval
    bypass or creates an agent turn for the control command. Every subsequent
    guest message still requires its own decision and retains lower authority.

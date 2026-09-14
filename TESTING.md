@@ -223,6 +223,9 @@ AgentMail SDK over loopback TLS. It rejects spoofed or unsigned author/routing
 fields, body tampering, fake verdicts, missing evidence and unsupported adapters.
 The four Gobra contracts cover invitation, delivery, execution and recipient
 eligibility; `Participation.tla` checks the abstract per-message workflow.
+`Replacement.tla` checks polling/completion interleavings and conditional restart
+progress; `participant_replacement_test.go` covers real subprocess-start repolls,
+SQLite recovery with sent/unsent saved results, and narrowly scoped legacy repair.
 
 `sendmux_jmap_test.go` exercises durable outgoing message/submission recovery after
 lost responses and stale reads across restart, conditional-state contention, changed-envelope idempotency

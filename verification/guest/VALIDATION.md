@@ -1,5 +1,33 @@
 # Guest authorization validation
 
+## Owner replacement polling and recovery, 2026-09-14
+
+- **PASS — reproduction against the original production code.** The new
+  subprocess-start repoll and reopened-database recovery regressions both fail
+  against `cdbae9d` with `UNIQUE constraint failed: processed_messages.message_id`.
+  Fixtures use synthetic addresses, message identifiers and instruction text.
+- **PASS — implementation regression gates.** The candidate source-only
+  container passes the full Go suite, race suite and vet. The regressions cover
+  repeated polling during execution, legacy empty control records with sent and
+  unsent saved results, one completion/sequence advance, replay suppression and
+  owner-only delivery. Recovery neither invokes the agent for a saved result nor
+  resends an existing answer. Negative cases retain unrelated receipts and
+  threads, reject invalid work state and roll back repair on sequence conflict.
+- **PASS — packaging and documentation.** Host `nix flake check`, the umbrella
+  documentation contract and the credential-free installation self-test pass.
+- **PASS — replacement model.** Four initial-state configurations satisfy safety
+  (and conditional progress where completion is expected). Five intentional
+  faults produce the required safety or liveness counterexamples. The runner
+  checks exact violation markers and exit statuses, not arbitrary failures.
+  The full `--expand` runner also passes Gobra, existing authorization mutations,
+  participation scopes and the expanded provider-reconciliation matrix.
+- **NOT RUN — fresh live provider evaluation.** This change was tested with real
+  SQLite and a real agent fixture subprocess, using a fake mail transport. The
+  live protocol now requires replacement execution across multiple inbox polls
+  and recovery around submission. No production database was edited and no live
+  client was upgraded as part of these checks. The formal abstraction and its
+  implementation tests do not constitute a proof of the full Go client.
+
 ## Egress-restricted authority probe, 2026-09-13
 
 - **PASS — enforced outbound boundary.** The disposable workload bridge was

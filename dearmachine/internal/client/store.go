@@ -2220,16 +2220,31 @@ func (s *Store) Complete(messageID, status, outboundMessageID string) error {
 	var threadID string
 	var sequence int
 	var state string
+	var authority string
+	var sanitizeControlBody bool
 	if err := tx.QueryRow(
-		`SELECT thread_id, sequence, state
+		`SELECT thread_id, sequence, state, authority, sanitize_control_body
 		   FROM pending_messages
 		  WHERE message_id = ?`,
 		messageID,
-	).Scan(&threadID, &sequence, &state); err != nil {
+	).Scan(&threadID, &sequence, &state, &authority, &sanitizeControlBody); err != nil {
 		return fmt.Errorf("get pending message completion: %w", err)
 	}
 	if state != messageResultReady {
 		return fmt.Errorf("complete inbound message: message is not result ready")
+	}
+	// Older clients could repoll an executing Other replacement and record it
+	// as stale control traffic. Repair only that empty receipt, in the same
+	// transaction as completion. A real receipt or another thread must still
+	// conflict; never discard a saved result or advance the sequence twice.
+	if authority == authorityController && sanitizeControlBody && outboundMessageID != "" {
+		if _, err := tx.Exec(`DELETE FROM processed_messages
+		 WHERE message_id = ? AND outbound_message_id = ''
+		 AND (thread_id = ? OR thread_id IN
+		      (SELECT external_thread_id FROM thread_aliases WHERE canonical_thread_id = ?))`,
+			messageID, threadID, threadID); err != nil {
+			return fmt.Errorf("repair replacement control receipt: %w", err)
+		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)

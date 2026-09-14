@@ -5,11 +5,12 @@ provider diagnostics and remaining live evaluation. The
 [operational contract](../../docs/guest-authorization.md) describes the shipped
 workflow and authentication assumptions.
 
-This suite has two separately checked TLA+ specifications. `Guest.tla` covers
+This suite has three separately checked TLA+ specifications. `Guest.tla` covers
 grant generations, authenticated work and provider reconciliation.
 `Participation.tla` covers automatic owner To/CC invitations, an independent
 private approval for every guest message, recipient privacy and explicit removal.
-Neither is a complete refinement proof of the Go application.
+`Replacement.tla` covers pending owner replacements, repeated polling, completion
+and restart recovery. None is a complete refinement proof of the Go application.
 
 ```console
 docker pull ghcr.io/viperproject/gobra@sha256:d9dc17cdb3725818943a6224872628610e130c349e059ad393ef4f88878cca19
@@ -78,6 +79,40 @@ atomicity, parsing, actual network delivery, process scheduling and agent
 obedience. Tests provide implementation conformance evidence; bounded safety
 exploration does not prove unbounded liveness.
 
+## Replacement execution and recovery
+
+`Replacement.tla` models the persistence layer omitted by the authorization
+specifications: owner `Other`, replacement claim, execution, saved result,
+provider submission, atomic completion, acknowledgement, repeated polling and
+crash/restart between steps. Pending execution takes precedence over control
+correlation. Completion advances the sequence and removes pending work in one
+transaction. Receipt recovery uses the existing provider answer after an
+uncertain send; a saved result must not start a fresh agent invocation.
+
+Four initial-state fixtures check a clean workflow, the old empty control record
+with an unsent or already-sent saved answer, and an unrelated receipt conflict.
+Five mutations must produce specific counterexamples: repolling pending work as
+control traffic, forgetting the sent receipt, executing a saved result again,
+repairing an unrelated receipt, and removing legacy repair. The last mutation
+violates conditional progress; the others violate safety. Progress requires
+fair work, eventual uninterrupted uptime and reliable provider receipt lookup.
+Unrelated conflicts intentionally fail closed and have no completion guarantee.
+
+This is a finite, single-replacement abstraction. It assumes authenticated,
+immutable message identity and matching owner-only receipts; it does not compose
+those assumptions with `Participation.tla`. SQLite transactions are modeled as
+atomic steps, not verified from SQL. Running-process/checkpoint recovery is
+abstracted; no exactly-once guarantee is claimed for agent effects before a
+result is durable, or for a provider with unreliable receipt visibility.
+
+Implementation correspondence lives in `participant_replacement_test.go`:
+real subprocess-start repolls exercise `pollAndClaim`; reopened SQLite recovery
+exercises `processWork`/receipt lookup and `Store.Complete` with sent and unsent
+results. Negative tests preserve unrelated receipts, other threads and ordinary
+work, require a ready result and receipt, and roll back repair if sequence
+advancement fails. Thread aliases are also covered. These tests connect the
+model to production behavior but are not a formal Go refinement proof.
+
 ## Provider reconciliation model
 
 `Guest.tla` maps `Invite` to grant persistence, `Revoke` to local revocation,
@@ -95,7 +130,7 @@ replayed invitation resurrection and deletion without ownership.
 This reconciliation abstraction applies independently to each permission
 direction. AgentMail receive, reply and send records share the grant reference
 predicate but retain separate ownership. Directional migrations, shared needs,
-partial failures and lost responses have Go tests. The two TLA+ models are not
+partial failures and lost responses have Go tests. The TLA+ models are not
 composed into a refinement proof. Eventual reconciliation requires provider
 availability, fair retries and eventually stable desired state.
 

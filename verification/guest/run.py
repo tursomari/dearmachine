@@ -33,7 +33,7 @@ def main():
         if hashlib.sha256(data).hexdigest() != TLC_SHA:
             raise SystemExit('TLC checksum mismatch')
         (snapshot / 'tla2tools.jar').write_bytes(data)
-        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg'):
+        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg', 'Replacement.tla', 'Replacement.cfg'):
             shutil.copyfile(ROOT / 'verification/guest' / file, snapshot / file)
             shutil.copyfile(snapshot / file, output / file)
         source = (ROOT / 'dearmachine/internal/client/guest_policy.go').read_text()
@@ -50,6 +50,26 @@ def main():
             print(f'{label}: expected exit {expected}', flush=True)
         run('gobra', common + [IMAGE, '-i', '/proof/policy.gobra'], marker='Gobra found 0 errors')
         tlc = common + ['--entrypoint', 'java', IMAGE, '-XX:+UseParallelGC', '-Xmx2g', '-cp', '/proof/tla2tools.jar', 'tlc2.TLC', '-workers', '2', '-metadir', '/tmp/tlc']
+        replacement = (snapshot / 'Replacement.cfg').read_text()
+        for fixture, mutation in (
+                ('Clean', 'None'), ('LegacyUnsent', 'None'), ('LegacySent', 'None'),
+                ('Conflict', 'None'), ('Clean', 'RepollPending'),
+                ('LegacySent', 'ForgetReceipt'), ('LegacySent', 'RunSavedResult'),
+                ('Conflict', 'LooseRepair'), ('LegacySent', 'NoLegacyRepair')):
+            label = 'replacement-' + fixture + '-' + mutation
+            cfg = replacement.replace('Fixture = "Clean"', f'Fixture = "{fixture}"')
+            cfg = cfg.replace('Mutation = "None"', f'Mutation = "{mutation}"')
+            # Safety counterexamples must not be mistaken for liveness failures.
+            if fixture == 'Conflict' or mutation not in ('None', 'NoLegacyRepair'):
+                cfg = cfg.replace('PROPERTY Progress', '')
+            path = label + '.cfg'
+            (snapshot / path).write_text(cfg)
+            shutil.copyfile(snapshot / path, output / path)
+            expected = 0 if mutation == 'None' else (13 if mutation == 'NoLegacyRepair' else 12)
+            marker = ('Model checking completed. No error has been found.' if expected == 0
+                      else 'Temporal properties were violated' if expected == 13
+                      else 'Invariant Safety is violated')
+            run(label, tlc + ['-config', '/proof/' + path, '/proof/Replacement.tla'], expected, marker)
         config = (snapshot / 'Guest.cfg').read_text()
         participation = (snapshot / 'Participation.cfg').read_text()
         def workflow(label, cfg, invariant=None):
