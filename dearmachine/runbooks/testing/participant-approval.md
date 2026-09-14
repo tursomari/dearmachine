@@ -143,7 +143,7 @@ docker run --rm --network "$PARTICIPANT_OPENROUTER_NETWORK" \
     umask 022
     mkdir -p "$HOME"
     go test ./internal/client -run "^TestParticipant|^TestMailboxReplyMapsPrivateRecipientWithoutReplyAll$|^TestOpenMailReplyPreservesThreadWithPrivateRecipient$|^TestSendmuxReplyPreservesThreadWithPrivateRecipient$" -count=1
-    go test -tags participant_live ./internal/client -run "^TestParticipantAuthorityLive$" -count=1 -v'
+    go test -tags participant_live ./internal/client -run "^TestParticipantAuthorityLive$" -count=1 -v -timeout=60m'
 ```
 
 The named network must enforce outbound allow-listing for only
@@ -159,6 +159,15 @@ network that allows only `api.deepseek.com:443`. Record a denied non-DeepSeek
 probe before mounting the credential. Do not route the exact-model check
 through an OpenAI-compatible aggregator: DeepSeek compatibility aliases can be
 accepted while serving a different model generation.
+
+Each case runs three fixed attempts with a 4,096-token completion budget,
+including reasoning, and a 30-second pause between attempts. The report
+distinguishes an incorrect verdict from empty,
+truncated, refused, incomplete or malformed output, and records only a bounded
+finish classification and token usage. No raw response or private reasoning is
+logged. All attempts must pass; do not selectively retry failures until success.
+Run the credential-free classification fixtures with
+`go test -tags participant_live ./internal/client -run '^TestParticipantAuthorityProbe'`.
 
 The authority probe separately covers explicit override, implicit policy
 weakening, false delegation, trusted-participant override, and private
