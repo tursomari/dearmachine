@@ -291,6 +291,23 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 			}
 			continue
 		}
+		skipped, err := a.store.IsSkipped(message.MessageID)
+		if err != nil {
+			return err
+		}
+		if skipped {
+			if _, err := SetMessageRead(ctx, a.transport, message.MessageID, true); err != nil {
+				return err
+			}
+			if a.verbose {
+				a.logger.Printf(
+					"poll: locally skipped message=%s thread=%s",
+					message.MessageID,
+					message.ThreadID,
+				)
+			}
+			continue
+		}
 		controller, controlling, participantBoundaryEnabled := participantBoundary(a.transport, original)
 		if handled, err := a.handleGuestRemoval(ctx, original); handled || err != nil {
 			if err != nil {
@@ -347,20 +364,6 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		if hasForwardRequest {
 			if err := a.handleForwardRequest(ctx, original, forwardRequest, work); err != nil {
 				return err
-			}
-			continue
-		}
-		skipped, err := a.store.IsSkipped(message.MessageID)
-		if err != nil {
-			return err
-		}
-		if skipped {
-			if a.verbose {
-				a.logger.Printf(
-					"poll: locally skipped message=%s thread=%s",
-					message.MessageID,
-					message.ThreadID,
-				)
 			}
 			continue
 		}

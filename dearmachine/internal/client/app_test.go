@@ -1121,7 +1121,7 @@ func TestVerboseLogsPollCyclesWhileDefaultIsSilent(t *testing.T) {
 	}
 }
 
-func TestSkippedMessageRemainsUnreadUntilUnskipped(t *testing.T) {
+func TestSkippedMessageIsMarkedReadAndCanBeRestored(t *testing.T) {
 	rig := newTestRig(t)
 	message := testMessage("msg-skipped", "thread-skipped", "Do not run this yet.")
 	rig.mail.add(message)
@@ -1134,8 +1134,8 @@ func TestSkippedMessageRemainsUnreadUntilUnskipped(t *testing.T) {
 
 	mustProcess(t, rig)
 	mustProcess(t, rig)
-	if !rig.mail.isUnread(message.MessageID) {
-		t.Fatal("skipped message was changed on AgentMail")
+	if rig.mail.isUnread(message.MessageID) {
+		t.Fatal("skipped message remains unread on AgentMail")
 	}
 	if replies := rig.mail.sentReplies(); len(replies) != 0 {
 		t.Fatalf("skipped message received replies: %+v", replies)
@@ -1147,6 +1147,9 @@ func TestSkippedMessageRemainsUnreadUntilUnskipped(t *testing.T) {
 		t.Fatal("skipped message created a thread session")
 	}
 
+	if supported, err := SetMessageRead(context.Background(), rig.app.transport, message.MessageID, false); err != nil || !supported {
+		t.Fatalf("restore unread: supported=%v err=%v", supported, err)
+	}
 	if err := rig.store.UnskipMessages([]string{message.MessageID}); err != nil {
 		t.Fatalf("UnskipMessages: %v", err)
 	}
@@ -1706,10 +1709,17 @@ func (f *fakeAgentMail) serveHTTP(writer http.ResponseWriter, request *http.Requ
 		})
 	case request.Method == http.MethodPatch && strings.HasPrefix(path, prefix+"messages/"):
 		messageID := strings.TrimPrefix(path, prefix+"messages/")
-		f.unread[messageID] = false
+		var update struct {
+			AddLabels    string `json:"add_labels"`
+			RemoveLabels string `json:"remove_labels"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&update); err != nil {
+			f.t.Fatal(err)
+		}
+		f.unread[messageID] = update.AddLabels == "unread"
 		f.writeJSON(writer, map[string]any{
 			"message_id": messageID,
-			"labels":     []string{"read"},
+			"labels":     []string{update.AddLabels},
 		})
 	case request.Method == http.MethodGet && strings.HasPrefix(path, prefix+"threads/"):
 		threadID := strings.TrimPrefix(path, prefix+"threads/")

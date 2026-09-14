@@ -151,13 +151,20 @@ func runInboxSkip(args []string, deps dependencies) error {
 	}
 	if _, err := fmt.Fprintf(
 		stdout,
-		"Skipped %d message(s) locally. Remote inbox unchanged.\n",
+		"Skipped %d message(s) locally.\n",
 		len(refs),
 	); err != nil {
 		return err
 	}
 
 	var cleanupErrors []error
+	for _, ref := range refs {
+		if supported, err := client.SetMessageRead(ctx, transport, ref.MessageID, true); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("message %s remains skipped; marking read is pending: %w", ref.MessageID, err))
+		} else if supported {
+			fmt.Fprintf(stdout, "Marked message %s read.\n", ref.MessageID)
+		}
+	}
 	var runner *client.AgentRunner
 	for _, message := range abandoned {
 		if err := client.RemoveRecoveryResult(message.SessionID, message.MessageID); err != nil {
@@ -337,6 +344,42 @@ func runInboxUnskip(args []string, deps dependencies) error {
 		return err
 	}
 	defer store.Close()
+	// Validate every local decision before changing any remote read state.
+	for _, id := range messageIDs {
+		skipped, err := store.IsSkipped(strings.TrimSpace(id))
+		if err != nil {
+			return err
+		}
+		if !skipped {
+			return fmt.Errorf("message %s is not skipped", id)
+		}
+	}
+	if state.Inbox.Transport == "agentmail" || state.Inbox.Transport == "sendmux" {
+		if deps.newRawTransport == nil {
+			return errors.New("raw mail transport constructor is unavailable")
+		}
+		raw, err := deps.newRawTransport(state.Inbox.Transport, state.Inbox.ProviderID)
+		if err != nil {
+			return err
+		}
+		router, err := client.NewInboxRouter(raw, state.Inbox, []client.Pair{state.Pair}, 1)
+		if err != nil {
+			return err
+		}
+		transport, err := router.Endpoint(state.Pair.ID)
+		if err != nil {
+			return err
+		}
+		for _, id := range messageIDs {
+			supported, err := client.SetMessageRead(context.Background(), transport, strings.TrimSpace(id), false)
+			if err != nil {
+				return fmt.Errorf("message %s remains skipped; restoring unread state: %w", id, err)
+			}
+			if !supported {
+				return errors.New("transport cannot restore per-message unread state")
+			}
+		}
+	}
 	if err := store.UnskipMessages(messageIDs); err != nil {
 		return err
 	}
@@ -465,7 +508,8 @@ Commands:
   unskip    Make locally skipped messages eligible again
   skipped   List locally skipped messages
 
-The configured mail transport is never modified by these commands.
+Skip marks messages read on AgentMail and Sendmux; unskip restores them unread.
+OpenMail skip decisions remain local because read status applies to whole threads.
 Use "dearmachine inbox <command> --help" for command help.
 `)
 	return err
@@ -476,7 +520,8 @@ func inboxSkipHelp(output io.Writer) error {
   dearmachine inbox skip --pair <email-or-uuid> --current [flags]
   dearmachine inbox skip --pair <email-or-uuid> [flags] <message-id>...
 
-Records an exact local skip decision without changing the remote inbox. The DearMachine Client must be stopped. --current snapshots messages that are eligible now;
+Records an exact local skip decision and marks the message read on AgentMail and
+Sendmux. OpenMail remains unchanged. The DearMachine Client must be stopped. --current snapshots messages that are eligible now;
 messages arriving later remain eligible.
 
 Flags:
@@ -514,7 +559,8 @@ func inboxUnskipHelp(output io.Writer) error {
 	_, err := fmt.Fprint(outputOrDiscard(output), `Usage:
   dearmachine inbox unskip --pair <email-or-uuid> <message-id>...
 
-Removes local skip decisions. The remote inbox is not changed.
+Restores skipped messages to unread on AgentMail and Sendmux, then removes the
+local skip decisions. OpenMail remains unchanged. DearMachine Client must be stopped.
 
 Flags:
   --pair <selector>  Registered pair email address or UUID (required)

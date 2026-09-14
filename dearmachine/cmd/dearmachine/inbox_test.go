@@ -28,7 +28,7 @@ func TestInboxHelpAtEveryCommandLevel(t *testing.T) {
 	}{
 		{args: []string{"--help"}, wants: []string{"dearmachine inbox <command>"}},
 		{args: []string{"help", "skip"}, wants: []string{"dearmachine inbox skip --pair", "--agent-bin <path>"}},
-		{args: []string{"skip", "--help"}, wants: []string{"without changing the remote inbox", "--pair <selector>", "--agent-bin <path>"}},
+		{args: []string{"skip", "--help"}, wants: []string{"marks the message read on AgentMail", "--pair <selector>", "--agent-bin <path>"}},
 		{args: []string{"abandon", "--help"}, wants: []string{"clean pre-run session checkpoint", "--agent-bin <path>"}},
 		{args: []string{"unskip", "--help"}, wants: []string{"dearmachine inbox unskip"}},
 		{args: []string{"skipped", "--help"}, wants: []string{"dearmachine inbox skipped"}},
@@ -429,9 +429,9 @@ func TestInboxAbandonRejectsLegacyRunningFollowupWithoutCheckpoint(t *testing.T)
 	}
 }
 
-func TestInboxSkippedAndUnskipUseOnlyLocalState(t *testing.T) {
+func TestInboxOpenMailSkippedAndUnskipUseOnlyLocalState(t *testing.T) {
 	home := t.TempDir()
-	state := makeInboxTestPair(t, home, "agentmail")
+	state := makeInboxTestPair(t, home, "openmail")
 	store, err := client.OpenPairStore(state.Path, state.Pair)
 	if err != nil {
 		t.Fatal(err)
@@ -642,5 +642,77 @@ func requireCanonicalSessionID(t *testing.T, sessionID string) {
 	t.Helper()
 	if !regexp.MustCompile(`^dm1-[0-9a-hjkmnp-tv-z]{5}-[0-9a-hjkmnp-tv-z]{6}$`).MatchString(sessionID) {
 		t.Fatalf("SessionID = %q, want short canonical dm1 conversation reference", sessionID)
+	}
+}
+
+type inboxReadTransport struct {
+	inboxTestTransport
+	read    bool
+	failure error
+	calls   int
+}
+
+func (f *inboxReadTransport) SetMessageRead(_ context.Context, _ string, read bool) (bool, error) {
+	f.calls++
+	if f.failure != nil {
+		return true, f.failure
+	}
+	f.read = read
+	return true, nil
+}
+
+func TestInboxSkipReadAndUnskipUnread(t *testing.T) {
+	for _, provider := range []string{"agentmail", "sendmux"} {
+		t.Run(provider, func(t *testing.T) {
+			home := t.TempDir()
+			state := makeInboxTestPair(t, home, provider)
+			raw := &inboxReadTransport{inboxTestTransport: inboxTestTransport{message: client.Message{MessageID: "held", ThreadID: "thread", From: state.Pair.UserEmail, To: []string{state.Inbox.Address}, Body: "Held instruction"}}}
+			deps := dependencies{newRawTransport: func(string, string) (client.Transport, error) { return raw, nil }, openPairStore: client.OpenPairStore, stdout: io.Discard, flagOutput: io.Discard, userHomeDir: func() (string, error) { return home, nil }}
+			args := []string{"--pair", state.Pair.ID, "held"}
+			// A failed remote acknowledgement must leave the local skip committed.
+			raw.failure = errors.New("provider unavailable")
+			if err := runInboxSkip(args, deps); !errors.Is(err, raw.failure) {
+				t.Fatalf("skip failure = %v", err)
+			}
+			store, err := client.OpenPairStore(state.Path, state.Pair)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if skipped, err := store.IsSkipped("held"); !skipped || err != nil {
+				t.Fatal("failed acknowledgement lost local skip")
+			}
+			raw.failure = nil
+			if err := runInboxSkip(args, deps); err != nil {
+				t.Fatal(err)
+			}
+			if !raw.read {
+				t.Fatal("skip did not mark read")
+			}
+			raw.failure = errors.New("provider unavailable")
+			if err := runInboxUnskip(args, deps); !errors.Is(err, raw.failure) {
+				t.Fatalf("unskip failure = %v", err)
+			}
+			if skipped, _ := store.IsSkipped("held"); !skipped {
+				t.Fatal("unskip cleared local state before restoring unread")
+			}
+			raw.failure = nil
+			if err := runInboxUnskip(args, deps); err != nil {
+				t.Fatal(err)
+			}
+			if raw.read {
+				t.Fatal("unskip did not restore unread")
+			}
+			if skipped, _ := store.IsSkipped("held"); skipped {
+				t.Fatal("successful unskip left local suppression")
+			}
+			before := raw.calls
+			if err := runInboxUnskip(args, deps); err == nil {
+				t.Fatal("non-skipped message accepted")
+			}
+			if raw.calls != before {
+				t.Fatal("non-skipped message changed remotely")
+			}
+		})
 	}
 }

@@ -73,12 +73,12 @@ suppression:
 2. Run `dearmachine inbox skip --current` with the temporary inbox, database,
    PID, project, and machtiani paths supplied explicitly. Confirm the local skip
    list contains exactly that message.
-3. Start the client and observe at least two polls. Confirm the message remains
-   unread in AgentMail, no mct session or Agent Manager ticket is created, no
+3. Start the client and observe at least two polls. Confirm the message is marked
+   read in AgentMail, no mct session or Agent Manager ticket is created, no
    backend starts, and no reply is sent.
 4. Stop the client. Run `dearmachine inbox unskip <message-id>` against the
-   same database and PID file. Confirm the local list is empty and AgentMail is
-   unchanged.
+   same database and PID file. Confirm the local list is empty and that exact AgentMail message is
+   unread again.
 5. Restart the same client and monitor the full lifecycle. Confirm exactly one
    session, one execution, and one same-thread reply; no pending row remains.
 6. Stop the client and perform the shared teardown.

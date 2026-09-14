@@ -431,6 +431,15 @@ func (m *Mailbox) FetchAttachment(
 }
 
 func (m *Mailbox) MarkProcessed(ctx context.Context, messageID string) error {
+	_, err := m.SetMessageRead(ctx, messageID, true)
+	return err
+}
+
+func (m *Mailbox) SetMessageRead(ctx context.Context, messageID string, read bool) (bool, error) {
+	add, remove := "read", "unread"
+	if !read {
+		add, remove = remove, add
+	}
 	_, err := m.client.Inboxes.Messages.Update(
 		ctx,
 		messageID,
@@ -438,18 +447,18 @@ func (m *Mailbox) MarkProcessed(ctx context.Context, messageID string) error {
 			InboxID: m.inboxID,
 			UpdateMessage: agentmail.UpdateMessageParam{
 				AddLabels: agentmail.UpdateMessageAddLabelsUnionParam{
-					OfString: agentmail.String("read"),
+					OfString: agentmail.String(add),
 				},
 				RemoveLabels: agentmail.UpdateMessageRemoveLabelsUnionParam{
-					OfString: agentmail.String("unread"),
+					OfString: agentmail.String(remove),
 				},
 			},
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("mark AgentMail message %s processed: %w", messageID, err)
+		return true, fmt.Errorf("mark AgentMail message %s processed: %w", messageID, err)
 	}
-	return nil
+	return true, nil
 }
 
 func htmlToText(raw string) string {

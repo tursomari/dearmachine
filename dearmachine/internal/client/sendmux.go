@@ -58,7 +58,7 @@ type sendmuxTransportAPI interface {
 	Message(context.Context, string, string) (sendmuxRawMessage, error)
 	Thread(context.Context, string, string) ([]sendmuxRawMessage, error)
 	Send(context.Context, string, sendmuxSendRequest, string) (string, error)
-	MarkSeen(context.Context, string, string) error
+	SetSeen(context.Context, string, string, bool) error
 }
 
 // sendmuxOutboundAPI is deliberately separate from the mailbox API: Sendmux
@@ -406,21 +406,26 @@ func (transport *SendmuxTransport) ReplyReceipt(ctx context.Context, message Mes
 }
 
 func (transport *SendmuxTransport) MarkProcessed(ctx context.Context, messageID string) error {
-	if err := transport.requireMutationOptIn("mark processed"); err != nil {
-		return err
+	_, err := transport.SetMessageRead(ctx, messageID, true)
+	return err
+}
+
+func (transport *SendmuxTransport) SetMessageRead(ctx context.Context, messageID string, read bool) (bool, error) {
+	if err := transport.requireMutationOptIn("set message read state"); err != nil {
+		return true, err
 	}
 	_, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
-		return err
+		return true, err
 	}
 	mailboxInfo, err := transport.mailbox(ctx)
 	if err != nil {
-		return err
+		return true, err
 	}
-	if err := transport.api.MarkSeen(ctx, mailboxInfo.ID, messageID); err != nil {
-		return fmt.Errorf("mark Sendmux message %s processed: %w", messageID, err)
+	if err := transport.api.SetSeen(ctx, mailboxInfo.ID, messageID, read); err != nil {
+		return true, fmt.Errorf("mark Sendmux message %s processed: %w", messageID, err)
 	}
-	return nil
+	return true, nil
 }
 
 func (transport *SendmuxTransport) FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error) {
@@ -903,9 +908,9 @@ func (api *sendmuxSDKSendingAPI) Send(ctx context.Context, from string, request 
 	return "", nil
 }
 
-func (api *sendmuxSDKAPI) MarkSeen(ctx context.Context, mailboxID, messageID string) error {
+func (api *sendmuxSDKAPI) SetSeen(ctx context.Context, mailboxID, messageID string, seen bool) error {
 	response, err := api.client.MailboxUpdateMessage(ctx, mailbox.NewOptPatchMailboxMessageBody(mailbox.PatchMailboxMessageBody{
-		Seen: mailbox.NewOptBool(true),
+		Seen: mailbox.NewOptBool(seen),
 	}), mailbox.MailboxUpdateMessageParams{MessageID: messageID, MailboxID: mailbox.NewOptString(mailboxID)})
 	if err != nil {
 		return err

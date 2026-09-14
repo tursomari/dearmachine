@@ -28,7 +28,7 @@ but stateful mailbox surface:
 - Mark a message processed by moving it from `unread` to `read` state.
 - Authenticate with an API credential and address a configured inbox ID.
 
-The default application loop polls every 60 seconds. For each accepted message,
+The default application loop polls every 10 seconds. For each accepted message,
 it completes orchestration and reply handling before marking the message as
 processed. A replacement therefore needs equivalent observable behavior, even
 when the provider names or implements these operations differently.

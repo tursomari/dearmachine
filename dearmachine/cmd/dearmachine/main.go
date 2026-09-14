@@ -228,7 +228,7 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 	flags.DurationVar(
 		&cfg.pollInterval,
 		"poll-interval",
-		60*time.Second,
+		10*time.Second,
 		"delay after each completed mail transport poll",
 	)
 	flags.IntVar(

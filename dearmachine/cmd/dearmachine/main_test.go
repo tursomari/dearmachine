@@ -44,7 +44,7 @@ func TestParseConfigDefaultsAndFlags(t *testing.T) {
 	}
 	if defaults.projectDir != "." || defaults.agentBinary != "machtiani" || defaults.concurrency != 3 ||
 		defaults.maintenanceMinTurns != 20 ||
-		defaults.pollInterval != time.Minute ||
+		defaults.pollInterval != 10*time.Second ||
 		defaults.entryPointRepo != "~/.dearmachine/entrypoint/main" ||
 		defaults.entryPointPrompt != "~/.dearmachine/entrypoint/main/documentation/update-prompt-template.md" {
 		t.Fatalf("unexpected defaults: %+v", defaults)

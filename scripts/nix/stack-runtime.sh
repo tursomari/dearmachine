@@ -343,7 +343,7 @@ case $action in
       --agent-bin /opt/dearmachine/bin/machtiani \
       --entry-point-repo "${DEARMACHINE_ENTRY_POINT_REPO:-}" \
       --entry-point-prompt "${DEARMACHINE_ENTRY_POINT_PROMPT:-/home/dearmachine/.dearmachine/entrypoint/main/documentation/update-prompt-template.md}" \
-      --poll-interval "${DEARMACHINE_POLL_INTERVAL:-60s}" \
+      --poll-interval "${DEARMACHINE_POLL_INTERVAL:-10s}" \
       --once \
       --magnifica-humanitas \
       --verbose

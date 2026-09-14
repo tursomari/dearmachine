@@ -199,7 +199,7 @@ session references appear, DearMachine asks which numbered session to use
 before asking for confirmation. References belonging to another pair are
 treated as ordinary forwarded content.
 
-The first poll runs immediately. Later polls start 60 seconds after the prior
+The first poll runs immediately. Later polls start 10 seconds after the prior
 poll completes. Override that with `--poll-interval`; use `--once` for a single
 poll. Each poll claims messages before dispatching them to a worker pool. The
 `--concurrency` flag limits the pool to three active email threads by default;
@@ -210,8 +210,7 @@ sequence, so one machtiani session never has multiple active children.
 ## Locally skip inbox messages
 
 Stop DearMachine Client before changing its local inbox decisions. To suppress the
-exact snapshot of messages that are currently eligible without changing the
-remote inbox, run:
+exact snapshot of messages that are currently eligible, run:
 
 ```bash
 dearmachine inbox skip \
@@ -234,10 +233,17 @@ dearmachine inbox skipped --pair you@example.com --json
 dearmachine inbox unskip --pair you@example.com <message-id>
 ```
 
-These commands never delete messages, change labels or thread state, mark
-messages processed, or send replies. A skipped eligible message therefore
-remains visible in each remote poll, but DearMachine Client recognizes its local
-ID and does nothing. After `unskip`, the next poll handles the message normally.
+Skip decisions are stored locally before marking individual messages read on
+AgentMail and Sendmux. This keeps skipped mail out of repeated unread polls.
+OpenMail decisions remain local because its read status applies to an entire
+thread. No messages are deleted and no replies are sent by these commands.
+
+On AgentMail and Sendmux, `unskip` restores the selected messages to unread
+before removing their local skip records. If a provider update fails, the local
+skip remains in effect and the command reports the failure. The client also
+marks previously skipped unread messages read when it encounters them, retrying
+failed acknowledgements without executing the skipped work. After `unskip`,
+the next poll handles the message normally.
 
 Skipping also removes a provisional first-message queue record left by an
 interrupted run and asks machtiani to delete that abandoned session. If session
@@ -261,7 +267,8 @@ follow-up starts, DearMachine Client forks its committed agent session and recor
 clean checkpoint in the durable pending row. The command requires a `running`
 pending message with that checkpoint, atomically remaps the thread to it,
 records the selected message as locally skipped, removes its pending row, and
-deletes the partial source session. The remote inbox remains unchanged. Future
+deletes the partial source session. On its next poll, the client marks the
+skipped message read on AgentMail and Sendmux. Future
 follow-ups continue from the last committed sequence; unskipping the abandoned
 message makes that message eligible again against the clean checkpoint.
 

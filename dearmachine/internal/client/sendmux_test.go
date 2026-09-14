@@ -106,13 +106,13 @@ func (fake *fakeSendmuxAPI) Send(_ context.Context, _ string, request sendmuxSen
 	return receipt, nil
 }
 
-func (fake *fakeSendmuxAPI) MarkSeen(_ context.Context, _, messageID string) error {
+func (fake *fakeSendmuxAPI) SetSeen(_ context.Context, _, messageID string, seen bool) error {
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	for threadID, messages := range fake.data {
 		for index := range messages {
 			if messages[index].ID == messageID {
-				messages[index].Seen = true
+				messages[index].Seen = seen
 				fake.data[threadID] = messages
 				fake.seen = append(fake.seen, messageID)
 				return nil
