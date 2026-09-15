@@ -345,7 +345,7 @@ Commands:
   up            create pairs or start registered pairs
   down          stop the background client and cancel retries
   restart       restart through the existing supervisor
-  status [--details] show runtime, crash recovery, startup configuration, and pairs
+  status [--details | --json] show runtime, crash recovery, startup configuration, and pairs
   inbox         maintain pair inbox state
   guest         allow, list or revoke thread-scoped guest access
   init          initialize the entry-point repository

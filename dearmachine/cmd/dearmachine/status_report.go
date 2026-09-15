@@ -106,6 +106,10 @@ func writeStatusReport(w io.Writer, s supervisor.Status, managed bool, o startup
 			chat = "does not cancel the requested stop"
 		}
 	}
+	if !managed && s.Supervisor == "stopped" && s.Daemon == "stopped" {
+		recovery = "inactive until started again"
+		chat = "leaves Dear Machine stopped"
+	}
 	var text strings.Builder
 	if s.Installation != "" && s.Installation != "installed" {
 		fmt.Fprintf(&text, "Installation: %s\n", s.Installation)

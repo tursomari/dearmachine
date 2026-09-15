@@ -83,3 +83,52 @@ func TestForegroundChildLogAndReap(t *testing.T) {
 		t.Fatalf("log %q: %v", data, err)
 	}
 }
+
+func TestOwnerPresentDoesNotCreateOrRewriteState(t *testing.T) {
+	root := privateTempDir(t)
+	if owned, err := OwnerPresent(root); owned || err != nil {
+		t.Fatalf("absent: %v %v", owned, err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("probe created state: %v %v", entries, err)
+	}
+	lock, err := acquire(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if _, err := lock.WriteString("diagnostic record\n"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := lock.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned, err := OwnerPresent(root); !owned || err != nil {
+		t.Fatalf("held: %v %v", owned, err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if owned, err := OwnerPresent(root); owned || err != nil {
+		t.Fatalf("released: %v %v", owned, err)
+	}
+	path := filepath.Join(root, "run", "supervisor.lock")
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "diagnostic record\n" || !os.SameFile(before, after) || before.ModTime() != after.ModTime() {
+		t.Fatalf("probe changed record: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "missing"), path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OwnerPresent(root); err == nil {
+		t.Fatal("accepted symlink")
+	}
+}

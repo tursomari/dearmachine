@@ -163,3 +163,17 @@ After a bootstrap attempt, TS reports the observed running/backoff/failed/stoppe
 state without issuing a second `up`. A concurrent stop is not undone and failed
 startup is not blindly retried. Systemd startup also verifies that its MainPID
 matches the observed native supervisor before claiming service ownership.
+
+
+Installation health is checked independently of runtime availability. Native
+`status --json` returns a version-1 status envelope with installation and runtime
+observations, without pairs or private exit diagnostics. It exits successfully
+when it can report an observation, including partial installation or unknown
+runtime; callers must inspect the fields. Human-readable status retains its
+unhealthy-runtime exit status and separate startup-configuration report.
+
+After clean shutdown, an unlocked supervisor record and a stopped client mean
+stopped, not unreachable or partially installed. Status probes never create,
+rewrite, or remove supervisor state. A held/invalid lock or a live orphaned client
+keeps an unavailable supervisor inconclusive. These are point-in-time
+observations, never authorization to start or signal a process.

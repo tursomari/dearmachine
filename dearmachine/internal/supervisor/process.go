@@ -137,6 +137,36 @@ func HasRecord(root string) (bool, error) {
 	return false, nil
 }
 
+// OwnerPresent observes the existing lock without creating or rewriting state.
+// It is a point-in-time observation, not permission to start or signal a process.
+func OwnerPresent(root string) (bool, error) {
+	path := filepath.Join(root, "run", "supervisor.lock")
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || !ok || stat.Uid != uint32(os.Getuid()) || stat.Nlink != 1 {
+		return false, errors.New("cannot verify supervisor ownership: invalid lock file")
+	}
+	if err := syscall.Flock(fd, syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
 // CheckAvailable probes ownership before spawning. The child must still acquire
 // the lock itself: this probe is not a reservation against concurrent starts.
 func CheckAvailable(root string) error {
