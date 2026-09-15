@@ -181,7 +181,11 @@ func TestGuestUnauthenticatedMessagesNeverReachTheParticipantFlow(t *testing.T) 
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			if rig.capture("count") != "1" || len(raw.sentReplies()) != before {
+			expectedReplies := before
+			if role == "guest" {
+				expectedReplies++
+			} // Private risk warning, never instruction approval.
+			if rig.capture("count") != "1" || len(raw.sentReplies()) != expectedReplies {
 				t.Fatal("unauthenticated sender reached agent or control mail")
 			}
 			endpoint, _ := router.Endpoint(pair.ID)

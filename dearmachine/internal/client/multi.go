@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/mail"
 	"os"
 	"path/filepath"
@@ -25,18 +26,20 @@ func DefaultDaemonLockPath(userHomeDir func() (string, error)) (string, error) {
 // InboxRouter gives every pair a private Transport view while retaining one
 // poller and one provider adapter for the shared inbox.
 type InboxRouter struct {
-	mu          sync.Mutex
-	raw         Transport
-	inbox       Inbox
-	pairs       map[string]Pair
-	interval    time.Duration
-	lastPoll    time.Time
-	pending     map[string][]Message
-	known       map[string]map[string]struct{}
-	stores      map[string]*Store
-	guests      *GuestStore
-	controllers map[string]bool
-	cached      map[string]Message
+	mu               sync.Mutex
+	logger           *log.Logger
+	lastAuthRecovery time.Time
+	raw              Transport
+	inbox            Inbox
+	pairs            map[string]Pair
+	interval         time.Duration
+	lastPoll         time.Time
+	pending          map[string][]Message
+	known            map[string]map[string]struct{}
+	stores           map[string]*Store
+	guests           *GuestStore
+	controllers      map[string]bool
+	cached           map[string]Message
 }
 
 var errNoPairRoute = errors.New("message has no pair route")
@@ -98,6 +101,19 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 		if err != nil {
 			return nil, err
 		}
+		held, err := router.resumeAuthenticationMessages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		seenIDs := map[string]bool{}
+		for _, m := range messages {
+			seenIDs[m.MessageID] = true
+		}
+		for _, m := range held {
+			if !seenIDs[m.MessageID] {
+				messages = append(messages, m)
+			}
+		}
 		distributed := make(map[string][]Message)
 		for _, message := range messages {
 			message, err = router.normalizeDelivery(message)
@@ -110,8 +126,23 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 				}
 				continue
 			}
+			original := message
 			message, err = router.authenticateMessage(ctx, message)
 			if errors.Is(err, ErrMessageUnauthenticated) {
+				if err := router.holdUnauthenticated(ctx, original); err != nil {
+					return nil, err
+				}
+				continue
+			} else if errors.Is(err, ErrGuestUnauthorized) {
+				router.logAuthentication(original, Pair{}, "stale_or_changed_message")
+				if router.guests != nil {
+					if _, err := router.guests.db.Exec(`UPDATE guest_auth_messages SET done=1 WHERE inbox_id=? AND message_id=?`, guestInboxKey(router.inbox), original.MessageID); err != nil {
+						return nil, err
+					}
+				}
+				if err := router.raw.MarkProcessed(ctx, original.MessageID); err != nil {
+					return nil, err
+				}
 				continue
 			} else if err != nil {
 				return nil, err
@@ -122,6 +153,17 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 			}
 			if err != nil {
 				return nil, err
+			}
+			if message.riskAccepted {
+				if err := router.recordAcceptedAuthentication(message, routed); err != nil {
+					return nil, err
+				}
+			}
+			if handled, err := router.handleAuthenticationControl(ctx, routed, message); handled || err != nil {
+				if err != nil {
+					return nil, err
+				}
+				continue
 			}
 			if err := router.observeInvitations(ctx, routed, message); err != nil {
 				return nil, err
@@ -163,7 +205,7 @@ func (router *InboxRouter) poll(ctx context.Context, pairID string) ([]Message, 
 }
 
 func (router *InboxRouter) routeInbound(message Message) (Pair, error) {
-	if !message.authenticated {
+	if !message.authenticated && !message.riskAccepted {
 		return Pair{}, errNoPairRoute
 	}
 	from, err := canonicalMessageAddress(message.From)
@@ -175,7 +217,7 @@ func (router *InboxRouter) routeInbound(message Message) (Pair, error) {
 	}
 	var matches []Pair
 	for _, pair := range router.pairs {
-		if from == pair.UserEmail {
+		if message.authenticated && from == pair.UserEmail {
 			matches = append(matches, pair)
 		}
 	}
@@ -290,6 +332,7 @@ type pairEndpoint struct {
 func (endpoint *pairEndpoint) bindStore(store *Store) {
 	endpoint.router.mu.Lock()
 	endpoint.router.stores[endpoint.pairID] = store
+	endpoint.router.logger = store.warnings
 	endpoint.router.mu.Unlock()
 }
 
@@ -392,14 +435,21 @@ func (endpoint *pairEndpoint) ReplyReceipt(ctx context.Context, message Message,
 	if err != nil {
 		return "", false, err
 	}
-	return endpoint.router.raw.ReplyReceipt(ctx, message, recipient)
+	return endpoint.replyReceiptWithoutAuthWarning(ctx, message, recipient)
 }
 
 func (endpoint *pairEndpoint) MarkProcessed(ctx context.Context, messageID string) error {
 	if err := endpoint.ensureMessage(ctx, messageID); err != nil {
 		return err
 	}
-	return endpoint.router.raw.MarkProcessed(ctx, messageID)
+	if err := endpoint.router.raw.MarkProcessed(ctx, messageID); err != nil {
+		return err
+	}
+	if endpoint.router.guests != nil {
+		_, err := endpoint.router.guests.db.Exec(`UPDATE guest_auth_messages SET done=1 WHERE pair_id=? AND inbox_id=? AND message_id=?`, endpoint.pairID, guestInboxKey(endpoint.router.inbox), messageID)
+		return err
+	}
+	return nil
 }
 
 func (endpoint *pairEndpoint) FetchAttachment(ctx context.Context, attachmentID string, maxBytes int64) ([]byte, error) {

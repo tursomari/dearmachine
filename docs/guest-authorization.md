@@ -6,8 +6,8 @@ guest mailbox and exact provider thread. It persists until explicitly revoked.
 DearMachine synchronizes its managed provider address lists automatically.
 There is no separate guest admission exchange.
 
-Every guest message must be authenticated and visibly include Dear Machine and
-the owner: use Reply All. Each message produces its own private owner approval
+Every guest message must be authenticated, or covered by the owner exception
+below, and visibly include Dear Machine and the owner: use Reply All. Each message produces its own private owner approval
 prompt, including a quoted preview of the held request. Only an explicit approval
 of that request allows lower-authority agent execution. Retained admission or
 trust cannot bypass approval. A guest cannot invite others, start an unrelated
@@ -46,8 +46,9 @@ verified raw message. This is an explicit boundary, not a proof of the provider.
 Raw From matching, allowlisting and generic SPF/DKIM/DMARC or
 Authentication-Results verdicts are never sufficient.
 
-The same check applies to owner instructions, invitations, guest requests,
-approvals and removal commands. A signature that omits a present authorization
+The check always applies to owner instructions, invitations, approvals and
+removal commands. Guest requests default to the same check; the explicit
+owner exception below changes only guest sender eligibility. A signature that omits a present authorization
 header is insufficient even if an email provider accepts it normally.
 **OpenMail supports a restricted plain-text subset.** Its live message responses
 include an ordered header list in `raw.message-headers`, along with
@@ -83,6 +84,56 @@ UID validity, exceeded limits and invalid signatures never authorize work.
 Successful verification is cached in memory for up to 2,048 exact message
 fingerprints; changing a cached request is rejected. Daemon startup and `guest
 list` report the available authentication path.
+
+## Unverified guest messages
+
+An existing guest's message that fails authentication is held without executing
+it or creating an instruction approval. DearMachine sends a private owner warning
+with a quoted preview, a plain-language impersonation warning, and a technical
+reason. An authentication failure is not evidence that the sender is malicious;
+incorrect mail settings or unavailable evidence can also prevent verification.
+Transient transport and DNS outages remain operational errors, not invitations
+to bypass authentication.
+
+To accept the risk, the authenticated owner replies in the same thread with the
+exact command supplied in the warning (case insensitive):
+
+```text
+ALLOW UNVERIFIED <code>
+```
+
+This remembers an exception for that owner pair, inbox, guest, thread and current
+grant generation. It is **not proof of identity**: anyone impersonating that
+address could submit a request. Every message still needs its own Yes/No/Other
+approval, including the first held message. A plain Yes to the warning does not
+accept the exception. Risk acceptance does not confer owner powers or invite
+other addresses. Future verified messages continue through the ordinary path.
+
+Removing the guest invalidates the exception and old commands. Explicitly
+reinviting the guest requires fresh risk acceptance for unverified mail. Merely
+omitting a guest from an owner continuation does not remove the guest or exception.
+Approved unverified requests send their answer to the owner and that requesting
+guest only; their unverified To/CC cannot subscribe other guests to the answer.
+Owner continuations retain the ordinary recipient rules.
+
+There is at most one warning per grant generation, with at most three warning
+attempts per owner pair per rolling hour. Rate-limited warnings are deferred.
+Held message IDs and content fingerprints persist across restarts; the provider
+message is marked read and retrieved again when acceptance permits approval.
+Changed content under the same ID is rejected. A send with an uncertain result
+is recovered only through its matching private Sent receipt, without a blind
+resend. If delivery never becomes observable, concierge diagnosis is needed;
+no automatic delivery or exactly-once guarantee is claimed.
+
+AgentMail polling explicitly includes messages labeled `unauthenticated` for
+this diagnostic path. Unknown senders, paired-owner impersonation, wrong scopes,
+and revoked guests do not receive exceptions or generate owner warnings.
+The client logs authentication failures, notification outcomes, exception
+acceptance/rejection and email removal in `dearmachine.log`, with quoted IDs,
+claimed sender, scope and safe reasons; it does not log message bodies or keys.
+Repeated held-message outcomes are deduplicated. Launch `dearmachine` and ask
+about the warning's authentication reference for diagnosis. Guest authorization
+state and notice tokens are local private data, not credentials for a sender.
 
 ## Remove and reinvite
 

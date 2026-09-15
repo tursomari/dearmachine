@@ -85,6 +85,16 @@ func OpenGuestStore(path string) (*GuestStore, error) {
  CREATE TABLE IF NOT EXISTS guest_removal_receipts (
  pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL, message_id TEXT NOT NULL,
  token TEXT NOT NULL, PRIMARY KEY(pair_id,inbox_id,message_id));
+ CREATE TABLE IF NOT EXISTS guest_auth_exceptions (
+ pair_id TEXT NOT NULL,inbox_id TEXT NOT NULL,address TEXT NOT NULL,thread_id TEXT NOT NULL,
+ generation INTEGER NOT NULL,token TEXT NOT NULL UNIQUE,message_id TEXT NOT NULL,
+ accepted INTEGER NOT NULL DEFAULT 0,notice_state TEXT NOT NULL DEFAULT 'pending',
+ attempted_at INTEGER NOT NULL DEFAULT 0,outbound_id TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(pair_id,inbox_id,address,thread_id,generation));
+ CREATE TABLE IF NOT EXISTS guest_auth_messages (
+ pair_id TEXT NOT NULL,inbox_id TEXT NOT NULL,message_id TEXT NOT NULL,address TEXT NOT NULL,thread_id TEXT NOT NULL,
+ generation INTEGER NOT NULL,done INTEGER NOT NULL DEFAULT 0,outcome TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(pair_id,inbox_id,message_id));
  CREATE TABLE IF NOT EXISTS receive_permissions (
  inbox_id TEXT NOT NULL,address TEXT NOT NULL,direction TEXT NOT NULL DEFAULT 'receive',permanent INTEGER NOT NULL DEFAULT 0,
  pending INTEGER NOT NULL DEFAULT 1,owned INTEGER NOT NULL DEFAULT 0,token TEXT NOT NULL DEFAULT '',
@@ -248,6 +258,12 @@ func (s *GuestStore) BindWork(k GuestKey, messageID string) error {
 }
 
 func (s *GuestStore) bindWork(k GuestKey, messageID, fingerprint string) error {
+	return s.bindGuestWork(k, messageID, fingerprint, false)
+}
+func (s *GuestStore) bindUnverifiedWork(k GuestKey, messageID, fingerprint string) error {
+	return s.bindGuestWork(k, messageID, fingerprint, true)
+}
+func (s *GuestStore) bindGuestWork(k GuestKey, messageID, fingerprint string, requireException bool) error {
 	if messageID == "" {
 		return ErrGuestUnauthorized
 	}
@@ -265,6 +281,15 @@ func (s *GuestStore) bindWork(k GuestKey, messageID, fingerprint string) error {
 	}
 	if !g.Active {
 		return ErrGuestUnauthorized
+	}
+	if requireException {
+		var accepted bool
+		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM guest_auth_exceptions WHERE `+grantWhere+` AND generation=? AND accepted=1)`, append(k.args(), g.Generation)...).Scan(&accepted); err != nil {
+			return err
+		}
+		if !accepted {
+			return ErrGuestUnauthorized
+		}
 	}
 	_, err = tx.Exec(`INSERT OR IGNORE INTO guest_work VALUES(?,?,?,?,?,?)`, k.PairID, k.InboxID, messageID, k.Address, k.ThreadID, g.Generation)
 	if err != nil {

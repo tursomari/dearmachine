@@ -28,9 +28,10 @@ Git plumbing.
 
 The runner removes only `// @ ` from contracts in
 `dearmachine/internal/client/guest_policy.go` and submits the actual declarations
-and bodies to Gobra v26.02. There is no separate proof implementation. The four
-functions cover invitation, authenticated visible reply delivery, approved
-execution and answer-recipient eligibility. Exhaustive Boolean Go tests exercise
+and bodies to Gobra v26.02. There is no separate proof implementation. The six
+functions cover invitation, eligible visible reply delivery, approved
+execution, answer-recipient eligibility, sender eligibility under a scoped risk
+exception, and authenticated-owner exception acceptance. Exhaustive Boolean Go tests exercise
 the same production functions independently.
 
 Gobra proves those Boolean implications. It does not verify email parsing,
@@ -44,8 +45,16 @@ and the guest in outer To/CC. Initial invitation needs no separate admission.
 Invitation processing precedes `ReceiveOwner`. `ReceiveGuest` holds an immutable
 request. Each private approval binds its original message, scope and generation;
 `Approve` releases only that request and `Start` checks the grant again. There
-is no retained-trust shortcut. Authentication is required independently for
-invitations, owner instructions, guest messages, approvals and revocations.
+is no retained approval shortcut. Authentication is required independently for
+invitations, owner instructions, approvals and revocations. Guest identity may
+instead be unverified under an explicitly accepted current-generation exception.
+`WarnGuest` holds immutable work at stage 5; `AcceptException` requires an
+authenticated owner and the exact warning scope/generation. `ReleaseHeld` moves
+that work only to awaiting ordinary approval. It cannot approve or start work.
+`ReceiveGuest` may use the same exception for later requests, each independently
+approved. `Start` requires verified identity or the current explicit exception.
+Removal disables it immediately; reinvitation cannot reuse the old exception.
+The model retains verified identity as a separate work fact.
 
 `Submit` includes the owner and only guests visible in the original request
 whose grant remains active in the same generation recorded at acceptance.
@@ -64,14 +73,17 @@ started effects and submitted mail cannot be recalled. Grants have no expiry.
 
 The default bound has one scope, two guest messages, one owner instruction,
 two evidence IDs and two generations. The expanded configuration has two scopes
-with one guest message and one owner instruction each. Seventeen intentional
+with one guest message and one owner instruction each, and one invitation
+evidence identity (the default retains two). Twenty-two intentional
 mutations must fail `Safety`: forged senders in five roles, replay/implicit
 reinvitation, misbound/reused approvals, public prompts, revoked/stale execution,
 historical/retry recipients, omission-as-revocation and wrong-scope actions.
-Three separate reachability checks must find repeated shared guest answers,
+Four separate reachability checks must find repeated shared guest answers,
 private owner answers while participation remains active, and an answer after
-explicit reinvitation. `AnswerPrivacy` independently checks submitted envelopes.
-The runner requires invariant-failure exit status, not arbitrary tool failure.
+explicit reinvitation, plus repeated approved unverified guest answers. `AnswerPrivacy` independently checks submitted envelopes.
+The five exception mutations cover forged acceptance, wrong scope, stale tokens,
+stale remembered exceptions and acceptance that also approves work. The runner
+requires invariant-failure exit status, not arbitrary tool failure.
 
 Messages and evidence are immutable identities, not raw MIME. Restarts retain
 modeled state. The model omits multi-guest envelope composition, database
@@ -152,6 +164,8 @@ or the human account holder. This assumption supplies the model's authenticated
 mailbox fact; the TLA+ code does not establish it. Provider body/MIME extraction,
 attachment mapping, inbox/thread scope and outbound labels remain trusted.
 No raw From match or supplied Authentication-Results verdict replaces verification.
+An explicit owner exception accepts the risk of impersonation in a narrow scope;
+it does not establish the model's authenticated mailbox fact.
 OpenMail verifies the same signature contract for reconstructable, unencoded
 single-part plain text. Unsupported MIME formats and missing evidence are
 rejected. Its provider IDs are mapped separately from signed Internet
@@ -164,8 +178,8 @@ provider storage and parsing remain trusted boundaries; the model abstracts
 correct correlation and does not prove these provider adapters.
 
 The explicit native `guest allow` path instead carries trusted local operator
-authorization, with provider-resolved visible invitation facts. It cannot bypass
-authentication of later messages or individual guest approvals.
+authorization, with provider-resolved visible invitation facts. It cannot create an authentication exception or bypass individual guest approvals.
+Only the separate authenticated owner risk decision enables unverified guests.
 
 Go regressions cover real signature verification and SDK raw downloads, all
 unauthenticated roles, scoped removal/replay/restart, fingerprint substitution,
@@ -175,3 +189,21 @@ held through execution start. Provider deletion additionally requires exact
 ownership and observed identity/version. Providers without conditional deletion
 require external operators not to replace a rule between inspection and removal.
 External provider correctness and out-of-band mutations are outside the proof.
+
+## Exception implementation correspondence
+
+`guest_auth_exception_test.go` exercises private warning/ordinary approval
+separation, continuing per-message approval, generation reset, wrong-owner and
+unauthenticated decisions, restart, deferred rate limits, immutable held bodies,
+uncertain-send recovery, escaped content-free logging and atomic current-generation
+binding. `agentmail_test.go` verifies both unread and recovery SDK queries include
+quarantined messages and that acknowledgement prevents repeat polling.
+`sender_auth_test.go` separates temporary DNS failures from identity rejections.
+
+Notification delivery, rate limits, SQL atomicity and provider behavior are tested
+implementation boundaries, not claims proved by the Boolean contracts or TLA+.
+The model's single guest per scope abstracts multi-guest envelope composition;
+production additionally prevents unverified To/CC from adding answer recipients.
+The reconciliation and replacement specifications retain their authenticated-input
+abstractions and are not composed with the exception model. There is no full Go
+refinement proof or guarantee of actual email delivery.

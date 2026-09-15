@@ -9,20 +9,42 @@ import (
 var ErrMessageUnauthenticated = errors.New("message sender or authorization headers could not be authenticated")
 
 func (r *InboxRouter) authenticateMessage(ctx context.Context, message Message) (Message, error) {
-	message.authenticated = false
+	message.authenticated, message.riskAccepted = false, false
+	message.fingerprint = messageFingerprint(message)
+	var err error
 	if containsFold(message.Labels, "unauthenticated") {
-		return Message{}, ErrMessageUnauthenticated
+		err = ErrMessageUnauthenticated
+	} else if auth, ok := r.raw.(MessageAuthenticator); ok {
+		err = auth.AuthenticateMessage(ctx, message)
+	} else {
+		err = ErrSenderAttributionUnsupported
 	}
-	auth, ok := r.raw.(MessageAuthenticator)
-	if !ok {
-		return Message{}, ErrSenderAttributionUnsupported
+	if err == nil {
+		message.authenticated = true
+		return message, nil
 	}
-	if err := auth.AuthenticateMessage(ctx, message); err != nil {
+	if !errors.Is(err, ErrMessageUnauthenticated) {
 		return Message{}, err
 	}
-	message.authenticated = true
-	message.fingerprint = messageFingerprint(message)
-	return message, nil
+	pair, grant, eligible, lookupErr := r.unverifiedGuestScope(message)
+	if lookupErr != nil {
+		return Message{}, lookupErr
+	}
+	if eligible {
+		accepted, lookupErr := r.guests.authenticationAccepted(grant)
+		if lookupErr != nil {
+			return Message{}, lookupErr
+		}
+		if guestSenderEligible(false, accepted, grant.Active, pair.ID == grant.PairID, true) {
+			// Bind before exposing content, including on direct retrieval after restart.
+			if err := r.guests.bindUnverifiedWork(grant.GuestKey, message.MessageID, message.fingerprint); err != nil {
+				return Message{}, err
+			}
+			message.riskAccepted = true
+			return message, nil
+		}
+	}
+	return Message{}, err
 }
 
 var ErrSenderAttributionUnsupported = errors.New("inbound sender authentication is unsupported by this transport")
@@ -73,7 +95,7 @@ func (r *InboxRouter) guestAllowed(pair Pair, message Message) error {
 	if err != nil {
 		return err
 	}
-	if !guestDeliveryEligible(g.Active, message.authenticated, r.deliveredToInbox(message), visibleRecipient(message, r.inbox.Address), visibleRecipient(message, pair.UserEmail)) {
+	if !guestDeliveryEligible(g.Active, guestSenderEligible(message.authenticated, message.riskAccepted, g.Active, true, true), r.deliveredToInbox(message), visibleRecipient(message, r.inbox.Address), visibleRecipient(message, pair.UserEmail)) {
 		return ErrGuestUnauthorized
 	}
 	// Existing work is immutable across generations. History which was never
@@ -187,7 +209,7 @@ type guestStartGuard func(func() error) error
 
 func (e *pairEndpoint) guestExecutionContext(ctx context.Context, message Message, pending PendingMessage) (context.Context, error) {
 	r := e.router
-	if !message.authenticated {
+	if !message.authenticated && !message.riskAccepted {
 		return ctx, ErrGuestUnauthorized
 	}
 	if e.isControllingParticipant(message) {
@@ -226,7 +248,7 @@ func (e *pairEndpoint) guestExecutionContext(ctx context.Context, message Messag
 		return ctx, err
 	}
 	decided := pending.Authority == authorityParticipant && approved
-	if !guestExecutionEligible(true, true, true, message.authenticated, decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
+	if !guestExecutionEligible(true, true, true, guestSenderEligible(message.authenticated, message.riskAccepted, true, true, true), decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
 		return ctx, ErrGuestUnauthorized
 	}
 	guard := guestStartGuard(func(start func() error) error {
@@ -236,7 +258,7 @@ func (e *pairEndpoint) guestExecutionContext(ctx context.Context, message Messag
 				return err
 			}
 			decided := pending.Authority == authorityParticipant && approved
-			if !guestExecutionEligible(true, true, true, message.authenticated, decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
+			if !guestExecutionEligible(true, true, true, guestSenderEligible(message.authenticated, message.riskAccepted, true, true, true), decided, pending.ControllingParticipant == r.pairs[e.pairID].UserEmail) {
 				return ErrGuestUnauthorized
 			}
 			return start()

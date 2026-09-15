@@ -1752,6 +1752,9 @@ func (f *fakeAgentMail) serveList(writer http.ResponseWriter, request *http.Requ
 	}
 	var messages []agentmail.Message
 	for id, message := range f.messages {
+		if containsFold(message.Labels, "unauthenticated") && request.URL.Query().Get("include_unauthenticated") != "true" {
+			continue
+		}
 		if filteredUnread && (!f.unread[id] || f.omitUnread[id]) {
 			continue
 		}

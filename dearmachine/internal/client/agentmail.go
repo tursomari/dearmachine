@@ -193,16 +193,18 @@ func (m *Mailbox) Poll(ctx context.Context) ([]Message, error) {
 	defer m.pollMu.Unlock()
 
 	unread, err := m.listMessageSummaries(ctx, agentmail.InboxMessageListParams{
-		Ascending: agentmail.Bool(true),
-		Labels:    []string{"unread"},
-		Limit:     agentmail.Int(pageSize),
+		IncludeUnauthenticated: agentmail.Bool(true),
+		Ascending:              agentmail.Bool(true),
+		Labels:                 []string{"unread"},
+		Limit:                  agentmail.Int(pageSize),
 	})
 	if err != nil {
 		return nil, err
 	}
 	recoveryParams := agentmail.InboxMessageListParams{
-		Ascending: agentmail.Bool(true),
-		Limit:     agentmail.Int(pageSize),
+		IncludeUnauthenticated: agentmail.Bool(true),
+		Ascending:              agentmail.Bool(true),
+		Limit:                  agentmail.Int(pageSize),
 	}
 	if !m.recoveryAfter.IsZero() {
 		// Keep a small overlap because providers can assign equal timestamps or

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	agentmail "github.com/agentmail-to/agentmail-go"
@@ -185,9 +186,17 @@ func verifySignedMessage(ctx context.Context, raw []byte, expected Message, look
 		!slices.Equal(strings.Fields(parsed.Header.Get("References")), expected.References) {
 		return ErrMessageUnauthenticated
 	}
+	var temporaryDNSFailure atomic.Bool
 	results, err := dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{
 		MaxVerifications: 5,
-		LookupTXT:        func(name string) ([]string, error) { return lookup(ctx, name) },
+		LookupTXT: func(name string) ([]string, error) {
+			records, err := lookup(ctx, name)
+			var dnsErr *net.DNSError
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || (errors.As(err, &dnsErr) && (dnsErr.IsTimeout || dnsErr.IsTemporary)) {
+				temporaryDNSFailure.Store(true)
+			}
+			return records, err
+		},
 	})
 	if err != nil {
 		return ErrMessageUnauthenticated
@@ -206,6 +215,9 @@ func verifySignedMessage(ctx context.Context, raw []byte, expected Message, look
 		if covered {
 			return nil
 		}
+	}
+	if temporaryDNSFailure.Load() {
+		return errors.New("sender authentication temporarily unavailable: DNS lookup failed")
 	}
 	return ErrMessageUnauthenticated
 }

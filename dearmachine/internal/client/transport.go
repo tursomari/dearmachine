@@ -15,7 +15,9 @@ type Message struct {
 	// Set only by the inbox router after adapter authentication. Provider JSON
 	// and email headers cannot supply this authorization fact.
 	authenticated bool
-	fingerprint   string
+	// Locally resolved, generation-bound owner exception; never an identity fact.
+	riskAccepted bool
+	fingerprint  string
 	// RFCMessageID is set when the provider uses a different opaque MessageID.
 	RFCMessageID string
 	MessageID    string

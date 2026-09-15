@@ -245,3 +245,12 @@ func TestAgentMailAuthenticationRejectsBadRawEvidenceWithoutLeakingDownloadURL(t
 		})
 	}
 }
+
+func TestSenderAuthenticationDNSOutageIsNotAnIdentityRejection(t *testing.T) {
+	m := signedFixtureMessage()
+	raw, _ := signedMailFixture(t, m, "sender.test", authenticatedHeaderFields)
+	err := verifySignedMessage(context.Background(), raw, m, func(context.Context, string) ([]string, error) { return nil, context.DeadlineExceeded })
+	if err == nil || errors.Is(err, ErrMessageUnauthenticated) || !strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Fatalf("DNS outage reported as spoofed sender: %v", err)
+	}
+}

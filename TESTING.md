@@ -221,7 +221,7 @@ removal-token scope/replay, revocation/reinvitation and immutable request conten
 `sender_auth_test.go` verifies real signatures with ephemeral keys and the real
 AgentMail SDK over loopback TLS. It rejects spoofed or unsigned author/routing
 fields, body tampering, fake verdicts, missing evidence and unsupported adapters.
-The four Gobra contracts cover invitation, delivery, execution and recipient
+The core Gobra contracts cover invitation, delivery, execution and recipient
 eligibility; `Participation.tla` checks the abstract per-message workflow.
 `Replacement.tla` checks polling/completion interleavings and conditional restart
 progress; `participant_replacement_test.go` covers real subprocess-start repolls,
@@ -232,3 +232,11 @@ lost responses and stale reads across restart, conditional-state contention, cha
 rejection, reply ancestry, private approval references, attachments, credential
 destination checks and queued-versus-delivered reporting. Scoped authenticated
 approval correlation is covered by `message_references_test.go`.
+
+Guest authentication exceptions are covered by `guest_auth_exception_test.go`:
+private warnings, independent approval of every instruction, removal/reinvitation,
+scoped authenticated decisions, restart, rate limits, lost-response receipt
+recovery, content substitution and logging. `Participation.tla` and the six
+production Gobra contracts distinguish verified identity from a remembered owner
+risk exception. Use the guest verification runner above for this policy boundary;
+notification transport effects remain implementation/LSE evidence.

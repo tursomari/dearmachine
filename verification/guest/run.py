@@ -89,13 +89,14 @@ def main():
                        'ImplicitReinvite', 'WrongApprovalRequest', 'PublicApproval',
                        'ReuseApproval', 'StartRevoked', 'StaleExecution',
                        'HistoricalRecipients', 'MutableRetry', 'OmissionRevokes',
-                       'WrongRevocationScope', 'WrongDeliveryScope'):
+                       'WrongRevocationScope', 'WrongDeliveryScope', 'ForgedException',
+                       'WrongExceptionScope', 'StaleExceptionToken', 'StaleException', 'ExceptionApproves'):
             cfg = participation.replace('Mutation = "None"', f'Mutation = "{mutant}"')
-            if mutant in ('WrongRevocationScope', 'WrongDeliveryScope'):
+            if mutant in ('WrongRevocationScope', 'WrongDeliveryScope', 'WrongExceptionScope'):
                 cfg = cfg.replace('Scopes = {s1}', 'Scopes = {s1, s2}')
                 cfg = cfg.replace('GuestMessages = {g1, g2}', 'GuestMessages = {g1}')
             workflow('participation-' + mutant, cfg)
-        for witness in ('NoRepeatedAnswers', 'NoPrivateContinuation', 'NoReinvitation'):
+        for witness in ('NoRepeatedAnswers', 'NoPrivateContinuation', 'NoReinvitation', 'NoUnverifiedAnswers'):
             workflow('participation-' + witness, participation, witness)
         workflow('participation', participation)
         for mutant in ('KnownOnly', 'StaleDecision', 'ReplayInvitation', 'DeleteUnowned'):
@@ -105,6 +106,9 @@ def main():
         if args.expand:
             scoped = participation.replace('Scopes = {s1}', 'Scopes = {s1, s2}')
             scoped = scoped.replace('GuestMessages = {g1, g2}', 'GuestMessages = {g1}')
+            # Scope isolation needs one invitation identity; replay with multiple
+            # identities is covered by the default and mutation configurations.
+            scoped = scoped.replace('Evidence = {e1, e2}', 'Evidence = {e1}')
             workflow('participation-scopes', scoped)
             (snapshot / 'Expanded.cfg').write_text(config.replace('Threads = {t1}', 'Threads = {t1, t2}'))
             run('tlc-expanded', tlc + ['-config', '/proof/Expanded.cfg', '/proof/Guest.tla'], marker='Model checking completed. No error has been found.')

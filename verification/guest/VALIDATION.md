@@ -1,5 +1,47 @@
 # Guest authorization validation
 
+## Remembered guest authentication exceptions, 2026-09-15
+
+The current implementation distinguishes verified sender identity from an
+explicit authenticated-owner risk exception bound to the exact guest grant
+generation. Both paths still require independent approval of every instruction.
+Removal invalidates the exception, held work and old decisions; reinvitation
+needs a fresh risk decision for unverified mail.
+
+- **PASS — deterministic client and race tests.** Private warning envelopes,
+  first and repeated instruction approvals, owner/pair/thread/inbox isolation,
+  rejection of unauthenticated decisions, plain Yes versus explicit acceptance,
+  warning/approval receipt separation, revocation/reinvitation, atomic exception
+  checks during work binding, restart, deferred rate limits, lost-send receipt
+  recovery, body substitution and content-free escaped logs are covered.
+  AgentMail SDK fixtures test unread and recovery queries including quarantined
+  messages, and acknowledgement. Temporary DNS outages remain operational errors.
+- **PASS — production Boolean contracts.** Gobra verified all six actual Go
+  function bodies, including sender eligibility and owner exception acceptance.
+- **PASS — TLA+ runner with expanded bounds.** Participation safety, type and
+  answer privacy passed for 65,668 distinct states (one scope, two guest
+  messages, two evidence IDs) and 1,205,604 states (two scopes, one guest
+  message and one evidence ID). Both use two generations and owner messages.
+  All 22 participation mutations produced the required Safety counterexamples,
+  including five exception mutations. Four positive reachability checks found
+  witnesses, including repeated approved unverified guest answers. Existing
+  replacement fixtures/mutations and reconciliation checks passed; the sparse
+  reconciliation matrix explored 3,748,096 distinct states.
+- **PASS — host Nix gate.** `nix flake check` passed for the final source on
+  x86_64-linux, including the full Go suite, production package, lifecycle,
+  transport packaging and contract checks. Other platforms were not evaluated.
+  The unchanged supervisor CLI fixture timed out during concurrent host runs;
+  its isolated race rerun passed after the build load dropped. Client race checks
+  passed, as did `go vet ./...`.
+- **Live boundary.** No new live exception conversation was sent, and the
+  installed client was not changed. Provider notice delivery and user mailbox
+  presentation remain a disposable participant-approval LSE gap. These bounded
+  models and tests are not a full Go refinement proof or a delivery guarantee.
+
+The formal artifact directory was `/tmp/guest-auth-proof-verified`; the host
+Nix log was `/tmp/guest-auth-nix-complete.log`. These local artifacts contain
+source snapshots and test results, not live correspondence or credentials.
+
 ## Focused live acceptance and probe diagnostics, 2026-09-14–15
 
 The AgentMail run used disposable production Nix OCI/Compose state, separate

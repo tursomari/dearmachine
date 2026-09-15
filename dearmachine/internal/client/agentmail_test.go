@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -710,4 +711,29 @@ func newMailboxTestPair(t *testing.T) (*fakeAgentMail, *Mailbox) {
 		t.Fatalf("NewMailbox: %v", err)
 	}
 	return fake, mailbox
+}
+
+func TestMailboxPollIncludesUnauthenticatedForOwnerDiagnostics(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		t.Run(fmt.Sprint(recovery), func(t *testing.T) {
+			fake, mailbox := newMailboxTestPair(t)
+			message := testMessage("quarantined", "thread", "Unverified")
+			message.Labels = []string{"received", "unread", "unauthenticated"}
+			fake.add(message)
+			if recovery {
+				fake.omitFromUnreadFilter(message.MessageID)
+			}
+			messages, err := mailbox.Poll(context.Background())
+			if err != nil || len(messages) != 1 || !containsFold(messages[0].Labels, "unauthenticated") || messages[0].authenticated {
+				t.Fatalf("quarantined message lost or authenticated: %+v %v", messages, err)
+			}
+			if err := mailbox.MarkProcessed(context.Background(), message.MessageID); err != nil {
+				t.Fatal(err)
+			}
+			messages, err = mailbox.Poll(context.Background())
+			if err != nil || len(messages) != 0 {
+				t.Fatalf("acknowledged quarantine polled again: %+v %v", messages, err)
+			}
+		})
+	}
 }

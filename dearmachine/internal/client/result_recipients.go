@@ -15,7 +15,7 @@ func (r *InboxRouter) snapshotGuestRecipients(pairID string, message Message) er
 	if r.guests == nil {
 		return nil
 	}
-	if !message.authenticated {
+	if !message.authenticated && !message.riskAccepted {
 		return ErrMessageUnauthenticated
 	}
 	grants, err := r.guests.List(pairID)
@@ -26,7 +26,7 @@ func (r *InboxRouter) snapshotGuestRecipients(pairID string, message Message) er
 	sender, _ := canonicalMessageAddress(message.From)
 	for _, g := range grants {
 		if g.Active && g.InboxID == guestInboxKey(r.inbox) && g.ThreadID == message.ThreadID &&
-			g.Address != r.inbox.Address && !r.controllers[g.Address] && (g.Address == sender || visibleRecipient(message, g.Address)) {
+			g.Address != r.inbox.Address && !r.controllers[g.Address] && (g.Address == sender || (message.authenticated && visibleRecipient(message, g.Address))) {
 			generations[g.Address] = g.Generation
 		}
 	}
@@ -150,6 +150,9 @@ func (a *App) resultReplyReceipt(ctx context.Context, message Message) (string, 
 		}
 		seen := false
 		for _, candidate := range messages {
+			if isAuthenticationWarning(candidate) {
+				continue
+			}
 			if candidate.MessageID == message.MessageID {
 				seen = true
 				continue

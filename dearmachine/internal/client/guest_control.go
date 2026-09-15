@@ -146,6 +146,7 @@ func (a *App) handleGuestRemoval(ctx context.Context, message Message) (bool, er
 	if len(fields) == 3 && e.router.guests != nil {
 		err = e.router.guests.revokeToken(e.pairID, guestInboxKey(e.router.inbox), message.ThreadID, message.MessageID, strings.ToLower(fields[2]))
 		if err == nil {
+			a.logger.Printf("guest_authentication message=%q thread=%q owner=%q authentication_exception=invalidated_by_removal", message.MessageID, message.ThreadID, e.controllingParticipant())
 			text = "Guest removed from this thread. Pending approvals are invalid. Already-started work and submitted email cannot be recalled. Ordinary reply-all messages will not restore permission; an explicit guest allow command is required to invite them again."
 			if err := e.syncGuestPermissions(ctx); err != nil {
 				text += " Provider permission synchronization is pending; local revocation is already effective."
