@@ -184,8 +184,13 @@ Sent receipt and is not used.
 
 The relay can rewrite the delivered Message-ID. Private guest approval prompts
 include an unguessable reference bound to a private Sent message in the same
-inbox and thread. The authenticated owner must quote that prompt or copy the
-reference line below their exact decision. Test missing, wrong, ambiguous and
+inbox and thread. The authenticated owner must retain that prompt in recognized
+mail-client reply history or copy the reference line below their exact decision.
+When the sender's reply endpoint supplies that history, submit only `Yes`, `No`
+or `Other` as the newly authored body. Do not also prepend a manually quoted
+prompt: free-standing quotations count as additional authored text and cause a
+private retry prompt. Verify the delivered reply retains the reference before
+expecting approval to resolve. Test missing, wrong, ambiguous and
 cross-thread references; none may approve a request. Public replies must not
 contain private approval references.
 
