@@ -297,6 +297,11 @@ func buildUninstallPlan(home string, getenv func(string) string) (uninstallPlan,
 		if err := add(path); err != nil {
 			return p, err
 		}
+		for _, suffix := range []string{".d", ".wants", ".requires"} {
+			if err := add(path + suffix); err != nil {
+				return p, err
+			}
+		}
 	}
 	// A bind mount is not a symlink: RemoveAll would cross it. Refuse mounted
 	// descendants instead of turning product cleanup into another volume's purge.
@@ -534,6 +539,23 @@ func (p uninstallPlan) verifyNoOpenData() error {
 		}
 		fds, err := os.ReadDir(filepath.Join(root, "fd"))
 		if os.IsNotExist(err) || (err != nil && uninstallProcessExited(root)) {
+			continue
+		}
+		if errors.Is(err, os.ErrPermission) {
+			// systemd --user, ssh-agent and other nondumpable OS processes hide
+			// their descriptors even from their owner. They are not our workers.
+			// An inaccessible process naming an owned path remains a blocker.
+			cmd, readErr := os.ReadFile(filepath.Join(root, "cmdline"))
+			if readErr != nil {
+				return fmt.Errorf("cannot identify protected process %d: %w", pid, readErr)
+			}
+			for _, arg := range strings.Split(string(cmd), "\x00") {
+				for _, path := range append(append([]string{}, p.paths...), p.processRoots...) {
+					if insideUninstallRoot(arg, path) {
+						return fmt.Errorf("cannot verify protected product process %d; no data was deleted", pid)
+					}
+				}
+			}
 			continue
 		}
 		if err != nil {
