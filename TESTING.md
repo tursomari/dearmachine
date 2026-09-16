@@ -32,6 +32,18 @@ through the umbrella testing guide; it is not duplicated here.
 
 ## Automated Go suites
 
+### Confirmed native uninstall
+
+`cmd/dearmachine/uninstall_test.go` covers explicit terminal confirmation,
+cancellation without mutation, refusal of confirmation bypasses, unsafe roots,
+busy acquisition and independent Machtiani preservation. Service tests use a
+fake runner to prove disable/stop ordering and refusal of unconfirmed shutdown;
+they do not claim live systemd coverage. These tests belong to `go test ./...`.
+The umbrella `tests/uninstall/run.py` gate supplies real candidate runtimes in
+an offline disposable container and proves process shutdown, binary self-removal,
+private-data deletion and preservation before container teardown. Its detailed
+contract is in the umbrella `tests/uninstall/README.md`.
+
 The default suite uses local HTTP fakes, a subprocess agent fixture, and
 temporary SQLite databases. It is credential-free and does not contact live
 mail or model providers.

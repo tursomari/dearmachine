@@ -291,6 +291,22 @@ func parseConfig(args []string, output io.Writer) (config, error) {
 }
 
 func run(args []string, getenv func(string) string, deps dependencies) error {
+	wantsHelp := false
+	for _, arg := range args {
+		wantsHelp = wantsHelp || arg == "--help" || arg == "-h"
+	}
+	if !wantsHelp && deps.userHomeDir != nil && len(args) > 0 && (args[0] == "up" || args[0] == "restart" || args[0] == "_supervise" || args[0] == "systemd" || args[0] == "persistence") {
+		home, err := deps.userHomeDir()
+		if err != nil {
+			return err
+		}
+		if err := refuseDuringUninstall(home); err != nil {
+			return err
+		}
+	}
+	if len(args) > 0 && args[0] == "uninstall" {
+		return runUninstall(args[1:], getenv, deps)
+	}
 	if len(args) > 0 && args[0] == "guest" {
 		return runGuest(args[1:], deps)
 	}
@@ -341,6 +357,7 @@ func globalHelp(output io.Writer) error {
 	_, err := fmt.Fprintln(output, `Usage: dearmachine <command> [options]
 
 Commands:
+  uninstall     permanently remove software and private data after terminal confirmation
   update [--check | --recover] [--json] check or update the coordinated Nix installation
   up            create pairs or start registered pairs
   down          stop the background client and cancel retries
