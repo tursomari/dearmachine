@@ -642,8 +642,11 @@ func runUninstall(args []string, getenv func(string) string, deps dependencies) 
 		if err != nil {
 			return fmt.Errorf("another uninstall may be active; inspect %s: %w", marker, err)
 		}
-		file.Close()
 		defer os.Remove(marker)
+		_, writeErr := fmt.Fprintln(file, os.Getpid())
+		if err := errors.Join(writeErr, file.Close()); err != nil {
+			return err
+		}
 	}
 	var locks []string
 	defer func() {

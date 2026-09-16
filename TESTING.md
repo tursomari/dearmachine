@@ -42,7 +42,9 @@ they do not claim live systemd coverage. These tests belong to `go test ./...`.
 The umbrella `tests/uninstall/run.py` gate supplies real candidate runtimes in
 an offline disposable container and proves process shutdown, binary self-removal,
 private-data deletion and preservation before container teardown. Its detailed
-contract is in the umbrella `tests/uninstall/README.md`.
+contract is in the umbrella `tests/uninstall/README.md`. Its separate `--systemd`
+variant proves real service shutdown and unit/drop-in removal with a
+container-local user manager, preserving independent services and lingering.
 
 The default suite uses local HTTP fakes, a subprocess agent fixture, and
 temporary SQLite databases. It is credential-free and does not contact live
