@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -205,7 +206,11 @@ func buildUninstallPlan(home string, getenv func(string) string) (uninstallPlan,
 			var receipt struct {
 				Binaries map[string]string `json:"binaries"`
 			}
-			b, err := os.ReadFile(filepath.Join(root, "releases", entry.Name(), "release.json"))
+			receiptPath := filepath.Join(root, "releases", entry.Name(), "release.json")
+			if err := validateUninstallPath(receiptPath); err != nil {
+				return p, err
+			}
+			b, err := os.ReadFile(receiptPath)
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -219,9 +224,10 @@ func buildUninstallPlan(home string, getenv func(string) string) (uninstallPlan,
 				if name != "dearmachine" && name != "machtiani-installer" {
 					continue
 				}
-				if strings.HasPrefix(binary, "/nix/store/") && filepath.Base(filepath.Dir(binary)) == "bin" {
-					p.processRoots = append(p.processRoots, filepath.Dir(filepath.Dir(binary)))
+				if !regexp.MustCompile(`^/nix/store/[a-z0-9]{32}-[^\s/]+/bin/` + name + `$`).MatchString(binary) {
+					return p, fmt.Errorf("invalid managed executable in %s", receiptPath)
 				}
+				p.processRoots = append(p.processRoots, filepath.Dir(filepath.Dir(binary)))
 			}
 		}
 	}

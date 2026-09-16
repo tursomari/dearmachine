@@ -139,3 +139,29 @@ func TestUninstallServiceShutdownMustBeConfirmed(t *testing.T) {
 		})
 	}
 }
+
+func TestUninstallRejectsUntrustedReleaseReceipts(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		home := t.TempDir()
+		receipt := filepath.Join(home, ".local/share/dearmachine/releases/fixture/release.json")
+		if err := os.MkdirAll(filepath.Dir(receipt), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if symlink {
+			outside := filepath.Join(t.TempDir(), "private")
+			if err := os.WriteFile(outside, []byte(`{}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, receipt); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err := os.WriteFile(receipt, []byte(`{"binaries":{"dearmachine":"/nix/store/../../usr/bin/dearmachine"}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := buildUninstallPlan(home, func(string) string { return "" }); err == nil {
+			t.Fatal("untrusted process ownership receipt accepted")
+		}
+	}
+}
