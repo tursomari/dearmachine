@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,8 @@ type OpenMailTransport struct {
 	resolvedInboxID string
 	resolvedAddress string
 	authLookupTXT   func(context.Context, string) ([]string, error)
+	authMu          sync.Mutex
+	authenticated   map[string]openMailAuthenticatedMessage
 }
 
 type openMailTransportConfig struct {
@@ -194,11 +197,15 @@ type openMailAttachment struct {
 }
 
 type openMailMessage struct {
-	InboxID      string               `json:"inboxId"`
-	RFCMessageID string               `json:"rfcMessageId"`
-	InReplyTo    string               `json:"inReplyTo"`
-	References   []string             `json:"references"`
-	Raw          json.RawMessage      `json:"raw"`
+	InboxID      string   `json:"inboxId"`
+	RFCMessageID string   `json:"rfcMessageId"`
+	InReplyTo    string   `json:"inReplyTo"`
+	References   []string `json:"references"`
+	// RawURL is only a presence signal that GET /v1/messages/{id}/raw serves
+	// this message's exact received bytes, before OpenMail's own MIME
+	// parsing. Its value is provider-controlled and is never used to build a
+	// request; see fetchOpenMailRawMessage.
+	RawURL       string               `json:"rawUrl"`
 	ID           string               `json:"id"`
 	ThreadID     string               `json:"threadId"`
 	Direction    string               `json:"direction"`
@@ -590,9 +597,25 @@ func (transport *OpenMailTransport) FetchAttachment(
 	if err != nil {
 		return nil, err
 	}
+	transport.authMu.Lock()
+	verified := transport.authenticated[messageID]
+	attachment, authenticated := verified.attachments[filename]
+	transport.authMu.Unlock()
+	// Never fall back to provider metadata when authentication has not run
+	// (including after restart or cache eviction). The router authenticates
+	// messages again before exposing them for attachment staging.
+	if !authenticated {
+		return nil, ErrMessageUnauthenticated
+	}
+	if attachment.size > maxBytes {
+		return nil, ErrAttachmentTooLarge
+	}
 	message, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return nil, err
+	}
+	if messageFingerprint(transport.normalize(message, false)) != verified.fingerprint {
+		return nil, ErrMessageUnauthenticated
 	}
 	found := false
 	for _, attachment := range message.Attachments {
@@ -647,12 +670,17 @@ func (transport *OpenMailTransport) FetchAttachment(
 	if response.ContentLength > maxBytes {
 		return nil, fmt.Errorf("download OpenMail attachment %s: %w", attachmentID, ErrAttachmentTooLarge)
 	}
-	contents, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
+	// The authenticated MIME size also bounds reads when callers supply a
+	// much larger limit (or the largest possible int64).
+	contents, err := io.ReadAll(io.LimitReader(response.Body, attachment.size+1))
 	if err != nil {
 		return nil, fmt.Errorf("read OpenMail attachment %s: %w", attachmentID, err)
 	}
 	if int64(len(contents)) > maxBytes {
 		return nil, fmt.Errorf("download OpenMail attachment %s: %w", attachmentID, ErrAttachmentTooLarge)
+	}
+	if int64(len(contents)) != attachment.size || sha256.Sum256(contents) != attachment.digest {
+		return nil, ErrMessageUnauthenticated
 	}
 	return contents, nil
 }

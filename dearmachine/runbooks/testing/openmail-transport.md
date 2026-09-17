@@ -150,11 +150,34 @@ and PID file.
 
 ## Sender evidence and MIME coverage
 
-The production adapter verifies only unencoded single-part plain text. Use
-UTF-8 or US-ASCII with absent, `7bit`, or `8bit` Content-Transfer-Encoding for
-positive authentication cases. HTML, multipart, attachments and encoded text
-are negative cases: they must be rejected, never authorized by a provider
-verdict. Signed parent and References headers must survive plain-text replies.
+The production adapter authenticates a message by fetching its complete raw
+MIME and verifying its DKIM signature before parsing it, but only once the
+polled message reports a `rawUrl`. That value is provider-controlled and is
+never used to build the fetch: it is only a presence signal that raw evidence
+exists. The request path is always the deterministic `GET
+/v1/messages/{id}/raw` built from the configured API base URL and the
+message's own opaque ID, so a compromised or malformed `rawUrl` can never
+redirect the authenticated request to another host. Only after the signature
+check passes does the adapter parse the body and any multipart attachments; a
+message without a `rawUrl`, a failed fetch, a malformed MIME structure, an
+unsupported Content-Transfer-Encoding, or a failed or unsupported signature is
+rejected, never authorized by a provider verdict. Plain text, HTML, multipart
+and attachments are all positive cases once signed; the parsed body and
+attachments must also match what the provider's JSON listing reported, or the
+message is rejected. Decoded text and HTML comparisons normalize CRLF to LF
+only after DKIM verifies the original raw bytes. All content whitespace,
+including every terminal newline, must match; an added or missing final newline
+is rejected. Signed parent and References headers must survive replies of every
+supported shape.
+
+After authentication, the transport keeps the message fingerprint and the size
+and SHA-256 digest of each decoded, signed attachment. Every attachment download
+must match that verified size and digest before any bytes are returned to the
+caller. Provider metadata alone never authorizes a download. Duplicate attachment
+filenames are rejected because the download endpoint addresses parts by filename.
+The in-memory evidence cache is bounded; after restart or eviction, a message
+must be authenticated again before downloading its attachments. The router
+authenticates inbound messages on polling and direct retrieval, including recovery.
 
 For a direct API diagnostic, send synthetic fixtures from an explicitly
 authorized external mailbox into a disposable OpenMail receiver. This avoids
@@ -164,11 +187,19 @@ Match the received fixture by its unique subject and verified sender; a sending
 provider may replace the submitted Message-ID. Record the received
 `rfcMessageId`, the distinct API `id`, and the original reply headers.
 
-Check the live `raw.message-headers` ordered header list with local DKIM
-verification, then alter body and recipient bytes and require failure. Run the
-actual adapter against privately retained API fixtures with DNS verification.
-Include forged From, unsigned CC/parent headers, absent evidence and wrong
-inbox IDs in credential-free tests. Test approval correlation using distinct
-Internet and provider IDs. Delete exact scoped rules with their `inboxId` query
-parameter before deleting the receiver, and verify account policy is unchanged.
-These diagnostics prove evidence handling, not a deployed agent round trip.
+Fetch the live raw MIME from `GET /v1/messages/{id}/raw` with local DKIM
+verification, then alter body, attachment and recipient bytes and require
+failure. Run the actual
+adapter against privately retained API fixtures with DNS verification.
+Also substitute same-length bytes at the attachment download endpoint while
+keeping the original signed MIME unchanged; the production download must fail
+without returning any bytes. Check truncated and extended downloads, missing
+authentication, duplicate filenames, and successful reauthentication after
+restart. Use synthetic binary payloads and derive all addresses and identifiers
+from the disposable inbox creation responses.
+Include forged From, unsigned CC/parent headers, absent `rawUrl`, a raw fetch
+that fails or times out, and wrong inbox IDs in credential-free tests. Test
+approval correlation using distinct Internet and provider IDs. Delete exact
+scoped rules with their `inboxId` query parameter before deleting the
+receiver, and verify account policy is unchanged. These diagnostics prove
+evidence handling, not a deployed agent round trip.
