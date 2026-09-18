@@ -8,7 +8,12 @@ import (
 
 func privateTempDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	// Keep room for the socket filename under macOS's shorter path limit.
+	dir, err := os.MkdirTemp("", "dm-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

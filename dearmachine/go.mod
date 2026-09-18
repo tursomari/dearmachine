@@ -5,6 +5,7 @@ go 1.23.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/agentmail-to/agentmail-go v0.16.0
+	github.com/creack/pty v1.1.24
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-msgauth v0.7.0
 	github.com/mattn/go-isatty v0.0.20

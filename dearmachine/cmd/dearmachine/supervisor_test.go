@@ -22,11 +22,7 @@ import (
 func supervisedDeps(t *testing.T) (dependencies, string) {
 	t.Helper()
 	deps := testDependencies(t, &fakeApplication{})
-	home, err := os.MkdirTemp("", "dm-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
+	home := socketTestHome(t)
 	deps.userHomeDir = func() (string, error) { return home, nil }
 	makeUpTestPair(t, deps, "supervised")
 	root := filepath.Join(home, ".dearmachine")

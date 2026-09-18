@@ -232,7 +232,7 @@ func TestSystemdStatusExplainsUnknownWithoutChangingConsent(t *testing.T) {
 }
 
 func TestSystemdStartUsesOneNativeOwner(t *testing.T) {
-	home := t.TempDir()
+	home := socketTestHome(t)
 	root := filepath.Join(home, ".dearmachine")
 	os.MkdirAll(root, 0700)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -298,7 +298,7 @@ func TestSystemdDoesNotAdoptForeignSupervisor(t *testing.T) {
 }
 
 func TestSystemdStartupRaceDoesNotAdoptForeignOwner(t *testing.T) {
-	home := t.TempDir()
+	home := socketTestHome(t)
 	root := filepath.Join(home, ".dearmachine")
 	os.MkdirAll(root, 0700)
 	ctx, cancel := context.WithCancel(context.Background())

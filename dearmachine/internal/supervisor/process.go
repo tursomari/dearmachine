@@ -111,8 +111,8 @@ func spawnInDirectory(argv []string, log *os.File, directory string) (*childProc
 	cmd.Dir = directory
 	cmd.Stdout, cmd.Stderr = log, log
 	// A private process group lets shutdown reach work owned by this child.
-	// Linux also kills the direct child if its supervisor dies unexpectedly.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	// Platform-specific attributes preserve Linux parent-death handling.
+	cmd.SysProcAttr = childProcessAttributes()
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

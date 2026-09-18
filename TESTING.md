@@ -30,6 +30,28 @@ Use the narrowest applicable protocol from the catalogue below. Product-wide
 installer verification belongs to the Machtiani Installer QSE and is selected
 through the umbrella testing guide; it is not duplicated here.
 
+## macOS portability checks
+
+On a Mac, run `nix flake check` and the ordinary Go suite above. The concierge
+PTY tests use the same assertions on Linux and macOS. Native uninstall remains
+Linux-only, and macOS background login/reboot operation is not implemented.
+Darwin process groups support normal supervised shutdown; unlike Linux,
+abrupt supervisor death does not automatically kill its direct child.
+
+A Linux host can compile both Darwin architectures with a macOS-targeting C
+compiler and SDK. Set `MACOS_CC_AMD64` and `MACOS_CC_ARM64` to the corresponding
+compiler commands, then run:
+
+```console
+tests/darwin-cross-compile.sh /absolute/path/to/disposable-artifacts
+```
+
+An optional second argument selects `amd64` or `arm64`. This builds the actual
+SQLite-enabled commands and all test binaries. It does not execute them, verify
+Nix packaging on a Mac, or establish installation support. Keep generated
+artifacts outside the repository. Execute the binaries in a disposable macOS
+guest with the matching source/test fixtures and ordinary-user permissions.
+
 ## Automated Go suites
 
 ### Confirmed native uninstall
