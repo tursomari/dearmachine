@@ -126,6 +126,13 @@ func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
 
 	wantCalls := []string{
 		"git init",
+		"git config --local user.name machtiani",
+		"git config --local user.email ",
+		"git config --local author.name machtiani",
+		"git config --local author.email ",
+		"git config --local committer.name machtiani",
+		"git config --local committer.email ",
+		"git config --local commit.gpgSign false",
 		"git lfs install --local",
 		"git add --all",
 		"git commit -m " + skeletonCommitMessage,

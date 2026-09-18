@@ -73,7 +73,10 @@ The suite is organized by responsibility:
   subprocess behavior, persistence, recovery, authorization, and message
   normalization.
 - `internal/entrypoint` covers the two-stage seed boundary and repository
-  preservation.
+  preservation. Real-Git tests verify the preset workspace identity with an
+  empty email, personal global defaults and signing enabled, interrupted setup,
+  subsequent commits, strict Git object validation, and unchanged global and
+  existing-repository settings. Model work and Git LFS are fixtures in this test.
 - `internal/synctrigger` covers maintenance eligibility, fork/run/delete/sync
   ordering, checkpoints, and retries.
 

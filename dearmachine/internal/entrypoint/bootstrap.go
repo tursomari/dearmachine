@@ -136,6 +136,9 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		}
 		progress(options, "Repository initialized")
 	}
+	if err := configureWorkspaceGit(ctx, runCommand, repoPath); err != nil {
+		return Result{}, err
+	}
 	if err := installLocalExcludes(repoPath); err != nil {
 		return Result{}, err
 	}
@@ -472,6 +475,23 @@ func installSeed(repoPath, phase string) error {
 		}
 		return nil
 	})
+}
+
+// configureWorkspaceGit applies only to a new repository or our resumable
+// bootstrap. Existing repositories return before this point. Explicit empty
+// email fields prevent Git from inheriting or guessing the user's address.
+func configureWorkspaceGit(ctx context.Context, runner CommandRunner, repoPath string) error {
+	for _, setting := range [][2]string{
+		{"user.name", "machtiani"}, {"user.email", ""},
+		{"author.name", "machtiani"}, {"author.email", ""},
+		{"committer.name", "machtiani"}, {"committer.email", ""},
+		{"commit.gpgSign", "false"},
+	} {
+		if _, err := run(ctx, runner, repoPath, "git", "config", "--local", setting[0], setting[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func commitAll(ctx context.Context, runner CommandRunner, repoPath, message string) error {
