@@ -261,7 +261,7 @@ func TestLaunchDirectoryFollowsNativeUp(t *testing.T) {
 }
 
 func TestDefaultSocketPath(t *testing.T) {
-	home := t.TempDir()
+	home := privateTempDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	got, err := DefaultSocketPath(os.UserHomeDir)
@@ -280,7 +280,7 @@ func TestDefaultSocketPath(t *testing.T) {
 }
 
 func TestTSShapedControlRequests(t *testing.T) {
-	home := t.TempDir()
+	home := privateTempDir(t)
 	t.Setenv("HOME", home)
 	root := serveTest(t, Config{StateDir: filepath.Join(home, ".dearmachine"), Command: []string{testExecutable(t, "sleep"), "60"}})
 	awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "running" })

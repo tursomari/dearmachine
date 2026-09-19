@@ -16,7 +16,8 @@
       packageSet = system:
         let
           pkgs = import nixpkgs { inherit system; };
-          codexPkgs = import nixpkgs-codex { inherit system; };
+          # Unstable no longer evaluates on Intel macOS.
+          codexPkgs = import (if system == "x86_64-darwin" then nixpkgs else nixpkgs-codex) { inherit system; };
           lib = pkgs.lib;
           patchedGo = pkgs.go.overrideAttrs (_: {
             version = "1.26.5";

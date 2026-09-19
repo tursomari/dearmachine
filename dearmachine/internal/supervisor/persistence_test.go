@@ -8,7 +8,7 @@ import (
 )
 
 func TestSocketReportsObservedPersistence(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "state")
+	root := filepath.Join(privateTempDir(t), "state")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
