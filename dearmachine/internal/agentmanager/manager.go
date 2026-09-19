@@ -832,8 +832,22 @@ func (m *Manager) writeMeta(meta Meta) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(m.TicketDir(meta.TicketID), "meta.json"), append(content, '\n'), 0o600); err != nil {
+	// Status readers and the supervisor can run in separate processes. Publish a
+	// complete private file so cancellation never exposes truncated JSON.
+	temporary, err := os.CreateTemp(m.TicketDir(meta.TicketID), ".meta-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create ticket metadata: %w", err)
+	}
+	defer os.Remove(temporary.Name())
+	if _, err := temporary.Write(append(content, '\n')); err != nil {
+		_ = temporary.Close()
 		return fmt.Errorf("write ticket metadata: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close ticket metadata: %w", err)
+	}
+	if err := os.Rename(temporary.Name(), filepath.Join(m.TicketDir(meta.TicketID), "meta.json")); err != nil {
+		return fmt.Errorf("publish ticket metadata: %w", err)
 	}
 	return nil
 }
