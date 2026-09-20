@@ -307,7 +307,8 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 			}
 		}
 	}
-	if !wantsHelp && deps.userHomeDir != nil && len(args) > 0 && (args[0] == "up" || args[0] == "restart" || args[0] == "_supervise" || args[0] == "systemd" || args[0] == "launchd" || args[0] == "persistence") {
+	finishesWindowsUninstall := runtime.GOOS == "windows" && len(args) == 2 && args[0] == "persistence" && args[1] == "off"
+	if !wantsHelp && !finishesWindowsUninstall && deps.userHomeDir != nil && len(args) > 0 && (args[0] == "up" || args[0] == "restart" || args[0] == "_supervise" || args[0] == "systemd" || args[0] == "launchd" || args[0] == "persistence") {
 		home, err := deps.userHomeDir()
 		if err != nil {
 			return err
