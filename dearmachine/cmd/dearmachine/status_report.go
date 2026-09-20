@@ -20,6 +20,9 @@ type startupObservation struct {
 }
 
 func (m serviceManager) observeStartup() startupObservation {
+	if m.platform == "darwin" {
+		return m.observeLaunchd()
+	}
 	o := startupObservation{login: "cannot verify", reboot: "cannot verify", unitState: "not verified", linger: "not inspected"}
 	state, err := m.run("systemctl", "--user", "show", conciergeUnit, "--property=UnitFileState", "--value")
 	if err != nil {
@@ -140,6 +143,10 @@ func (m serviceManager) writeConsentDetails(w io.Writer) error {
 	consent, err := m.load()
 	if err != nil {
 		_, err = fmt.Fprintln(w, "Saved permission: cannot read consent record (does not determine observed startup state)")
+		return err
+	}
+	if m.platform == "darwin" {
+		_, err = fmt.Fprintf(w, "Saved permission (not observed state): launchd service use=%t; startup at login=%t\n", consent.UseLaunchd, consent.Persistence)
 		return err
 	}
 	_, err = fmt.Fprintf(w, "Saved permission (not observed state): service use=%t; reboot/linger=%t\n", consent.UseSystemd, consent.Persistence)

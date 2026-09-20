@@ -295,7 +295,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	for _, arg := range args {
 		wantsHelp = wantsHelp || arg == "--help" || arg == "-h"
 	}
-	if !wantsHelp && deps.userHomeDir != nil && len(args) > 0 && (args[0] == "up" || args[0] == "restart" || args[0] == "_supervise" || args[0] == "systemd" || args[0] == "persistence") {
+	if !wantsHelp && deps.userHomeDir != nil && len(args) > 0 && (args[0] == "up" || args[0] == "restart" || args[0] == "_supervise" || args[0] == "systemd" || args[0] == "launchd" || args[0] == "persistence") {
 		home, err := deps.userHomeDir()
 		if err != nil {
 			return err
@@ -316,7 +316,7 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	if len(args) > 0 && args[0] == "_update-control" {
 		return runUpdateControl(args[1:], deps)
 	}
-	if len(args) > 0 && (args[0] == "systemd" || args[0] == "persistence") {
+	if len(args) > 0 && (args[0] == "systemd" || args[0] == "launchd" || args[0] == "persistence") {
 		return runSupervisionChoice(args[0], args[1:], deps)
 	}
 	if len(args) > 0 && args[0] == "_supervise" {
@@ -368,7 +368,8 @@ Commands:
   init          initialize the entry-point repository
   setup-agents  configure agent backends
   systemd on|off|status     explicitly choose service use (no reboot persistence)
-  persistence on|off|status separately approve reboot startup AND loginctl enable-linger`)
+  launchd on|off|status     choose macOS service use (no automatic login startup)
+  persistence on|off|status choose startup: login on macOS; reboot/linger on Linux`)
 	return err
 }
 

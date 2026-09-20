@@ -33,8 +33,26 @@ through the umbrella testing guide; it is not duplicated here.
 ## macOS portability checks
 
 On a Mac, run `nix flake check` and the ordinary Go suite above. The concierge
-PTY tests use the same assertions on Linux and macOS. Native uninstall remains
-Linux-only, and macOS background login/reboot operation is not implemented.
+PTY tests use the same assertions on Linux and macOS. Native uninstall remains Linux-only. macOS LaunchAgents support explicit
+service use and separately authorized startup at login, including after reboot;
+they do not provide before-login or after-logout operation.
+
+Run the native, credential-free service integration in an existing graphical
+Mac session with a freshly built candidate binary:
+
+```console
+python3 tests/macos/launchd-lifecycle.py --binary /absolute/path/to/dearmachine
+```
+
+It uses a private temporary home, a unique service label, the real launchd
+manager and native supervisor, and an offline child. It verifies start,
+singleton ownership, restart, explicit stop, reversible login configuration,
+loading the login plist, and exact cleanup. No provider, mailbox, real home,
+logout, reboot, or unrelated service is used. Loading the plist simulates a
+login boundary; it does not establish an actual logout/reboot or email result.
+The deterministic `cmd/dearmachine/launchd_test.go` cases cover consent,
+unsafe/unrelated files, preserved credentials, and conservative observations on
+Linux as well as macOS.
 Darwin process groups support normal supervised shutdown; unlike Linux,
 abrupt supervisor death does not automatically kill its direct child.
 

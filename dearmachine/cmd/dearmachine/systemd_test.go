@@ -6,6 +6,7 @@ import (
 	"github.com/dearmachine/dearmachine/internal/supervisor"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -172,6 +173,9 @@ func TestSocketPersistenceProbeDoesNotRequireMutationConsent(t *testing.T) {
 }
 
 func TestSystemdCLIWithMockExecutables(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux systemd CLI integration; launchd has a separate native gate")
+	}
 	deps := testDependencies(t, &fakeApplication{})
 	home, _ := deps.userHomeDir()
 	bin := filepath.Join(home, "bin")
@@ -196,6 +200,9 @@ func TestSystemdCLIWithMockExecutables(t *testing.T) {
 }
 
 func TestSystemdStatusExplainsUnknownWithoutChangingConsent(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux systemd CLI integration; launchd has a separate native gate")
+	}
 	for _, saved := range []bool{false, true} {
 		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
 			deps := testDependencies(t, &fakeApplication{})

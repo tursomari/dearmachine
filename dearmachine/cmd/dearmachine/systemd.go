@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,17 +23,28 @@ const unitMarker = "# Managed by dearmachine concierge v1\n"
 type supervisionConsent struct {
 	Version     int  `json:"version"`
 	UseSystemd  bool `json:"useSystemd"`
+	UseLaunchd  bool `json:"useLaunchd,omitempty"`
 	Persistence bool `json:"enablePersistence"`
 }
 type serviceManager struct {
 	home, executable, configDir string
+	platform                    string
 	run                         func(string, ...string) (string, error)
 }
 
 func nativeServiceManager(home string) serviceManager {
 	executable, _ := os.Executable()
-	return serviceManager{home: home, executable: executable, configDir: os.Getenv("XDG_CONFIG_HOME"), run: func(name string, args ...string) (string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	if runtime.GOOS == "darwin" {
+		if canonical, err := filepath.EvalSymlinks(home); err == nil {
+			home = canonical
+		}
+	}
+	return serviceManager{home: home, executable: executable, platform: runtime.GOOS, configDir: os.Getenv("XDG_CONFIG_HOME"), run: func(name string, args ...string) (string, error) {
+		timeout := time.Second
+		if name == "/bin/launchctl" {
+			timeout = 10 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		output, err := exec.CommandContext(ctx, name, args...).Output()
 		return strings.TrimSpace(string(output)), err
@@ -63,7 +75,7 @@ func (m serviceManager) load() (supervisionConsent, error) {
 	if err := decoder.Decode(&consent); err != nil {
 		return consent, err
 	}
-	if consent.Version != 1 || consent.Persistence && !consent.UseSystemd {
+	if consent.Version != 1 || consent.UseSystemd && consent.UseLaunchd || consent.Persistence && !consent.UseSystemd && !consent.UseLaunchd {
 		return consent, errors.New("invalid supervision consent")
 	}
 	return consent, nil
@@ -111,6 +123,9 @@ func (m serviceManager) usable() bool {
 
 // Capability is probed at runtime only after an explicit saved choice.
 func selectSupervision(m serviceManager) (string, error) {
+	if m.platform == "darwin" {
+		return m.selectLaunchd()
+	}
 	consent, err := m.load()
 	if err != nil {
 		return "", err
@@ -137,6 +152,12 @@ func (m serviceManager) unitPath() string {
 	return filepath.Join(config, "systemd", "user", conciergeUnit)
 }
 func (m serviceManager) configure(kind, choice string) error {
+	if m.platform == "darwin" {
+		return m.configureLaunchd(kind, choice)
+	}
+	if kind == "launchd" {
+		return errors.New("launchd is available only on macOS")
+	}
 	if (kind != "systemd" && kind != "persistence") || (choice != "on" && choice != "off") {
 		return errors.New("use dearmachine systemd on|off|status or dearmachine persistence on|off|status")
 	}
@@ -227,6 +248,16 @@ func (m serviceManager) configure(kind, choice string) error {
 	return nil
 }
 func (m serviceManager) persistence() string {
+	if m.platform == "darwin" {
+		switch m.observeLaunchd().login {
+		case "enabled":
+			return "enabled"
+		case "not configured":
+			return "disabled"
+		default:
+			return "unknown"
+		}
+	}
 	// Legacy socket field: retain its conservative three-state contract, but
 	// never gate read-only observation on permission to mutate the service.
 	enabled, err := m.run("systemctl", "--user", "show", conciergeUnit, "--property=UnitFileState", "--value")
@@ -254,6 +285,12 @@ func runSupervisionChoice(kind string, args []string, deps dependencies) error {
 		return err
 	}
 	m := nativeServiceManager(home)
+	if m.platform == "darwin" {
+		return m.runLaunchdChoice(kind, args[0], outputOrDiscard(deps.stdout))
+	}
+	if kind == "launchd" {
+		return errors.New("launchd is available only on macOS")
+	}
 	if args[0] == "status" {
 		output := outputOrDiscard(deps.stdout)
 		observation := m.observeStartup()
@@ -282,6 +319,9 @@ func startSelected(executable string, args []string, root string) (int, error) {
 }
 
 func startWithServiceManager(m serviceManager, args []string, root string) (int, error) {
+	if m.platform == "darwin" {
+		return m.startLaunchd(args, root)
+	}
 	owner, err := selectSupervision(m)
 	if err != nil {
 		return 0, err
