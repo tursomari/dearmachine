@@ -455,7 +455,7 @@ func (m *Manager) launchSupervisor(id string) error {
 	command.Stdin = nil
 	command.Stdout = nil
 	command.Stderr = nil
-	command.SysProcAttr = hostos.Detached()
+	command.SysProcAttr = hostos.DetachedWorker()
 	return command.Start()
 }
 

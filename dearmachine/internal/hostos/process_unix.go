@@ -15,3 +15,6 @@ func Exec(path string, args, env []string) error { return syscall.Exec(path, arg
 func NotifyContext(ctx context.Context, s ...os.Signal) (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(ctx, s...)
 }
+
+// DetachedWorker uses the same session ownership as other Unix detached work.
+func DetachedWorker() *syscall.SysProcAttr { return Detached() }

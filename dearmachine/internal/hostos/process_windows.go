@@ -14,6 +14,19 @@ import (
 func Detached() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP}
 }
+
+// DetachedWorker leaves an explicitly breakaway-enabled temporary shell job.
+// Windows retains it in the first enclosing job that forbids breakaway, so a
+// client/task shutdown still cancels it. Ordinary SSH jobs remain unchanged.
+func DetachedWorker() *syscall.SysProcAttr {
+	attr := Detached()
+	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+	if err := windows.QueryInformationJobObject(0, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err == nil && limits.BasicLimitInformation.LimitFlags&windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0 {
+		attr.CreationFlags |= windows.CREATE_BREAKAWAY_FROM_JOB
+	}
+	return attr
+}
+
 func Exec(path string, args, env []string) error {
 	cmd := exec.Command(path, args[1:]...)
 	cmd.Env = env
