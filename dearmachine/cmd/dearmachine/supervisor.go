@@ -37,7 +37,7 @@ func startSupervised(executable string, args []string, root string) (int, error)
 		if err := checkOtherOwner(root, s); err != nil {
 			return 0, err
 		}
-		s, err := supervisor.RequestUpInDirectory(root, argv, directory, 5*time.Second)
+		s, err := supervisor.RequestUpInDirectory(root, argv, directory, daemonStartupTimeout+5*time.Second)
 		return s.DaemonPID, err
 	}
 	available := supervisor.CheckAvailable(root)
@@ -58,7 +58,7 @@ func startSupervised(executable string, args []string, root string) (int, error)
 			if err := checkOtherOwner(root, s); err != nil {
 				return 0, err
 			}
-			s, err := supervisor.RequestUpInDirectory(root, argv, directory, 5*time.Second)
+			s, err := supervisor.RequestUpInDirectory(root, argv, directory, daemonStartupTimeout+5*time.Second)
 			return s.DaemonPID, err
 		}
 		time.Sleep(25 * time.Millisecond)
@@ -177,7 +177,7 @@ func runRestart(args []string, getenv func(string) string, deps dependencies) er
 		}
 		return runUp(nil, getenv, deps)
 	}
-	s, err := supervisor.Request(root, "restart", 5*time.Second)
+	s, err := supervisor.Request(root, "restart", daemonStartupTimeout+5*time.Second)
 	if err != nil {
 		return err
 	}

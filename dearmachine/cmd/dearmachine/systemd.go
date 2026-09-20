@@ -349,7 +349,7 @@ func startWithServiceManager(m serviceManager, args []string, root string) (int,
 		if queryErr != nil || mainPID != strconv.Itoa(s.SupervisorPID) {
 			return 0, errors.New("resident supervisor is not the consented systemd owner; inspect existing supervision before switching")
 		}
-		s, err = supervisor.Request(root, "up", 5*time.Second)
+		s, err = supervisor.Request(root, "up", daemonStartupTimeout+5*time.Second)
 		return s.DaemonPID, err
 	}
 	if err := supervisor.CheckAvailable(root); err != nil {

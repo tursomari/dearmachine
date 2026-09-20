@@ -325,3 +325,16 @@ func TestShutdownReleasesSupervisorForUpdate(t *testing.T) {
 	}
 	t.Fatal("shutdown retained supervisor ownership")
 }
+
+func TestControlWaitsForSlowButValidStartup(t *testing.T) {
+	readyAt := time.Now().Add(4200 * time.Millisecond)
+	root := serveTest(t, Config{
+		Command:        []string{testExecutable(t, "sleep"), "60"},
+		StartupTimeout: 6 * time.Second,
+		Ready:          func(int) bool { return !time.Now().Before(readyAt) },
+	})
+	status, err := Request(root, "up", 8*time.Second)
+	if err != nil || status.Daemon != "running" {
+		t.Fatalf("valid startup exceeded the control deadline: %+v %v", status, err)
+	}
+}

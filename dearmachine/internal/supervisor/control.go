@@ -150,7 +150,10 @@ func Run(ctx context.Context, cfg Config) error {
 				return
 			}
 			handlers.Add(1)
-			go func() { defer handlers.Done(); handle(serving, conn, requests) }()
+			go func() {
+				defer handlers.Done()
+				handle(serving, conn, requests, cfg.StartupTimeout+cfg.StopTimeout+time.Second)
+			}()
 		}
 	}()
 	state := Status{Installation: "installed", Supervisor: "stopped", Daemon: "stopped", Persistence: "unknown", SupervisorPID: os.Getpid()}
@@ -368,7 +371,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 }
 
-func handle(ctx context.Context, conn net.Conn, requests chan<- operation) {
+func handle(ctx context.Context, conn net.Conn, requests chan<- operation, startupWait time.Duration) {
 	defer conn.Close()
 	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopClose()
@@ -380,7 +383,12 @@ func handle(ctx context.Context, conn net.Conn, requests chan<- operation) {
 	if err == nil && json.Unmarshal(line, &req) == nil && req.Version == 1 && validCommand(req.Command) && (len(req.Argv) == 0 || (req.Command == "up" && filepath.IsAbs(req.Argv[0]))) && (req.Directory == "" || (req.Command == "up" && filepath.IsAbs(req.Directory))) {
 		op := operation{command: req.Command, argv: req.Argv, directory: req.Directory, reply: make(chan Response, 1), delivered: make(chan struct{})}
 		defer close(op.delivered)
-		timer := time.NewTimer(3500 * time.Millisecond)
+		wait := 3500 * time.Millisecond
+		if req.Command == "up" || req.Command == "restart" {
+			wait = max(wait, startupWait)
+		}
+		conn.SetDeadline(time.Now().Add(wait + 500*time.Millisecond))
+		timer := time.NewTimer(wait)
 		defer timer.Stop()
 		select {
 		case requests <- op:

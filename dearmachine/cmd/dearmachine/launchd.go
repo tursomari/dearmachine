@@ -541,7 +541,7 @@ func (m serviceManager) startLaunchd(args []string, root string) (int, error) {
 		if !m.launchdOwner(s.SupervisorPID) {
 			return 0, errors.New("resident supervisor is not the consented launchd owner; stop it before switching")
 		}
-		s, err = supervisor.Request(root, "up", 5*time.Second)
+		s, err = supervisor.Request(root, "up", daemonStartupTimeout+5*time.Second)
 		return s.DaemonPID, err
 	}
 	if err := supervisor.CheckAvailable(root); err != nil {
