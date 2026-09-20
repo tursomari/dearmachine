@@ -41,7 +41,7 @@ func nativeServiceManager(home string) serviceManager {
 	}
 	return serviceManager{home: home, executable: executable, platform: runtime.GOOS, configDir: os.Getenv("XDG_CONFIG_HOME"), run: func(name string, args ...string) (string, error) {
 		timeout := time.Second
-		if name == "/bin/launchctl" {
+		if name == "/bin/launchctl" && len(args) > 0 && args[0] != "print" && args[0] != "print-disabled" {
 			timeout = 10 * time.Second
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -130,6 +130,9 @@ func selectSupervision(m serviceManager) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if consent.UseLaunchd {
+		return "", errors.New("macOS launchd consent cannot select supervision on this operating system")
+	}
 	if !consent.UseSystemd {
 		return "supervisor-lite", nil
 	}
@@ -177,6 +180,10 @@ func (m serviceManager) configure(kind, choice string) error {
 	if err != nil {
 		return err
 	}
+	if consent.UseLaunchd {
+		return errors.New("macOS launchd consent cannot configure systemd")
+	}
+
 	enabled := choice == "on"
 	if kind == "persistence" && !consent.UseSystemd {
 		return errors.New("first approve systemd separately with dearmachine systemd on; persistence on also authorizes loginctl enable-linger")

@@ -309,3 +309,21 @@ func TestLaunchdOffDoesNotRelyOnlyOnSavedConsent(t *testing.T) {
 		t.Fatal("removed ownership while login agent remained configured")
 	}
 }
+
+func TestLaunchdConsentCannotSelectSystemd(t *testing.T) {
+	m, _ := launchdFixture(t)
+	if err := m.configure("launchd", "on"); err != nil {
+		t.Fatal(err)
+	}
+	m.platform = "linux"
+	m.run = func(string, ...string) (string, error) {
+		t.Fatal("probed or mutated Linux manager with macOS consent")
+		return "", nil
+	}
+	if _, err := selectSupervision(m); err == nil {
+		t.Fatal("accepted foreign service consent")
+	}
+	if err := m.configure("systemd", "on"); err == nil {
+		t.Fatal("overwrote foreign service consent")
+	}
+}

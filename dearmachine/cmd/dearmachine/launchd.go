@@ -494,6 +494,10 @@ func (m serviceManager) runLaunchdChoice(kind, choice string, w io.Writer) error
 		return errors.New("systemd is not available on macOS; use dearmachine launchd on|off|status")
 	}
 	if choice == "status" {
+		_, capabilityErr := m.launchctl("print", m.launchdDomain())
+		if _, err := fmt.Fprintf(w, "macOS graphical login manager available: %t\n", capabilityErr == nil); err != nil {
+			return err
+		}
 		if err := writeStartupStatus(w, m.observeLaunchd()); err != nil {
 			return err
 		}
