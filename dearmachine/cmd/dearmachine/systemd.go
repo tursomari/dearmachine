@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 import (
@@ -5,13 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/supervisor"
@@ -61,14 +63,14 @@ func (m serviceManager) load() (supervisionConsent, error) {
 	if err != nil {
 		return consent, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+	if !info.Mode().IsRegular() || !hostos.Private(m.consentPath(), info, 0077) {
 		return consent, errors.New("supervision consent must be a private regular file")
 	}
-	fd, err := syscall.Open(m.consentPath(), syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	fd, err := hostos.Open(m.consentPath(), os.O_RDONLY, 0)
 	if err != nil {
 		return consent, err
 	}
-	file := os.NewFile(uintptr(fd), m.consentPath())
+	file := fd
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
@@ -88,8 +90,7 @@ func privateServiceDir(path string) error {
 	if err != nil {
 		return err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.IsDir() || !ok || stat.Uid != uint32(os.Getuid()) || info.Mode().Perm()&0022 != 0 {
+	if !info.IsDir() || !hostos.Owned(path, info) || info.Mode().Perm()&0022 != 0 {
 		return errors.New("unsafe service state directory")
 	}
 	return nil
@@ -168,12 +169,12 @@ func (m serviceManager) configure(kind, choice string) error {
 		return err
 	}
 	// Serialize saved choices and side effects, separately from the lifetime owner lock.
-	fd, err := syscall.Open(filepath.Join(m.root(), "supervision-consent.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	fd, err := hostos.Open(filepath.Join(m.root(), "supervision-consent.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
-	defer syscall.Close(fd)
-	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	defer fd.Close()
+	if err := hostos.Flock(int(fd.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 		return errors.New("another supervision choice is being applied")
 	}
 	consent, err := m.load()

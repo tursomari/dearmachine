@@ -297,3 +297,14 @@ recovery, content substitution and logging. `Participation.tla` and the six
 production Gobra contracts distinguish verified identity from a remembered owner
 risk exception. Use the guest verification runner above for this policy boundary;
 notification transport effects remain implementation/LSE evidence.
+
+## Native Windows development proof
+
+Cross-compile the `internal/hostos`, `internal/supervisor`, and CGO-enabled
+`internal/client` test binaries and run them in a disposable Windows guest as
+an ordinary user. The umbrella's `tests/windows-native/primitives.ps1` selects
+Windows ACL/locking, named-pipe and job lifecycle, pairing/SQLite, and guest
+authorization-store cases. `TestGuestStoreScopeAndNoHistoricalMigration` uses
+a filename with Unicode and URI punctuation to exercise SQLite URI escaping.
+The historical CLI package test suite still contains Unix-only test code; this
+proof does not claim full Windows Go test coverage.

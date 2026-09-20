@@ -6,7 +6,7 @@ import (
 )
 
 func TestGuestGrantReplayGenerationAndRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "authorization.db")
+	path := filepath.Join(t.TempDir(), "authorization Ω & #.db")
 	s, err := OpenGuestStore(path)
 	if err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"log"
 	"net/mail"
 	"os"
@@ -552,7 +553,7 @@ func (daemon *MultiDaemon) run(ctx context.Context, once bool) (runErr error) {
 }
 
 func removeOwnedDaemonFile(path string, pid int) error {
-	content, err := os.ReadFile(path)
+	content, err := readDaemonFile(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -589,7 +590,7 @@ func CreateDaemonLock(path string) (func() error, error) {
 			}
 			owner := strconv.Itoa(os.Getpid())
 			return func() error {
-				contents, err := os.ReadFile(path)
+				contents, err := readDaemonFile(path)
 				if os.IsNotExist(err) {
 					return nil
 				}
@@ -608,12 +609,12 @@ func CreateDaemonLock(path string) (func() error, error) {
 		if !os.IsExist(err) {
 			return nil, fmt.Errorf("create daemon lock: %w", err)
 		}
-		contents, readErr := os.ReadFile(path)
+		contents, readErr := readDaemonFile(path)
 		pid, parseErr := strconv.Atoi(strings.TrimSpace(string(contents)))
 		if readErr != nil || parseErr != nil || pid <= 0 {
 			return nil, fmt.Errorf("DearMachine daemon lock %s is invalid; inspect it before retrying", path)
 		}
-		signalErr := syscall.Kill(pid, 0)
+		signalErr := hostos.Signal(pid, 0)
 		if signalErr == nil || errors.Is(signalErr, syscall.EPERM) {
 			return nil, fmt.Errorf("DearMachine daemon PID %d is already running", pid)
 		}

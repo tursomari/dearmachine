@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"io"
 	"os"
 	"os/exec"
@@ -74,7 +75,7 @@ type CodexAdapter struct{}
 func (CodexAdapter) Name() string       { return "codex" }
 func (CodexAdapter) Executable() string { return "codex" }
 func (CodexAdapter) Prepare(ctx context.Context, cwd, writableDir string) (Launch, error) {
-	command := exec.CommandContext(
+	command := backendCommandContext(
 		ctx,
 		"codex",
 		"exec",
@@ -102,7 +103,7 @@ type CodexYoloAdapter struct{}
 func (CodexYoloAdapter) Name() string       { return "codex-yolo" }
 func (CodexYoloAdapter) Executable() string { return "codex" }
 func (CodexYoloAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
-	command := exec.CommandContext(
+	command := backendCommandContext(
 		ctx,
 		"codex",
 		"exec",
@@ -164,7 +165,7 @@ func (a ForgeAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error
 	if err != nil {
 		return Launch{}, fmt.Errorf("generate forge conversation id: %w", err)
 	}
-	command := exec.CommandContext(ctx, "forge", "--conversation-id", sessionID)
+	command := backendCommandContext(ctx, "forge", "--conversation-id", sessionID)
 	command.Dir = cwd
 	command.Env = append(os.Environ(),
 		"FORGE_UPDATES__FREQUENCY=never",
@@ -186,7 +187,7 @@ type OMPAdapter struct{}
 func (OMPAdapter) Name() string       { return "omp" }
 func (OMPAdapter) Executable() string { return "omp" }
 func (OMPAdapter) Prepare(ctx context.Context, cwd, _ string) (Launch, error) {
-	command := exec.CommandContext(
+	command := backendCommandContext(
 		ctx,
 		"omp",
 		"--print",
@@ -365,7 +366,7 @@ func (m *Manager) ResolveBackend(backend string) (ResolvedBackend, error) {
 	if err != nil {
 		return ResolvedBackend{}, err
 	}
-	path, err := exec.LookPath(adapter.Executable())
+	path, err := backendLookPath(adapter.Executable())
 	if err != nil {
 		return ResolvedBackend{}, fmt.Errorf("backend %q is unavailable: %w", backend, err)
 	}
@@ -454,7 +455,7 @@ func (m *Manager) launchSupervisor(id string) error {
 	command.Stdin = nil
 	command.Stdout = nil
 	command.Stderr = nil
-	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	command.SysProcAttr = hostos.Detached()
 	return command.Start()
 }
 
@@ -491,9 +492,10 @@ func (m *Manager) Supervise(ctx context.Context, id string) error {
 	if err != nil {
 		return errors.Join(err, m.fail(meta, "stderr_pipe_failed", nil, nil))
 	}
-	if err := command.Start(); err != nil {
+	if err := hostos.StartManaged(command); err != nil {
 		return errors.Join(err, m.fail(meta, "start_failed", nil, nil))
 	}
+	defer hostos.ReleaseManaged(command)
 	meta.PID = command.Process.Pid
 	meta.NativeSession = launch.NativeSession
 	meta.StartedAt = m.Now()
@@ -671,7 +673,7 @@ func (m *Manager) Cancel(id string) error {
 		return err
 	}
 	if meta.PID != 0 && processAlive(meta.PID) {
-		if err := syscall.Kill(meta.PID, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
+		if err := hostos.Signal(meta.PID, syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
 			return fmt.Errorf("cancel worker: %w", err)
 		}
 	}
@@ -749,10 +751,11 @@ func (m *Manager) BackendHealth(ctx context.Context, backend, cwd string) (Healt
 		result.Reason = "stderr-pipe"
 		return result, err
 	}
-	if err := command.Start(); err != nil {
+	if err := hostos.StartManaged(command); err != nil {
 		result.Reason = "launch-failed"
 		return result, err
 	}
+	defer hostos.ReleaseManaged(command)
 	stderrCapture := &tailWriter{limit: 64 * 1024}
 	stderrDone := make(chan struct{})
 	go func() {
@@ -890,33 +893,8 @@ func (m *Manager) failAfterExit(meta Meta, status, reason string, stderr []byte,
 	return m.finish(meta, status)
 }
 
-func processWasSignaled(err error) bool {
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return false
-	}
-	status, ok := exitErr.Sys().(syscall.WaitStatus)
-	return ok && status.Signaled()
-}
-
-func recordProcessFailure(meta *Meta, err error) {
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return
-	}
-	status, ok := exitErr.Sys().(syscall.WaitStatus)
-	if ok && status.Signaled() {
-		meta.Signal = status.Signal().String()
-		return
-	}
-	exitCode := exitErr.ExitCode()
-	if exitCode >= 0 {
-		meta.ExitCode = &exitCode
-	}
-}
-
 func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	return hostos.Signal(pid, 0) == nil
 }
 
 // loadCustomAdapters reads custom-backend definitions from the TOML

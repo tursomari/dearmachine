@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package supervisor owns a single foreground daemon independently of any UI.
 package supervisor
 

@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 // LaunchAgents belong to a logged-in user. They are deliberately not system

@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"os"
 	"sort"
-	"syscall"
 	"time"
 )
 
@@ -76,11 +76,11 @@ func privateFileLock(ctx context.Context, path string) (func(), error) {
 		return nil, err
 	}
 	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err = hostos.Flock(int(f.Fd()), hostos.LOCK_EX|hostos.LOCK_NB)
 		if err == nil {
-			return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
+			return func() { _ = hostos.Flock(int(f.Fd()), hostos.LOCK_UN); _ = f.Close() }, nil
 		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
+		if !errors.Is(err, hostos.ErrWouldBlock) {
 			f.Close()
 			return nil, err
 		}

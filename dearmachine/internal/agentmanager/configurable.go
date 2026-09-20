@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -45,7 +44,7 @@ func (c *ConfigurableAdapter) Prepare(ctx context.Context, cwd, writableDir stri
 	for i, arg := range c.args {
 		args[i] = strings.ReplaceAll(arg, "$WRITABLE_DIR", writableDir)
 	}
-	command := exec.CommandContext(ctx, c.executable, args...)
+	command := backendCommandContext(ctx, c.executable, args...)
 	command.Dir = cwd
 	if len(c.env) > 0 {
 		command.Env = append(os.Environ(), c.env...)

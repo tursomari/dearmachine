@@ -55,7 +55,16 @@ func OpenGuestStore(path string) (*GuestStore, error) {
 	if err != nil || closeErr != nil {
 		return nil, errors.Join(err, closeErr)
 	}
-	uri := url.URL{Scheme: "file", Path: path}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	uriPath := filepath.ToSlash(absolute)
+	// A Windows drive is a URL path, not a URI authority.
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	uri := url.URL{Scheme: "file", Path: uriPath}
 	db, err := sql.Open("sqlite3", uri.String()+"?_busy_timeout=10000&_journal_mode=WAL&_txlock=immediate")
 	if err != nil {
 		return nil, err

@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"io"
 	"net/mail"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -692,8 +692,7 @@ func loadCreateTransaction(path string) (createTransaction, bool, error) {
 	if err != nil {
 		return createTransaction{}, false, fmt.Errorf("inspect pair creation transaction: %w", err)
 	}
-	stat, owned := metadata.Sys().(*syscall.Stat_t)
-	if !metadata.Mode().IsRegular() || metadata.Mode()&os.ModeSymlink != 0 || metadata.Mode().Perm()&0o077 != 0 || !owned || stat.Uid != uint32(os.Getuid()) {
+	if !metadata.Mode().IsRegular() || metadata.Mode()&os.ModeSymlink != 0 || !hostos.Private(path, metadata, 0o077) {
 		return createTransaction{}, false, errors.New("pair creation transaction must be a private regular file owned by the current user")
 	}
 	data, err := os.ReadFile(path)
@@ -718,7 +717,7 @@ func saveCreateTransaction(path string, transaction createTransaction) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create pair creation state directory: %w", err)
 	}
-	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+	if err := hostos.Protect(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("secure pair creation state directory: %w", err)
 	}
 	temporary, err := os.CreateTemp(filepath.Dir(path), ".create-*.tmp")
@@ -727,7 +726,7 @@ func saveCreateTransaction(path string, transaction createTransaction) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := hostos.Protect(temporary.Name(), 0o600); err != nil {
 		temporary.Close()
 		return err
 	}

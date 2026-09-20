@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"os"
 	"os/exec"
 	"testing"
@@ -14,7 +15,7 @@ func privateTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	if err := os.Chmod(dir, 0o700); err != nil {
+	if err := hostos.Protect(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return dir

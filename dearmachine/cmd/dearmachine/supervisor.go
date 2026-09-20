@@ -5,8 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -76,7 +76,7 @@ func runSupervise(args []string, deps dependencies) error {
 	if *root == "" || flags.NArg() == 0 {
 		return errors.New("_supervise requires --state-dir and -- foreground-command [args]")
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := hostos.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	ready := func(pid int) bool {
 		expected := strconv.Itoa(pid)

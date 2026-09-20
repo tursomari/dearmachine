@@ -132,26 +132,11 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer log.Close()
-	path := SocketPath(cfg.StateDir)
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSocket == 0 {
-			return errors.New("control path is not a socket; inspect state before retrying")
-		}
-		// Only the flock owner may remove a stale endpoint.
-		if err := os.Remove(path); err != nil {
-			return err
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	listener, err := net.Listen("unix", path)
+	listener, err := listenControl(cfg.StateDir)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
-	if err := os.Chmod(path, 0600); err != nil {
-		return err
-	}
 	requests := make(chan operation)
 	serving, cancel := context.WithCancel(context.Background())
 	var handlers sync.WaitGroup
@@ -442,7 +427,7 @@ func sendRequest(root string, req request, timeout time.Duration) (Status, error
 		return Status{}, errors.New("invalid control request")
 	}
 	deadline := time.Now().Add(timeout)
-	conn, err := net.DialTimeout("unix", SocketPath(root), timeout)
+	conn, err := dialControl(root, timeout)
 	if err != nil {
 		return Status{}, fmt.Errorf("supervisor unreachable; inspect dearmachine status: %w", err)
 	}

@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,7 +35,7 @@ func daemonReadyPath(lockPath string) string {
 }
 
 func DaemonStatus(lockPath string) (int, bool, error) {
-	content, err := os.ReadFile(lockPath)
+	content, err := readDaemonFile(lockPath)
 	if os.IsNotExist(err) {
 		return 0, false, nil
 	}
@@ -45,7 +46,7 @@ func DaemonStatus(lockPath string) (int, bool, error) {
 	if err != nil || pid <= 0 {
 		return 0, false, fmt.Errorf("DearMachine daemon lock %s is invalid; inspect it before retrying", lockPath)
 	}
-	err = syscall.Kill(pid, 0)
+	err = hostos.Signal(pid, 0)
 	if err == nil || errors.Is(err, syscall.EPERM) {
 		return pid, true, nil
 	}
@@ -63,12 +64,12 @@ func WaitDaemonReady(lockPath string, expectedPID int, timeout time.Duration) er
 			if pid != expectedPID {
 				return fmt.Errorf("daemon lock is owned by PID %d, not started PID %d", pid, expectedPID)
 			}
-			ready, readErr := os.ReadFile(daemonReadyPath(lockPath))
+			ready, readErr := readDaemonFile(daemonReadyPath(lockPath))
 			if readErr == nil && strings.TrimSpace(string(ready)) == strconv.Itoa(expectedPID) {
 				return nil
 			}
 		}
-		if signalErr := syscall.Kill(expectedPID, 0); errors.Is(signalErr, syscall.ESRCH) {
+		if signalErr := hostos.Signal(expectedPID, 0); errors.Is(signalErr, syscall.ESRCH) {
 			return fmt.Errorf("started PID %d exited before readiness", expectedPID)
 		}
 		if time.Now().After(deadline) {
@@ -90,7 +91,7 @@ func StopDaemon(lockPath string, timeout time.Duration) error {
 		_ = os.Remove(daemonReadyPath(lockPath))
 		return ErrDaemonStopped
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	if err := hostos.Signal(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("stop DearMachine daemon PID %d: %w", pid, err)
 	}
 	deadline := time.Now().Add(timeout)

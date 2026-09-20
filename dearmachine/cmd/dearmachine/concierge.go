@@ -3,15 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/supervisor"
@@ -40,8 +35,7 @@ func detectStateRoot(root string) string {
 	if err != nil {
 		return "unreadable"
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.IsDir() || !ok || stat.Uid != uint32(os.Getuid()) {
+	if !info.IsDir() || !hostos.Owned(root, info) {
 		return "partial"
 	}
 	if info.Mode().Perm()&0500 != 0500 {
@@ -127,7 +121,7 @@ func runBare(getenv func(string) string, deps dependencies) error {
 		}
 		execProcess := deps.execProcess
 		if execProcess == nil {
-			execProcess = syscall.Exec
+			execProcess = hostos.Exec
 		}
 		return execProcess(launcher, []string{launcher}, cleanRelaunchEnvironment(os.Environ()))
 	}
@@ -184,54 +178,6 @@ type conciergeExitError struct {
 
 func (e *conciergeExitError) Error() string { return e.cause.Error() }
 func (e *conciergeExitError) Unwrap() error { return e.cause }
-
-// Foreground gives the child its own terminal process group, so terminal SIGINT
-// goes directly to TS. The parent does not handle or forward SIGINT, daemonize,
-// or kill the child on parent death. Wait restores the caller's foreground group.
-func launchConciergeForeground(binary string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	terminal, ok := stdin.(*os.File)
-	if !ok {
-		return errors.New("concierge launch requires a terminal file")
-	}
-	fd := int(terminal.Fd())
-	group, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP)
-	if err != nil {
-		return fmt.Errorf("read terminal foreground group: %w", err)
-	}
-	cmd := exec.Command(binary, args...)
-	native, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	cmd.Env = conciergeEnvironment(os.Environ(), native)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Foreground: true, Ctty: fd}
-	// A background/orphaned parent must ignore SIGTTOU while restoring the
-	// terminal. Do this only after the child has exited, preserving its signals.
-	defer func() {
-		ignored := signal.Ignored(syscall.SIGTTOU)
-		signal.Ignore(syscall.SIGTTOU)
-		defer func() {
-			if !ignored {
-				signal.Reset(syscall.SIGTTOU)
-			}
-		}()
-		_ = unix.IoctlSetPointerInt(fd, unix.TIOCSPGRP, group)
-	}()
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	err = cmd.Wait()
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		code := exit.ExitCode()
-		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-			code = 128 + int(status.Signal())
-		}
-		return &conciergeExitError{code: code, cause: err}
-	}
-	return err
-}
 
 // An explicit override is authoritative, even when it cannot be executed.
 func discoverConcierge(override, home string, lookPath func(string) (string, error)) (string, error) {

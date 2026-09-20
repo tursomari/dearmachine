@@ -14,6 +14,9 @@ import (
 )
 
 func runUpdate(args []string, getenv func(string) string, deps dependencies) error {
+	if handled, err := runPlatformUpdate(args, getenv, deps); handled {
+		return err
+	}
 	flags := flag.NewFlagSet("update", flag.ContinueOnError)
 	flags.SetOutput(outputOrDiscard(deps.flagOutput))
 	check := flags.Bool("check", false, "check the coordinated release without changing the installation")

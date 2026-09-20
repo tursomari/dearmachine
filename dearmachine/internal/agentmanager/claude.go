@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -51,7 +50,7 @@ func (ClaudeAdapter) Prepare(ctx context.Context, cwd, writableDir string) (Laun
 	if meta.NativeSession != "" {
 		args = append(args, "--resume", meta.NativeSession)
 	}
-	command := exec.CommandContext(ctx, "claude", args...)
+	command := backendCommandContext(ctx, "claude", args...)
 	command.Dir = cwd
 	return Launch{Command: command, NativeSession: meta.NativeSession}, nil
 }

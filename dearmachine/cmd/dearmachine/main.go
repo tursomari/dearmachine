@@ -5,14 +5,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"io"
 	"log"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -149,13 +149,13 @@ func defaultDependencies() dependencies {
 		newLogger: func() *log.Logger {
 			return log.New(os.Stderr, "dearmachine: ", log.LstdFlags)
 		},
-		notifyContext:   signal.NotifyContext,
+		notifyContext:   hostos.NotifyContext,
 		flagOutput:      os.Stderr,
 		stdin:           os.Stdin,
 		stdout:          os.Stdout,
 		lookPath:        exec.LookPath,
 		launchConcierge: launchConciergeForeground,
-		execProcess:     syscall.Exec,
+		execProcess:     hostos.Exec,
 		userHomeDir:     os.UserHomeDir,
 		isInteractive: func(input io.Reader) bool {
 			file, ok := input.(*os.File)
@@ -295,6 +295,18 @@ func run(args []string, getenv func(string) string, deps dependencies) error {
 	for _, arg := range args {
 		wantsHelp = wantsHelp || arg == "--help" || arg == "-h"
 	}
+	if runtime.GOOS == "windows" && !wantsHelp && deps.userHomeDir != nil && len(args) > 0 {
+		switch args[0] {
+		case "up", "restart", "init", "setup-agents", "inbox":
+			home, err := deps.userHomeDir()
+			if err != nil {
+				return err
+			}
+			if err = privateServiceDir(filepath.Join(home, ".dearmachine")); err != nil {
+				return err
+			}
+		}
+	}
 	if !wantsHelp && deps.userHomeDir != nil && len(args) > 0 && (args[0] == "up" || args[0] == "restart" || args[0] == "_supervise" || args[0] == "systemd" || args[0] == "launchd" || args[0] == "persistence") {
 		home, err := deps.userHomeDir()
 		if err != nil {
@@ -358,7 +370,7 @@ func globalHelp(output io.Writer) error {
 
 Commands:
   uninstall     permanently remove software and private data after terminal confirmation
-  update [--check | --recover] [--json] check or update the coordinated Nix installation
+  update [--check | --recover] [--json] check or update the installed release (Windows: --bundle <directory>)
   up            create pairs or start registered pairs
   down          stop the background client and cancel retries
   restart       restart through the existing supervisor
@@ -369,7 +381,7 @@ Commands:
   setup-agents  configure agent backends
   systemd on|off|status     explicitly choose service use (no reboot persistence)
   launchd on|off|status     choose macOS service use (no automatic login startup)
-  persistence on|off|status choose startup: login on macOS; reboot/linger on Linux`)
+  persistence on|off|status choose startup: sign-in on Windows; login on macOS; reboot/linger on Linux`)
 	return err
 }
 

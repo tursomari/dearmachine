@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"github.com/dearmachine/dearmachine/internal/machtianiconfig"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 const (
@@ -416,8 +416,7 @@ func loadBootstrapJournal(path string) (bootstrapJournal, error) {
 	if err != nil {
 		return bootstrapJournal{}, fmt.Errorf("inspect bootstrap journal: %w", err)
 	}
-	stat, owned := metadata.Sys().(*syscall.Stat_t)
-	if !metadata.Mode().IsRegular() || metadata.Mode()&os.ModeSymlink != 0 || metadata.Mode().Perm()&0o077 != 0 || !owned || stat.Uid != uint32(os.Getuid()) {
+	if !metadata.Mode().IsRegular() || metadata.Mode()&os.ModeSymlink != 0 || !hostos.Private(path, metadata, 0o077) {
 		return bootstrapJournal{}, errors.New("bootstrap journal must be a private regular file owned by the current user")
 	}
 	data, err := os.ReadFile(path)
