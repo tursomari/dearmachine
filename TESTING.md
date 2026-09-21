@@ -341,3 +341,16 @@ state refusal, and private directory/file ACLs. Repeat
 `TestSendmuxJMAPConcurrentRecoverySubmitsOnce` with `'-test.count=50'` to exercise
 simultaneous first-use directory creation. Process termination is not a
 physical power-loss test or a substitute for a live transport evaluation.
+
+`TestWindowsSendmuxPowerCycleFixture` is an opt-in two-phase VM check and
+skips during the ordinary suite. Use a separate disposable Windows guest,
+an ordinary account, and synthetic data only. Set
+`DM_SENDMUX_POWERCYCLE_DIRECTORY` to a new absolute directory and
+`DM_SENDMUX_POWERCYCLE_PHASE=write`, then run only that test with verbose
+output. After its `POWERCYCLE_READY` marker, abruptly terminate the exact
+guest's hypervisor process without a graceful shutdown and restart its same
+disk. Set the phase to `verify` and rerun the test against the same directory;
+the uncertain email/submission attempt must survive. Never interrupt a human
+IXE or shared guest for this check. The writer fails after ten minutes if no
+restart occurs. This proves recovery after abrupt VM termination, not physical
+host or storage power loss.

@@ -175,3 +175,38 @@ func TestWindowsSendmuxJournalSerializesReply(t *testing.T) {
 		t.Fatal("successor did not see the committed attempt")
 	}
 }
+
+// This two-phase fixture is invoked by the disposable-VM power-cycle gate.
+// The ordinary suite must never leave a writer running or reset a machine.
+func TestWindowsSendmuxPowerCycleFixture(t *testing.T) {
+	directory := os.Getenv("DM_SENDMUX_POWERCYCLE_DIRECTORY")
+	phase := os.Getenv("DM_SENDMUX_POWERCYCLE_PHASE")
+	if directory == "" && phase == "" {
+		t.Skip("requires the explicit disposable-VM power-cycle gate")
+	}
+	if !filepath.IsAbs(directory) || (phase != "write" && phase != "verify") {
+		t.Fatal("an absolute fixture directory and write or verify phase are required")
+	}
+	s := &sendmuxJMAPSender{journalDir: directory}
+	j, unlock, err := s.openSubmissionJournal(context.Background(), "power-cycle", "synthetic-reply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if phase == "verify" {
+		if !j.EmailAttempted || !j.SubmissionAttempted || j.EmailID != "email-before-reset" || j.SubmissionID != "" {
+			t.Fatal("uncertain submission was not preserved across the VM power cycle")
+		}
+		return
+	}
+	if j.EmailAttempted || j.SubmissionAttempted {
+		t.Fatal("writer requires a fresh fixture directory")
+	}
+	j.EmailAttempted, j.SubmissionAttempted, j.EmailID = true, true, "email-before-reset"
+	if err := j.save(); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("POWERCYCLE_READY: uncertain submission committed; reset only the disposable guest")
+	time.Sleep(10 * time.Minute)
+	t.Fatal("the disposable VM was not reset during the fixture window")
+}
