@@ -325,3 +325,14 @@ window visibility under SSH is insufficient: the old launch allocated a hidden
 window in that session but opened a visible terminal on the desktop. Run this
 with `TestDetachedWorkerSurvivesShellAndRemainsOwned` to verify that windowless
 launch preserves descendant ownership and cancellation.
+
+Run the CGO-enabled client binary with
+`'-test.run=^(TestSendmux|TestWindowsSendmux)'` for the native Sendmux gate.
+Windows uses a private SQLite submission journal with PERSIST rollback and
+EXTRA synchronization; Unix retains the existing atomic JSON journal.
+The suite verifies lost responses, stale reads, concurrent retries, abrupt
+writer termination, legacy migration, changed-envelope rejection, corrupt
+state refusal, and private directory/file ACLs. Repeat
+`TestSendmuxJMAPConcurrentRecoverySubmitsOnce` with `'-test.count=50'` to exercise
+simultaneous first-use directory creation. Process termination is not a
+physical power-loss test or a substitute for a live transport evaluation.

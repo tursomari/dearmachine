@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -138,7 +139,7 @@ func newJMAPFixture(t *testing.T) (*sendmuxJMAPSender, *jmapFixture) {
 	t.Cleanup(server.Close)
 	f.url = server.URL
 	s := newSendmuxJMAPSender("test-mailbox-credential")
-	s.journalDir = t.TempDir()
+	s.journalDir = filepath.Join(t.TempDir(), "submissions")
 	s.origin = server.URL
 	s.client = server.Client()
 	return s, f

@@ -201,6 +201,7 @@ func TestProvisionSendmuxInboxDeletesMailboxWhenCredentialCannotBeStored(t *test
 func TestSendmuxManagementCredentialIsDistinctFromMailboxCredential(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	rootPath := filepath.Join(home, "root-key")
 	if err := os.WriteFile(rootPath, []byte("smx_root_offline\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -220,6 +221,7 @@ func TestSendmuxManagementCredentialIsDistinctFromMailboxCredential(t *testing.T
 func TestSendmuxManagementCredentialUsesInfrastructureKeyDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("SENDMUX_API_KEY", "")
 	t.Setenv("SENDMUX_API_KEY_FILE", "")
 	credentialPath := filepath.Join(home, ".config", "dearmachine", "sendmux-infrastructure-api-key")

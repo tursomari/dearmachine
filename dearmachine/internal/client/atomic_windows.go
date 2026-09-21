@@ -1,7 +1,6 @@
 package client
 
 import (
-	"errors"
 	"golang.org/x/sys/windows"
 	"path/filepath"
 	"strings"
@@ -33,10 +32,4 @@ func windowsPath(path string) (*uint16, error) {
 		}
 	}
 	return windows.UTF16PtrFromString(absolute)
-}
-
-// Sendmux's submission journal requires a durable directory-creation barrier.
-// Keep that unverified transport fail-closed in the native Windows proof.
-func syncDirectory(string) error {
-	return errors.New("durable directory synchronization is not supported on Windows")
 }
