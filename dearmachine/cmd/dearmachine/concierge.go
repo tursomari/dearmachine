@@ -6,6 +6,7 @@ import (
 	"github.com/dearmachine/dearmachine/internal/hostos"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/dearmachine/dearmachine/internal/client"
@@ -20,6 +21,11 @@ func detectInstallation(home string) string {
 	state := detectStateRoot(filepath.Join(home, ".dearmachine"))
 	if state != "absent" {
 		return state
+	}
+	// Windows uninstall preserves independent Machtiani projects and modes.
+	// Those stores do not establish a DearMachine installation or block setup.
+	if runtime.GOOS == "windows" {
+		return "absent"
 	}
 	if _, err := os.Lstat(filepath.Join(home, ".machtiani")); os.IsNotExist(err) {
 		return "absent"

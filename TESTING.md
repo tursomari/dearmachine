@@ -74,6 +74,11 @@ guest with the matching source/test fixtures and ordinary-user permissions.
 
 ### Confirmed native uninstall
 
+On Windows, `cmd/dearmachine/concierge_windows_test.go` verifies that preserved
+independent Machtiani project data does not block fresh DearMachine setup after
+uninstall. Actual partial DearMachine state still requires recovery. Execute it
+with the native Windows toolchain; the Linux suite cannot exercise this branch.
+
 `cmd/dearmachine/uninstall_test.go` covers explicit terminal confirmation,
 cancellation without mutation, refusal of confirmation bypasses, unsafe roots,
 busy acquisition and independent Machtiani preservation. Service tests use a

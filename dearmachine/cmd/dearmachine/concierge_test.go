@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -72,6 +73,12 @@ func TestConservativeInstallDetection(t *testing.T) {
 				os.WriteFile(filepath.Join(root, "pairs.toml"), []byte("bad toml ["), 0600)
 			}
 			state := detectInstallation(home)
+			if kind == "other-install" && runtime.GOOS == "windows" {
+				if state != "absent" {
+					t.Fatalf("independent Windows Machtiani store blocked setup: %s", state)
+				}
+				return
+			}
 			if state == "absent" || state == "installed" {
 				t.Fatalf("unsafe detection: %s", state)
 			}
