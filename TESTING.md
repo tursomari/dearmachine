@@ -77,7 +77,11 @@ guest with the matching source/test fixtures and ordinary-user permissions.
 On Windows, `cmd/dearmachine/concierge_windows_test.go` verifies that preserved
 independent Machtiani project data does not block fresh DearMachine setup after
 uninstall. Actual partial DearMachine state still requires recovery. Execute it
-with the native Windows toolchain; the Linux suite cannot exercise this branch.
+from the `dearmachine/` Go module with the pinned native Windows Go/CGO toolchain:
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ..\tests\windows\concierge.ps1`.
+This compiles the actual Windows production files and the focused Windows test;
+unrelated command-package tests contain Unix-only syscall fixtures. The Linux
+suite cannot exercise this branch.
 
 `cmd/dearmachine/uninstall_test.go` covers explicit terminal confirmation,
 cancellation without mutation, refusal of confirmation bypasses, unsafe roots,
