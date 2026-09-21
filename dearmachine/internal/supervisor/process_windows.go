@@ -182,7 +182,10 @@ func StartDetached(root string, argv []string) (int, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdout = log
 	cmd.Stderr = log
-	cmd.SysProcAttr = hostos.Detached()
+	// OpenSSH owns session descendants in a kill-on-close job that permits
+	// explicit breakaway. Apply the same bounded escape as asynchronous workers
+	// so ending the launching SSH session does not stop the supervisor.
+	cmd.SysProcAttr = hostos.DetachedWorker()
 	if err = cmd.Start(); err != nil {
 		return 0, err
 	}

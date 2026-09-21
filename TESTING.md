@@ -326,6 +326,11 @@ window in that session but opened a visible terminal on the desktop. Run this
 with `TestDetachedWorkerSurvivesShellAndRemainsOwned` to verify that windowless
 launch preserves descendant ownership and cancellation.
 
+`TestWindowsSupervisorSurvivesSessionJob` closes a launcher job with the same
+kill-on-close and explicit-breakaway flags as Windows OpenSSH. The detached
+supervisor must survive. Keep the worker ownership test above in the gate:
+leaving a temporary session must not let task descendants escape their client.
+
 Run the CGO-enabled client binary with
 `'-test.run=^(TestSendmux|TestWindowsSendmux)'` for the native Sendmux gate.
 Windows uses a private SQLite submission journal with PERSIST rollback and
