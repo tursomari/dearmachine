@@ -317,3 +317,11 @@ authorization-store cases. `TestGuestStoreScopeAndNoHistoricalMigration` uses
 a filename with Unicode and URI punctuation to exercise SQLite URI escaping.
 The historical CLI package test suite still contains Unix-only test code; this
 proof does not claim full Windows Go test coverage.
+
+`TestBackgroundTreeHasNoConsoleWindow` exercises a detached supervisor, its
+managed worker, and an ordinary console grandchild. Every process must lack a
+console window while output still reaches the supervisor's log. Checking only
+window visibility under SSH is insufficient: the old launch allocated a hidden
+window in that session but opened a visible terminal on the desktop. Run this
+with `TestDetachedWorkerSurvivesShellAndRemainsOwned` to verify that windowless
+launch preserves descendant ownership and cancellation.

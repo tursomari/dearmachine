@@ -12,7 +12,10 @@ import (
 )
 
 func Detached() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP}
+	// Keep a windowless console that ordinary console descendants can inherit.
+	// DETACHED_PROCESS gives children no console to inherit, so Windows can open
+	// a new visible one when a worker launches another command.
+	return &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_NEW_PROCESS_GROUP}
 }
 
 // DetachedWorker leaves an explicitly breakaway-enabled temporary shell job.

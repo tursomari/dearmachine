@@ -15,7 +15,7 @@ var shellJobs = struct {
 }{handles: make(map[int]windows.Handle)}
 
 func configureProcessGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW}
 }
 func startProcessGroup(cmd *exec.Cmd) (int, error) {
 	job, err := windows.CreateJobObject(nil, nil)
