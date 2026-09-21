@@ -19,6 +19,38 @@ type fakeCommandRunner struct {
 	failSync    bool
 }
 
+func TestInstallSeedCopiesEmbeddedFiles(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"skeleton", "dearmachine"} {
+		t.Run(phase, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "workspace with spaces Ω")
+			if err := os.Mkdir(repo, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := installSeed(repo, phase); err != nil {
+				t.Fatalf("install embedded %s seed: %v", phase, err)
+			}
+			files := []string{".gitignore", "README.md", "documentation/update-prompt-template.md"}
+			if phase == "dearmachine" {
+				files = []string{"documentation/dearmachine-architecture.md", "process/configure-dearmachine.md"}
+			}
+			for _, name := range files {
+				want, err := seedFiles.ReadFile("seed/" + phase + "/" + name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(name)))
+				if err != nil || string(got) != string(want) {
+					t.Fatalf("seed file %s differs from embedded contents: %v", name, err)
+				}
+			}
+			if err := installSeed(repo, phase); err == nil {
+				t.Fatal("installSeed overwrote an existing workspace")
+			}
+		})
+	}
+}
+
 func (r *fakeCommandRunner) Run(
 	_ context.Context,
 	dir string,

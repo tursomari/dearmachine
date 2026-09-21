@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -444,7 +445,9 @@ func progress(options Options, message string) {
 }
 
 func installSeed(repoPath, phase string) error {
-	root := filepath.Join("seed", phase)
+	// Embedded FS paths always use slashes, including on Windows. Convert to
+	// native paths only when writing the extracted files to the workspace.
+	root := path.Join("seed", phase)
 	return fs.WalkDir(seedFiles, root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -452,11 +455,8 @@ func installSeed(repoPath, phase string) error {
 		if path == root {
 			return nil
 		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(repoPath, relative)
+		relative := strings.TrimPrefix(path, root+"/")
+		target := filepath.Join(repoPath, filepath.FromSlash(relative))
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
