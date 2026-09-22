@@ -75,7 +75,7 @@ func (r *fakeCommandRunner) Run(
 		return []byte(`{"status":"initialized"}`), nil
 	case "/fake/machtiani project show --json":
 		return []byte(`{"store":"` + r.store + `"}`), nil
-	case "/fake/machtiani sync --include-docs":
+	case "/fake/machtiani sync --include-docs", "/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected":
 		r.syncCount++
 		if r.failSync {
 			return []byte("sync diagnostic"), errors.New("sync failed")
@@ -96,7 +96,16 @@ func (r *fakeCommandRunner) Run(
 }
 
 func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
-	t.Parallel()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, ".config/dearmachine/machtiani/config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("default_model = \"sync-selected\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	repo := filepath.Join(root, "entrypoint")
 	store := filepath.Join(root, "store")
@@ -171,11 +180,11 @@ func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
 		"git rev-parse HEAD",
 		"/fake/machtiani init --no-interactive --json",
 		"/fake/machtiani project show --json",
-		"/fake/machtiani sync --include-docs",
+		"/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected",
 		"git add --all",
 		"git commit -m " + dearMachineCommitMessage,
 		"git rev-parse HEAD",
-		"/fake/machtiani sync --include-docs",
+		"/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected",
 	}
 	if !slices.Equal(runner.calls, wantCalls) {
 		t.Fatalf("commands =\n%s\nwant =\n%s", strings.Join(runner.calls, "\n"), strings.Join(wantCalls, "\n"))

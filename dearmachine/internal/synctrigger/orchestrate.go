@@ -13,6 +13,7 @@ import (
 	"time"
 
 	backendcatalog "github.com/dearmachine/dearmachine/internal/backends"
+	"github.com/dearmachine/dearmachine/internal/machtianiconfig"
 )
 
 // CommandRunner executes a shell command in a directory.
@@ -27,6 +28,9 @@ func DefaultCommandRunner(
 ) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
+	if err := machtianiconfig.Apply(command); err != nil {
+		return nil, err
+	}
 	return command.CombinedOutput()
 }
 
@@ -49,6 +53,9 @@ func agentManagedCommandRunner(managerPath string, backends []string, customBack
 		command := exec.CommandContext(ctx, name, args...)
 		command.Dir = dir
 		command.Env = environment
+		if err := machtianiconfig.Apply(command); err != nil {
+			return nil, err
+		}
 		return command.CombinedOutput()
 	}, nil
 }
@@ -285,7 +292,11 @@ func (o *Orchestrator) reviewSession(
 		return "", fmt.Errorf("delete forked session %s: %w: %s", forkedSessionID, err, strings.TrimSpace(string(deleteOutput)))
 	}
 
-	syncOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, "sync", "--include-docs")
+	syncArgs, err := machtianiconfig.SyncArgs("", true)
+	if err != nil {
+		return "", fmt.Errorf("resolve sync model: %w", err)
+	}
+	syncOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, syncArgs...)
 	if err != nil {
 		return "", fmt.Errorf("sync: %w: %s", err, strings.TrimSpace(string(syncOutput)))
 	}

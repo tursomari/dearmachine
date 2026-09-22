@@ -863,3 +863,37 @@ func TestAgentCommandsSelectDearMachineConfiguration(t *testing.T) {
 		t.Fatal("expected sync, run, and session inspection")
 	}
 }
+
+func TestSyncPassesEffectiveModelExplicitly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, ".config/dearmachine/machtiani/config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("default_model = \"planner\"\nanswer_model = \"sync-selected\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := NewAgentRunner("machtiani", t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, oneRun := range []string{"", "cli-override"} {
+		runner.model = oneRun
+		want := "sync-selected"
+		if oneRun != "" {
+			want = oneRun
+		}
+		runner.invoke = func(command *exec.Cmd) error {
+			expected := []string{"machtiani", "sync", "--model", want, "--answer-model", want}
+			if !slices.Equal(command.Args, expected) {
+				t.Fatalf("sync args = %q", command.Args)
+			}
+			return nil
+		}
+		if err := runner.Sync(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

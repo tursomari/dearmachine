@@ -152,7 +152,11 @@ func (r *AgentRunner) cancel(command *exec.Cmd) error {
 }
 
 func (r *AgentRunner) Sync(ctx context.Context) error {
-	command := exec.CommandContext(ctx, r.binary, "sync")
+	args, err := machtianiconfig.SyncArgs(r.model, false)
+	if err != nil {
+		return fmt.Errorf("resolve sync model: %w", err)
+	}
+	command := exec.CommandContext(ctx, r.binary, args...)
 	command.Dir = r.projectDir
 	var output bytes.Buffer
 	command.Stdout = &output

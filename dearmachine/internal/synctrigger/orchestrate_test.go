@@ -78,7 +78,16 @@ func TestOrchestrateNoForkNeeded(t *testing.T) {
 }
 
 func TestOrchestrateSuccess(t *testing.T) {
-	t.Parallel()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path := filepath.Join(home, ".config/dearmachine/machtiani/config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("default_model = \"sync-selected\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	runner := &mockRunner{}
 	var logs bytes.Buffer
 	baseTime := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
@@ -108,7 +117,7 @@ func TestOrchestrateSuccess(t *testing.T) {
 		{"machtiani", "session", "fork", "older"},
 		{"machtiani", "run", "--resume", "forked-123", "--file", "/prompt.md"},
 		{"machtiani", "session", "delete", "forked-123"},
-		{"machtiani", "sync", "--include-docs"},
+		{"machtiani", "sync", "--include-docs", "--model", "sync-selected", "--answer-model", "sync-selected"},
 	}
 	if len(runner.entries) != len(want) {
 		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))

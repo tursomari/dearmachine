@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/dearmachine/dearmachine/internal/hostos"
-	"github.com/dearmachine/dearmachine/internal/machtianiconfig"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/dearmachine/dearmachine/internal/hostos"
+	"github.com/dearmachine/dearmachine/internal/machtianiconfig"
 )
 
 const (
@@ -213,7 +214,11 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		result.Snapshots = append(result.Snapshots, path)
 	}
 	if phaseBefore(journal.Phase, phaseSkeletonSynced) {
-		if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
+		syncArgs, err := machtianiconfig.SyncArgs("", true)
+		if err != nil {
+			return Result{}, fmt.Errorf("resolve sync model: %w", err)
+		}
+		if _, err := run(ctx, runCommand, repoPath, agentBinary, syncArgs...); err != nil {
 			return Result{}, err
 		}
 		journal.Phase = phaseSkeletonSynced
@@ -256,7 +261,11 @@ func Initialize(ctx context.Context, options Options) (Result, error) {
 		result.Snapshots = append(result.Snapshots, path)
 	}
 	if phaseBefore(journal.Phase, phaseFinalSynced) {
-		if _, err := run(ctx, runCommand, repoPath, agentBinary, "sync", "--include-docs"); err != nil {
+		syncArgs, err := machtianiconfig.SyncArgs("", true)
+		if err != nil {
+			return Result{}, fmt.Errorf("resolve sync model: %w", err)
+		}
+		if _, err := run(ctx, runCommand, repoPath, agentBinary, syncArgs...); err != nil {
 			return Result{}, err
 		}
 		journal.Phase = phaseFinalSynced

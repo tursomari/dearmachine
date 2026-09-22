@@ -20,6 +20,8 @@ func TestPairMaintenanceCountsAllStoresAndAdvancesOneCheckpoint(t *testing.T) {
 		t.Run(fmt.Sprint(counts), func(t *testing.T) {
 			deps := testDependencies(t, &fakeApplication{})
 			home, _ := deps.userHomeDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			first := makeInboxTestPair(t, home, "agentmail")
 			secondPair, err := client.CreatePair(deps.userHomeDir, client.Pair{UserEmail: "second@example.test", InboxID: first.Inbox.ID})
 			if err != nil {
