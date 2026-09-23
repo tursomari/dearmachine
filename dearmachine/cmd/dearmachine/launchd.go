@@ -306,7 +306,8 @@ func (m serviceManager) launchdChoiceLock(shared bool) (func(), error) {
 	if err := privateServiceDir(m.root()); err != nil {
 		return nil, err
 	}
-	fd, err := syscall.Open(filepath.Join(m.root(), "supervision-consent.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	// Background children must not retain this invocation's temporary choice lock.
+	fd, err := syscall.Open(filepath.Join(m.root(), "supervision-consent.lock"), syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, err
 	}

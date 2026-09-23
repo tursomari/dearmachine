@@ -7,8 +7,10 @@ import (
 	"errors"
 	"github.com/dearmachine/dearmachine/internal/client"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -260,6 +262,37 @@ func TestLaunchdRefusesMalformedOwnedDefinition(t *testing.T) {
 		}
 	}
 }
+func TestLaunchdChoiceLockDoesNotSurviveExec(t *testing.T) {
+	m, _ := launchdFixture(t)
+	unlock, err := m.launchdChoiceLock(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := true
+	defer func() {
+		if held {
+			unlock()
+		}
+	}()
+	// The background supervisor outlives its launching command. It must not
+	// inherit that command's temporary shared supervision-choice lock.
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
+	unlock()
+	held = false
+	if err := child.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatal("child must remain alive during the ownership change:", err)
+	}
+	exclusive, err := m.launchdChoiceLock(false)
+	if err != nil {
+		t.Fatal("child retained the completed startup's choice lock:", err)
+	}
+	exclusive()
+}
+
 func TestLaunchdChoicesCannotRaceStartup(t *testing.T) {
 	m, _ := launchdFixture(t)
 	first, err := m.launchdChoiceLock(true)
