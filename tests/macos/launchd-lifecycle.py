@@ -128,7 +128,11 @@ finally:
         cli('up', '--bootstrap')
         assert status()['daemonPid'] == first['daemonPid']
         os.kill(first['daemonPid'], signal.SIGKILL)
-        wait_for(lambda: status()['daemon'] == 'running' and status()['daemonPid'] != first['daemonPid'])
+        def child_recovered():
+            observed = status()
+            return (observed['daemon'] == 'running' and observed.get('daemonPid', 0) > 0
+                    and observed['daemonPid'] != first['daemonPid'])
+        wait_for(child_recovered)
         first = status()
         assert cli('launchd', 'off', check=False).returncode != 0
         cli('persistence', 'on')
