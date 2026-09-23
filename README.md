@@ -84,6 +84,12 @@ transport value:
 | OpenMail | `OPENMAIL_API_KEY_FILE` | `--new-inbox --transport openmail` |
 | Sendmux | `SENDMUX_API_KEY_FILE` | `--new-inbox --transport sendmux` |
 
+AgentMail also reads the installer's saved `~/.config/dearmachine/agentmail-api-key`
+when neither AgentMail environment variable is set. This lets a fresh terminal
+or managed service use the saved credential without inheriting the setup shell.
+An explicit key or file path takes precedence; an invalid explicit file is an
+error rather than a fallback to another account. Keep the credential file private.
+
 To share or adopt an existing inbox with any adapter, replace `--new-inbox`
 with `--inbox '<exact-inbox-id-or-address>'`. Sendmux uses its Infrastructure
 key for creation and pair policy, then stores the returned mailbox-scoped

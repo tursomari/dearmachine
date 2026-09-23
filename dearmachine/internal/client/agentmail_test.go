@@ -33,7 +33,37 @@ func TestNewAgentMailTransportLoadsCredentialFile(t *testing.T) {
 	}
 }
 
+func TestAgentMailCredentialSurvivesFreshLogin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("AGENTMAIL_API_KEY", "")
+	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
+	path := filepath.Join(home, ".config", "dearmachine", "agentmail-api-key")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("saved-test-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := loadAgentMailCredential(); err != nil || got != "saved-test-key" {
+		t.Fatalf("saved credential = %q, %v", got, err)
+	}
+	// An explicit bad reference must not silently use a different account.
+	t.Setenv("AGENTMAIL_API_KEY_FILE", filepath.Join(home, "missing"))
+	if _, err := loadAgentMailCredential(); err == nil {
+		t.Fatal("missing explicit credential was ignored")
+	}
+	t.Setenv("AGENTMAIL_API_KEY", "explicit-test-key")
+	if got, err := loadAgentMailCredential(); err != nil || got != "explicit-test-key" {
+		t.Fatalf("explicit credential = %q, %v", got, err)
+	}
+}
+
 func TestNewAgentMailTransportRejectsMissingOrInvalidCredential(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("AGENTMAIL_API_KEY", "")
 	t.Setenv("AGENTMAIL_API_KEY_FILE", "")
 	if _, err := NewAgentMailTransport("test-inbox"); err == nil || !strings.Contains(err.Error(), "AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required") {

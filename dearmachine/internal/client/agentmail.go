@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -167,11 +168,19 @@ func loadAgentMailCredential() (string, error) {
 		return credential, nil
 	}
 	credentialPath := strings.TrimSpace(os.Getenv("AGENTMAIL_API_KEY_FILE"))
-	if credentialPath == "" {
-		return "", fmt.Errorf("AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required")
+	usingDefault := credentialPath == ""
+	if usingDefault {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required: resolve default credential path: %w", err)
+		}
+		credentialPath = filepath.Join(home, ".config", "dearmachine", "agentmail-api-key")
 	}
 	contents, err := os.ReadFile(credentialPath)
 	if err != nil {
+		if usingDefault && errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("AGENTMAIL_API_KEY or AGENTMAIL_API_KEY_FILE is required (optional default: $HOME/.config/dearmachine/agentmail-api-key)")
+		}
 		return "", fmt.Errorf("read AGENTMAIL_API_KEY_FILE: %w", err)
 	}
 	credential := strings.TrimRight(string(contents), "\r\n")
