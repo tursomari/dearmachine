@@ -34,6 +34,7 @@ def main():
     root = home / '.dearmachine'
     env = dict(HOME=str(home), PATH='/usr/bin:/bin:/usr/sbin:/sbin')
     target = None
+    foreground = None
     passed = False
 
     def cli(*command, check=True):
@@ -81,9 +82,11 @@ inbox_id = "{inbox}"
         child.write_text('''import os,signal,time
 from pathlib import Path
 root=Path(os.environ['HOME'])/'.dearmachine/run'
-root.mkdir(parents=True,exist_ok=True)
+root.mkdir(parents=True,exist_ok=True,mode=0o700)
 paths=[root/name for name in ('dearmachine.pid','dearmachine.ready')]
-for path in paths:path.write_text(str(os.getpid()))
+for path in paths:
+ path.write_text(str(os.getpid()))
+ path.chmod(0o600)
 def stop(*args):raise SystemExit(0)
 signal.signal(signal.SIGTERM,stop)
 signal.signal(signal.SIGINT,stop)
@@ -98,6 +101,19 @@ finally:
                             'exec /usr/bin/python3 ' + shlex.quote(str(child)) + '\nfi\nexec '
                             + shlex.quote(str(binary)) + ' "$@"\n')
         launcher.chmod(0o700)
+        # A foreground owner must be stopped before a service choice can alter
+        # supervision. Use the same offline child with its actual live PID.
+        foreground = subprocess.Popen([str(launcher), 'up', '--foreground'], env=env,
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        wait_for(lambda: (root / 'run/dearmachine.pid').read_text().strip() == str(foreground.pid))
+        refused = cli('launchd', 'on', check=False)
+        assert refused.returncode != 0, 'Changed supervision beside a foreground owner'
+        assert 'another foreground or service owner' in refused.stderr, refused.stderr
+        assert not (root / 'supervision.json').exists(), 'Refused choice saved consent'
+        assert foreground.poll() is None, 'Refused choice stopped the foreground owner'
+        foreground.terminate()
+        foreground.wait(timeout=10)
+        foreground = None
         cli('launchd', 'on')
         definition = next((root / 'launchd').glob('*.plist'))
         plist = plistlib.loads(definition.read_bytes())
@@ -145,8 +161,11 @@ finally:
         assert subprocess.run(['/bin/launchctl', 'print', target], capture_output=True).returncode == 113
         assert not definition.exists() and not login.exists()
         passed = True
-        print('PASS: launchd startup, singleton ownership, child crash recovery, restart, explicit stop, login configuration, simulated login, disable, and cleanup')
+        print('PASS: foreground ownership refusal, launchd startup, singleton ownership, child crash recovery, restart, explicit stop, login configuration, simulated login, disable, and cleanup')
     finally:
+        if foreground is not None and foreground.poll() is None:
+            foreground.terminate()
+            foreground.wait(timeout=10)
         if target:
             cli('down', check=False)
             cli('persistence', 'off', check=False)

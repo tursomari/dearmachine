@@ -262,7 +262,10 @@ func (m serviceManager) launchdOwner(pid int) bool {
 func (m serviceManager) stopIdleOwner() error {
 	s, err := supervisor.Request(m.root(), "status", time.Second)
 	if err != nil {
-		return supervisor.CheckAvailable(m.root())
+		if err := supervisor.CheckAvailable(m.root()); err != nil {
+			return err
+		}
+		return checkOtherOwner(m.root(), supervisor.Status{})
 	}
 	if err := checkOtherOwner(m.root(), s); err != nil {
 		return err

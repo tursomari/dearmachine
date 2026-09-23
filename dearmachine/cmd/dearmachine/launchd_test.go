@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/xml"
 	"errors"
+	"github.com/dearmachine/dearmachine/internal/client"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,5 +328,27 @@ func TestLaunchdConsentCannotSelectSystemd(t *testing.T) {
 	}
 	if err := m.configure("systemd", "on"); err == nil {
 		t.Fatal("overwrote foreign service consent")
+	}
+}
+
+func TestLaunchdChoicePreservesForegroundOwner(t *testing.T) {
+	m, _ := launchdFixture(t)
+	lockPath := filepath.Join(m.root(), "run", "dearmachine.pid")
+	release, err := client.CreateDaemonLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := m.configure("launchd", "on"); err == nil || !strings.Contains(err.Error(), "another foreground or service owner") {
+		t.Fatalf("service choice did not refuse the foreground owner: %v", err)
+	}
+	for _, path := range []string{m.consentPath(), m.launchdPath(false), m.launchdPath(true)} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("refused choice changed service state at %s: %v", path, err)
+		}
+	}
+	pid, running, err := client.DaemonStatus(lockPath)
+	if err != nil || !running || pid != os.Getpid() {
+		t.Fatalf("foreground owner changed: %d %v %v", pid, running, err)
 	}
 }
