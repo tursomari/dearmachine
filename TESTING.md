@@ -354,3 +354,25 @@ the uncertain email/submission attempt must survive. Never interrupt a human
 IXE or shared guest for this check. The writer fails after ten minutes if no
 restart occurs. This proves recovery after abrupt VM termination, not physical
 host or storage power loss.
+
+## Linux systemd lifecycle regression
+
+In a disposable Linux VM with a real systemd user manager, provision a fresh
+ordinary account and enable lingering for that account. Build the candidate
+native CLI, then run as that user:
+
+```sh
+python3 tests/linux/systemd-lifecycle.py --binary /absolute/path/to/dearmachine
+```
+
+The test refuses preexisting Dear Machine state or services. It uses an offline
+child under the production supervisor to exercise ownership transfer, the stable
+launcher, duplicate starts, crash recovery, explicit stop, restart and persistence
+settings. It cleans up its service by default. With `--leave-running`, a successful
+run leaves only its own fixture enabled and writes `~/lifecycle-reboot.json` with
+the boot ID and process identity. Keep the binary outside temporary directories
+that the guest clears at boot. After a separately authorized VM reboot, verify a
+changed boot ID, active user service and live daemon before any login by the
+fixture user. Clean up using that user's native `down`, `persistence off`, and
+`systemd off` commands. Live installation and email/model requests remain
+separate checks; the offline child does not claim to cover them.

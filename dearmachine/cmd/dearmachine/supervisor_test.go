@@ -306,3 +306,40 @@ func TestBootstrapRejectsMismatchedEndpoint(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 }
+
+// A bootstrap attempt must not leave a second resident owner beside a daemon
+// started by a foreground session or an external service.
+func TestBootstrapPreservesForegroundOwner(t *testing.T) {
+	home := socketTestHome(t)
+	t.Setenv("HOME", home)
+	t.Setenv("DEARMACHINE_CLI_TEST_HELPER", "1")
+	root := filepath.Join(home, ".dearmachine")
+	release, err := client.CreateDaemonLock(filepath.Join(root, "run", "dearmachine.pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher := filepath.Join(home, "cli")
+	script := "#!/bin/sh\nexec '" + strings.ReplaceAll(binary, "'", "'\\''") + "' -test.run=^TestSupervisorCLIHelper$ -- \"$@\"\n"
+	if err := os.WriteFile(launcher, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = supervisor.Request(root, "shutdown", time.Second) }()
+	if _, err := startSupervised(launcher, []string{"fixture-daemon", root}, root); err == nil {
+		t.Fatal("bootstrap accepted a foreground owner")
+	}
+	if err := supervisor.CheckAvailable(root); err != nil {
+		t.Fatalf("failed bootstrap left a resident supervisor: %v", err)
+	}
+	if _, err := os.Lstat(supervisor.SocketPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("failed bootstrap left a control endpoint: %v", err)
+	}
+	pid, running, err := client.DaemonStatus(filepath.Join(root, "run", "dearmachine.pid"))
+	if err != nil || !running || pid != os.Getpid() {
+		t.Fatalf("foreground owner changed: %d %v %v", pid, running, err)
+	}
+}

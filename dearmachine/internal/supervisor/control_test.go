@@ -224,10 +224,15 @@ func TestClientTimeoutDoesNotUndoCommittedUp(t *testing.T) {
 func TestOwnershipCheckPreventsChildSpawn(t *testing.T) {
 	root := privateTempDir(t)
 	marker := filepath.Join(root, "unexpected")
-	serveTest(t, Config{StateDir: root, Command: []string{testExecutable(t, "touch"), marker}, BeforeStart: func() error { return errors.New("another daemon owner") }, MaxFailures: 1})
-	s := awaitStatus(t, root, func(s Status) bool { return s.Supervisor == "failed" })
-	if !strings.Contains(s.LastExit, "another daemon owner") {
-		t.Fatalf("ownership: %+v", s)
+	err := Run(context.Background(), Config{StateDir: root, Command: []string{testExecutable(t, "touch"), marker}, BeforeStart: func() error { return errors.New("another daemon owner") }, MaxFailures: 1})
+	if err == nil || !strings.Contains(err.Error(), "another daemon owner") {
+		t.Fatalf("ownership refusal: %v", err)
+	}
+	if err := CheckAvailable(root); err != nil {
+		t.Fatalf("refused startup retained ownership: %v", err)
+	}
+	if _, err := os.Lstat(SocketPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("refused startup published a socket: %v", err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("spawned despite another owner")
@@ -336,5 +341,34 @@ func TestControlWaitsForSlowButValidStartup(t *testing.T) {
 	status, err := Request(root, "up", 8*time.Second)
 	if err != nil || status.Daemon != "running" {
 		t.Fatalf("valid startup exceeded the control deadline: %+v %v", status, err)
+	}
+}
+
+func TestOwnershipAppearingDuringStartupReleasesSupervisor(t *testing.T) {
+	root := privateTempDir(t)
+	checks := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	err := Run(ctx, Config{StateDir: root, Command: []string{"must-not-spawn"}, BeforeStart: func() error {
+		checks++
+		if checks == 1 {
+			return nil
+		}
+		return errors.New("foreground owner appeared")
+	}})
+	if ctx.Err() != nil {
+		t.Fatal("ownership refusal left a resident supervisor until cancellation")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 2 {
+		t.Fatalf("ownership checks: %d", checks)
+	}
+	if err := CheckAvailable(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(SocketPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("control endpoint remains: %v", err)
 	}
 }

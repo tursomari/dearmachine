@@ -40,6 +40,17 @@ func startSupervised(executable string, args []string, root string) (int, error)
 		s, err := supervisor.RequestUpInDirectory(root, argv, directory, daemonStartupTimeout+5*time.Second)
 		return s.DaemonPID, err
 	}
+	// Refuse a foreign daemon before creating a supervisor record, but allow
+	// a concurrent supervisor to finish publishing its control endpoint.
+	owned, err := supervisor.OwnerPresent(root)
+	if err != nil {
+		return 0, err
+	}
+	if !owned {
+		if err := checkOtherOwner(root, supervisor.Status{}); err != nil {
+			return 0, err
+		}
+	}
 	available := supervisor.CheckAvailable(root)
 	if available != nil && !errors.Is(available, supervisor.ErrLocked) {
 		return 0, fmt.Errorf("supervisor control unavailable: %w", available)

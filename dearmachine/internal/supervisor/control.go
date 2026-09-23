@@ -127,6 +127,14 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer lock.Close()
+	// Recheck after acquiring ownership: another daemon may have appeared
+	// between the caller's preflight and this detached process starting.
+	// A startup refusal must release the lock without publishing a socket.
+	if cfg.BeforeStart != nil {
+		if err := cfg.BeforeStart(); err != nil {
+			return err
+		}
+	}
 	log, err := openLog(cfg.StateDir)
 	if err != nil {
 		return err
@@ -221,11 +229,19 @@ func Run(ctx context.Context, cfg Config) error {
 		exitReason = ""
 		var err error
 		if cfg.BeforeStart != nil {
-			err = cfg.BeforeStart()
+			if err = cfg.BeforeStart(); err != nil {
+				// Ownership can change after the initial preflight or while a
+				// child is down. Relinquish control instead of parking a second
+				// supervisor beside the foreground/service owner.
+				wanted, quitting = false, true
+				state.Supervisor, state.Daemon = "failed", "stopped"
+				state.LastExit = "start refused: " + err.Error()
+				fmt.Fprintln(log, state.LastExit)
+				finish(false, state.LastExit)
+				return
+			}
 		}
-		if err == nil {
-			child, err = spawnInDirectory(cfg.Command, log, cfg.Directory)
-		}
+		child, err = spawnInDirectory(cfg.Command, log, cfg.Directory)
 		if err != nil {
 			failed("start failed: " + err.Error())
 			return

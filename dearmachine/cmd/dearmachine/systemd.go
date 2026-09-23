@@ -146,7 +146,12 @@ func systemdQuote(value string) string {
 	return strconv.Quote(strings.ReplaceAll(strings.ReplaceAll(value, "%", "%%"), "$", "$$"))
 }
 func (m serviceManager) unit() string {
-	return unitMarker + "[Unit]\nDescription=Dear Machine native supervisor\n[Service]\nType=simple\nExecStart=" + systemdQuote(m.executable) + " _supervise --state-dir " + systemdQuote(m.root()) + " -- " + systemdQuote(m.executable) + " up --foreground\nEnvironment=" + strconv.Quote(strings.ReplaceAll("HOME="+m.home, "%", "%%")) + "\nOOMPolicy=continue\nRestart=on-failure\nRestartSec=5s\nKillMode=control-group\nTimeoutStopSec=5\n[Install]\nWantedBy=default.target\n"
+	executable := m.executable
+	if installed, err := m.installedServiceExecutable(); err == nil {
+		executable = installed
+	}
+	servicePath := strings.Join([]string{filepath.Join(m.home, ".local/bin"), filepath.Join(m.home, ".nix-profile/bin"), "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}, ":")
+	return unitMarker + "[Unit]\nDescription=Dear Machine native supervisor\n[Service]\nType=simple\nExecStart=" + systemdQuote(executable) + " _supervise --state-dir " + systemdQuote(m.root()) + " -- " + systemdQuote(executable) + " up --foreground\nEnvironment=" + strconv.Quote(strings.ReplaceAll("HOME="+m.home, "%", "%%")) + "\nEnvironment=" + systemdQuote("PATH="+servicePath) + "\nWorkingDirectory=%h\nUMask=0077\nOOMPolicy=continue\nRestart=on-failure\nRestartSec=5s\nKillMode=control-group\nTimeoutStopSec=5\n[Install]\nWantedBy=default.target\n"
 }
 func (m serviceManager) unitPath() string {
 	config := m.configDir
@@ -193,8 +198,8 @@ func (m serviceManager) configure(kind, choice string) error {
 		if !enabled && consent.Persistence {
 			return errors.New("disable reboot persistence first with dearmachine persistence off")
 		}
-		if err := supervisor.CheckAvailable(m.root()); err != nil {
-			return errors.New("resident supervisor owns this installation; stop it through its existing owner before changing supervision")
+		if err := m.stopIdleSystemdOwner(); err != nil {
+			return err
 		}
 		if !enabled {
 			consent.UseSystemd = false
@@ -242,8 +247,11 @@ func (m serviceManager) configure(kind, choice string) error {
 		return err
 	}
 	if enabled {
-		if _, err := m.run("loginctl", "enable-linger"); err != nil {
-			return errors.New("lingering setup failed; persistence is unconfirmed; inspect dearmachine persistence status")
+		linger, observed := m.run("loginctl", "show-user", strconv.Itoa(os.Getuid()), "--property=Linger", "--value")
+		if observed != nil || linger != "yes" {
+			if _, err := m.run("loginctl", "enable-linger"); err != nil {
+				return errors.New("automatic startup needs permission to keep your user service running after logout; run sudo loginctl enable-linger \"$USER\", then retry dearmachine persistence on; persistence is not yet confirmed")
+			}
 		}
 		if _, err := m.run("systemctl", "--user", "enable", conciergeUnit); err != nil {
 			return errors.New("service enable failed; lingering may be enabled; inspect dearmachine persistence status")
@@ -255,6 +263,49 @@ func (m serviceManager) configure(kind, choice string) error {
 	}
 	return nil
 }
+
+// An explicit service choice may retire a stopped native supervisor. `down`
+// intentionally keeps that supervisor available for later local starts.
+func (m serviceManager) stopIdleSystemdOwner() error {
+	s, err := supervisor.Request(m.root(), "status", time.Second)
+	if err != nil {
+		if err := supervisor.CheckAvailable(m.root()); err != nil {
+			return err
+		}
+		return checkOtherOwner(m.root(), supervisor.Status{})
+	}
+	if err := checkOtherOwner(m.root(), s); err != nil {
+		return err
+	}
+	if s.Supervisor != "stopped" || s.Daemon != "stopped" {
+		return errors.New("stop Dear Machine with dearmachine down before changing service ownership")
+	}
+	mainPID, err := m.run("systemctl", "--user", "show", conciergeUnit, "--property=MainPID", "--value")
+	if err != nil {
+		return errors.New("systemd ownership could not be inspected; no supervisor was stopped")
+	}
+	if mainPID == strconv.Itoa(s.SupervisorPID) {
+		if _, err := m.run("systemctl", "--user", "stop", conciergeUnit); err != nil {
+			return errors.New("systemd shutdown is unconfirmed")
+		}
+	} else {
+		if mainPID != "" && mainPID != "0" {
+			return errors.New("systemd and the native supervisor report different owners; inspect dearmachine status")
+		}
+		if _, err := supervisor.Request(m.root(), "shutdown", 5*time.Second); err != nil {
+			return err
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := supervisor.CheckAvailable(m.root()); err == nil {
+			return nil
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return errors.New("previous supervisor did not release ownership")
+}
+
 func (m serviceManager) persistence() string {
 	if m.platform == "darwin" {
 		switch m.observeLaunchd().login {
@@ -278,7 +329,7 @@ func (m serviceManager) persistence() string {
 	if enabled != "enabled" {
 		return "unknown"
 	}
-	linger, err := m.run("loginctl", "show-user", "--property=Linger", "--value")
+	linger, err := m.run("loginctl", "show-user", strconv.Itoa(os.Getuid()), "--property=Linger", "--value")
 	if err != nil || linger != "yes" {
 		return "unknown"
 	}
@@ -351,6 +402,9 @@ func startWithServiceManager(m serviceManager, args []string, root string) (int,
 		}
 		s, err = supervisor.Request(root, "up", daemonStartupTimeout+5*time.Second)
 		return s.DaemonPID, err
+	}
+	if err := checkOtherOwner(root, supervisor.Status{}); err != nil {
+		return 0, err
 	}
 	if err := supervisor.CheckAvailable(root); err != nil {
 		return 0, err

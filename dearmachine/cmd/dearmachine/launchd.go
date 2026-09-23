@@ -42,7 +42,7 @@ func xmlString(value string) string {
 	_ = xml.EscapeText(&b, []byte(value))
 	return "<string>" + b.String() + "</string>\n"
 }
-func (m serviceManager) launchdExecutable() (string, error) {
+func (m serviceManager) installedServiceExecutable() (string, error) {
 	// Stable managed launchers keep both Standard and Nix environments intact,
 	// and follow the currently activated release instead of pinning an old one.
 	candidates := []string{filepath.Join(m.home, ".local", "bin", "dearmachine"), filepath.Join(m.home, ".nix-profile", "bin", "dearmachine")}
@@ -58,10 +58,10 @@ func (m serviceManager) launchdExecutable() (string, error) {
 			return path, nil
 		}
 	}
-	return "", errors.New("no installed Dear Machine executable is available for launchd")
+	return "", errors.New("no installed Dear Machine executable is available for service supervision")
 }
 func (m serviceManager) launchdPlist() ([]byte, error) {
-	executable, err := m.launchdExecutable()
+	executable, err := m.installedServiceExecutable()
 	if err != nil {
 		return nil, err
 	}
@@ -543,6 +543,9 @@ func (m serviceManager) startLaunchd(args []string, root string) (int, error) {
 		}
 		s, err = supervisor.Request(root, "up", daemonStartupTimeout+5*time.Second)
 		return s.DaemonPID, err
+	}
+	if err := checkOtherOwner(root, supervisor.Status{}); err != nil {
+		return 0, err
 	}
 	if err := supervisor.CheckAvailable(root); err != nil {
 		return 0, err

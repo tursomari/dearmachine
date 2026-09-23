@@ -27,7 +27,7 @@ func TestSystemdSeparateConsent(t *testing.T) {
 					return "", errors.New("unavailable")
 				}
 				if strings.Contains(call, "show-user") {
-					return "yes", nil
+					return "no", nil
 				}
 				return "", nil
 			}}
@@ -153,7 +153,7 @@ func TestSocketPersistenceProbeDoesNotRequireMutationConsent(t *testing.T) {
 				if name == "systemctl" && strings.Join(args, " ") == "--user show "+conciergeUnit+" --property=UnitFileState --value" {
 					return "enabled", nil
 				}
-				if name == "loginctl" && strings.Join(args, " ") == "show-user --property=Linger --value" {
+				if name == "loginctl" && len(args) == 4 && args[0] == "show-user" && args[2] == "--property=Linger" {
 					return "yes", nil
 				}
 				t.Fatalf("unexpected command: %s %v", name, args)
@@ -196,7 +196,7 @@ func TestSystemdCLIWithMockExecutables(t *testing.T) {
 		}
 	}
 	data, _ := os.ReadFile(log)
-	if !strings.Contains(string(data), "enable-linger") || !strings.Contains(string(data), "--user disable") {
+	if strings.Contains(string(data), "enable-linger") || !strings.Contains(string(data), "--property=Linger --value") || !strings.Contains(string(data), "--user disable") {
 		t.Fatalf("calls: %s", data)
 	}
 }
@@ -347,5 +347,47 @@ func TestSystemdUnitPreservesLiteralEnvironmentPaths(t *testing.T) {
 	}
 	if !strings.Contains(unit, `ExecStart="/fixture/bin$$native"`) {
 		t.Fatalf("executable expanded environment: %s", unit)
+	}
+}
+
+func TestSystemdChoiceRetiresStoppedSupervisor(t *testing.T) {
+	deps, root := supervisedDeps(t)
+	home, _ := deps.userHomeDir()
+	if _, err := supervisor.Request(root, "down", time.Second); err != nil {
+		t.Fatal(err)
+	}
+	manager := serviceManager{home: home, executable: "/test/bin/dearmachine", run: func(name string, args ...string) (string, error) {
+		if strings.Contains(strings.Join(args, " "), "MainPID") {
+			return "0", nil
+		}
+		return "", nil
+	}}
+	if err := manager.configure("systemd", "on"); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.CheckAvailable(root); err != nil {
+		t.Fatalf("stopped owner blocks approved service transition: %v", err)
+	}
+	consent, err := manager.load()
+	if err != nil || !consent.UseSystemd || consent.Persistence {
+		t.Fatalf("consent: %+v %v", consent, err)
+	}
+}
+
+func TestPersistenceReusesEnabledLingering(t *testing.T) {
+	manager := serviceManager{home: t.TempDir(), executable: "/test/bin/dearmachine", run: func(name string, args ...string) (string, error) {
+		if name == "loginctl" && len(args) > 0 && args[0] == "enable-linger" {
+			t.Fatal("requested administrator authorization for existing lingering")
+		}
+		if name == "loginctl" {
+			return "yes", nil
+		}
+		return "", nil
+	}}
+	if err := manager.configure("systemd", "on"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.configure("persistence", "on"); err != nil {
+		t.Fatal(err)
 	}
 }
