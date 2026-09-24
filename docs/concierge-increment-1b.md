@@ -105,6 +105,7 @@ The example PIDs are illustrative. Status fields are:
 | `persistence` | `enabled`, `disabled`, `unknown` |
 | `retryInMs` | Optional nonnegative integer, present during backoff |
 | `lastExit` | Optional exit/start failure string |
+| `externalOwner` | Optional boolean, added by native CLI status when it observes another foreground or service owner; never authority to signal a PID |
 | `supervisorPid`, `daemonPid` | Optional Go diagnostic extensions; omitted when zero |
 
 Native installation status is read from the state root/registry, independently

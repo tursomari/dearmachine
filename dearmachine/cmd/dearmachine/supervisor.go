@@ -199,6 +199,8 @@ func runRestart(args []string, getenv func(string) string, deps dependencies) er
 	return err
 }
 
+var errExternalOwner = errors.New("daemon has another foreground or service owner; inspect that owner's lifecycle before switching supervision")
+
 // A stopped resident supervisor must not mask a foreground/service process.
 // Report conflicting ownership without signalling a PID read from a file.
 func checkOtherOwner(root string, s supervisor.Status) error {
@@ -207,7 +209,7 @@ func checkOtherOwner(root string, s supervisor.Status) error {
 		return err
 	}
 	if running && pid != s.DaemonPID {
-		return errors.New("daemon has another foreground or service owner; inspect that owner's lifecycle before switching supervision")
+		return errExternalOwner
 	}
 	return nil
 }

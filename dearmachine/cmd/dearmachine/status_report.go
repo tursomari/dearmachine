@@ -63,6 +63,9 @@ func writeStatusReport(w io.Writer, s supervisor.Status, managed bool, o startup
 		fmt.Fprintf(&text, "Installation: %s\n", s.Installation)
 	}
 	fmt.Fprintf(&text, "Dear Machine: %s\nSupervisor: %s\nCrash recovery: %s\n", daemon, owner, recovery)
+	if s.ExternalOwner {
+		text.WriteString("Ownership: another foreground session or service\nRecovery: Inspect the existing process or service. To switch supervision, stop that owner, then run dearmachine up.\n")
+	}
 	if s.RetryInMs != nil {
 		fmt.Fprintf(&text, "Next retry: %.0f seconds\n", math.Ceil(float64(*s.RetryInMs)/1000))
 	}

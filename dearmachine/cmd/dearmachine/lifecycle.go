@@ -113,13 +113,17 @@ func observeStatus(lockPath string, legacyStatus func(string) (int, bool, error)
 			}
 			return observed, true, err
 		}
+		s.ExternalOwner = errors.Is(queryErr, errExternalOwner)
 		// Clean shutdown leaves a lock file behind. Check ownership and the
 		// foreground client before calling that leftover record stopped.
 		owned, ownerErr := supervisor.OwnerPresent(root)
 		if !owned && ownerErr == nil {
 			_, running, daemonErr := client.DaemonStatus(lockPath)
-			if !running && daemonErr == nil {
-				return s, false, nil
+			if daemonErr == nil {
+				if !running {
+					return s, false, nil
+				}
+				s.ExternalOwner = true
 			}
 		}
 		s.Supervisor, s.Daemon = "unreachable", "unknown"
@@ -133,6 +137,7 @@ func observeStatus(lockPath string, legacyStatus func(string) (int, bool, error)
 		s.Daemon = "unknown"
 	} else if running {
 		s.Daemon, s.DaemonPID = "running", pid
+		s.ExternalOwner = true
 	}
 	return s, false, err
 }

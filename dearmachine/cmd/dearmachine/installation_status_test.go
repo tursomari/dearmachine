@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
 	"github.com/dearmachine/dearmachine/internal/supervisor"
@@ -82,6 +83,9 @@ func TestInstallationStatusIndependentOfSupervisor(t *testing.T) {
 			if response.Version != 1 || !response.OK || s.Installation != wantInstall || s.Supervisor != wantSupervisor || s.Daemon != wantDaemon || s.Persistence != "unknown" {
 				t.Fatalf("status = %+v", response)
 			}
+			if s.ExternalOwner != (kind == "orphan-client") {
+				t.Fatalf("incorrect external ownership observation: %+v", s)
+			}
 			if strings.Contains(out.String(), "@") {
 				t.Fatal("status exposed pair identities")
 			}
@@ -102,6 +106,61 @@ func TestInstallationStatusIndependentOfSupervisor(t *testing.T) {
 				if !strings.Contains(out.String(), "Dear Machine: stopped\nSupervisor: stopped") || !strings.Contains(out.String(), "Crash recovery: inactive until started again") || strings.Contains(out.String(), "Installation: partial") {
 					t.Fatal(out.String())
 				}
+			}
+		})
+	}
+}
+
+// Ownership is a safe observation, not permission to signal that process.
+func TestStatusExplainsExternalOwner(t *testing.T) {
+	for _, kind := range []string{"foreground", "stale-record", "idle-supervisor"} {
+		t.Run(kind, func(t *testing.T) {
+			deps := testDependencies(t, &fakeApplication{})
+			makeUpTestPair(t, deps, "external-status")
+			home, _ := deps.userHomeDir()
+			root := filepath.Join(home, ".dearmachine")
+			if kind == "idle-supervisor" {
+				deps, root = supervisedDeps(t)
+				if _, err := supervisor.Request(root, "down", time.Second); err != nil {
+					t.Fatal(err)
+				}
+			}
+			lockPath := filepath.Join(root, "run", "dearmachine.pid")
+			release, err := client.CreateDaemonLock(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			if kind == "stale-record" {
+				if err := os.WriteFile(filepath.Join(root, "run", "supervisor.lock"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var output strings.Builder
+			deps.stdout = &output
+			if err := runStatus([]string{"--json"}, deps); err != nil {
+				t.Fatal(err)
+			}
+			var response struct {
+				Status struct {
+					ExternalOwner bool `json:"externalOwner"`
+				} `json:"status"`
+			}
+			if err := json.Unmarshal([]byte(output.String()), &response); err != nil {
+				t.Fatal(err)
+			}
+			if !response.Status.ExternalOwner {
+				t.Fatalf("external ownership missing: %s", output.String())
+			}
+			output.Reset()
+			_ = runStatus(nil, deps) // Nonzero status may still describe an unmanaged client.
+			if !strings.Contains(output.String(), "Ownership: another foreground session or service") ||
+				!strings.Contains(output.String(), "Inspect the existing process or service") {
+				t.Fatal(output.String())
+			}
+			pid, running, err := client.DaemonStatus(lockPath)
+			if err != nil || !running || pid != os.Getpid() {
+				t.Fatalf("owner changed: %d %v %v", pid, running, err)
 			}
 		})
 	}

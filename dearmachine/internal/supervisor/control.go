@@ -18,6 +18,8 @@ import (
 // Status matches the installer SocketDaemonControl v1 schema. PIDs are optional
 // diagnostic extensions; they are never authority for signalling a process.
 type Status struct {
+	// ExternalOwner is a read-only native CLI observation, never signalling authority.
+	ExternalOwner       bool   `json:"externalOwner,omitempty"`
 	Installation        string `json:"installation"`
 	Supervisor          string `json:"supervisor"`
 	Daemon              string `json:"daemon"`
