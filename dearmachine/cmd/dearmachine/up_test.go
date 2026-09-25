@@ -659,3 +659,122 @@ func makeUpTestPair(t *testing.T, deps dependencies, seed string) client.Pair {
 	}
 	return pair
 }
+
+func TestUpCreateResumeSwitchesProviderAfterProvisionFailure(t *testing.T) {
+	app := &fakeApplication{}
+	deps := testDependencies(t, app)
+	deps.isInteractive = func(io.Reader) bool { return false }
+	var output strings.Builder
+	deps.stdout = &output
+	initialized := 0
+	deps.initializeEntryPoint = func(_ context.Context, options entrypoint.Options) (entrypoint.Result, error) {
+		initialized++
+		return entrypoint.Result{RepoPath: options.RepoPath}, nil
+	}
+	var providers []string
+	agentmailAttempts := 0
+	deps.provisionInbox = func(_ context.Context, transport string) (client.Inbox, error) {
+		providers = append(providers, transport)
+		if transport == "openmail" {
+			return client.Inbox{}, errors.New("provider unavailable")
+		}
+		agentmailAttempts++
+		if agentmailAttempts == 1 {
+			return client.Inbox{}, errors.New("replacement provider interrupted")
+		}
+		return client.Inbox{Transport: transport, ProviderID: "replacement-inbox", Address: "machine@example.test"}, nil
+	}
+	args := []string{"up", "--create", "--resume", "--email", "user@example.test", "--new-inbox", "--transport", "openmail", "--once"}
+	if err := run(args, func(string) string { return "" }, deps); err == nil || !strings.Contains(err.Error(), "provider unavailable") {
+		t.Fatalf("original failure = %v", err)
+	}
+	args[7] = "agentmail"
+	if err := run(args, func(string) string { return "" }, deps); err == nil || !strings.Contains(err.Error(), "replacement provider interrupted") {
+		t.Fatalf("switch failure = %v", err)
+	}
+	journal, _ := createTransactionPath(deps.userHomeDir)
+	transaction, found, err := loadCreateTransaction(journal)
+	if err != nil || !found || transaction.Request.Transport != "agentmail" || transaction.Phase != createPhaseEntryPointInitialized {
+		t.Fatalf("replacement selection was not persisted: %+v, %v", transaction, err)
+	}
+	// A later invocation can resume without repeating any selection.
+	if err := run([]string{"up", "--create", "--resume", "--once"}, func(string) string { return "" }, deps); err != nil {
+		t.Fatalf("resume replacement: %v", err)
+	}
+	state, err := client.ResolvePairState(deps.userHomeDir, "user@example.test")
+	if err != nil || state.Inbox.Transport != "agentmail" || state.Inbox.ProviderID != "replacement-inbox" {
+		t.Fatalf("replacement pair = %+v, %v", state, err)
+	}
+	if initialized != 1 || !slices.Equal(providers, []string{"openmail", "agentmail", "agentmail"}) || app.runOnceCount != 1 {
+		t.Fatalf("initializations/providers/runs = %d/%v/%d", initialized, providers, app.runOnceCount)
+	}
+	if !strings.Contains(output.String(), "openmail to agentmail") {
+		t.Fatalf("missing provider switch receipt: %s", output.String())
+	}
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Fatalf("completed journal remains: %v", err)
+	}
+}
+
+func TestUpCreateResumeCannotSwitchRecordedInbox(t *testing.T) {
+	deps := testDependencies(t, &fakeApplication{})
+	deps.isInteractive = func(io.Reader) bool { return false }
+	provisions := 0
+	deps.provisionInbox = func(_ context.Context, transport string) (client.Inbox, error) {
+		provisions++
+		return client.Inbox{Transport: transport, ProviderID: "original-inbox", Address: "machine@example.test"}, nil
+	}
+	deps.authorizePair = func(context.Context, string, string, string) error { return errors.New("authorization interrupted") }
+	args := []string{"up", "--create", "--resume", "--email", "user@example.test", "--new-inbox", "--transport", "openmail", "--once"}
+	if err := run(args, func(string) string { return "" }, deps); err == nil || !strings.Contains(err.Error(), "authorization interrupted") {
+		t.Fatalf("initial create = %v", err)
+	}
+	journal, _ := createTransactionPath(deps.userHomeDir)
+	before, _ := os.ReadFile(journal)
+	args[7] = "agentmail"
+	if err := run(args, func(string) string { return "" }, deps); err == nil || !strings.Contains(err.Error(), "inbox or pairing is already recorded") {
+		t.Fatalf("switch recorded inbox = %v", err)
+	}
+	after, _ := os.ReadFile(journal)
+	if string(before) != string(after) || provisions != 1 {
+		t.Fatal("rejected switch mutated the setup or provisioned another inbox")
+	}
+}
+
+func TestResumeCreateRequestPreservesSelectionBoundaries(t *testing.T) {
+	original := createTransaction{Version: createTransactionVersion, Phase: createPhaseEntryPointInitialized,
+		Request: createSelection{Email: "user@example.test", NewInbox: true, Transport: "openmail"}}
+	for _, tc := range []struct {
+		name    string
+		edit    func(*createTransaction)
+		command upCommand
+		allowed bool
+	}{
+		{name: "explicit new provider", command: upCommand{transport: " AGENTMAIL "}, allowed: true},
+		{name: "before initialization", edit: func(tx *createTransaction) { tx.Phase = createPhaseRequested }, command: upCommand{transport: "agentmail"}, allowed: true},
+		{name: "no new choice", command: upCommand{}, allowed: true},
+		{name: "changed sender", command: upCommand{transport: "agentmail", email: "other@example.test"}},
+		{name: "changed inbox", command: upCommand{transport: "agentmail", inbox: "some-inbox"}},
+		{name: "recorded inbox before phase update", edit: func(tx *createTransaction) { tx.Inbox.ProviderID = "recorded" }, command: upCommand{transport: "agentmail"}},
+		{name: "recorded pair before phase update", edit: func(tx *createTransaction) { tx.PairID = "recorded" }, command: upCommand{transport: "agentmail"}},
+		{name: "existing inbox selection", edit: func(tx *createTransaction) { tx.Request.NewInbox = false; tx.Request.Inbox = "existing" }, command: upCommand{transport: "agentmail"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := original
+			if tc.edit != nil {
+				tc.edit(&tx)
+			}
+			before := tx
+			request, err := resumeCreateRequest(tc.command, tx)
+			if (err == nil) != tc.allowed {
+				t.Fatalf("request = %+v, error = %v", request, err)
+			}
+			if tx != before {
+				t.Fatal("selection validation mutated the transaction")
+			}
+			if err == nil && (request.email != tx.Request.Email || request.newInbox != tx.Request.NewInbox || request.inbox != tx.Request.Inbox) {
+				t.Fatal("provider change altered another selection")
+			}
+		})
+	}
+}

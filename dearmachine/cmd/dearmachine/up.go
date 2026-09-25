@@ -107,8 +107,8 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 		}
 		var request createRequest
 		if foundTransaction {
-			request = transaction.Request.createRequest()
-			if err := validateResumeSelection(command, request); err != nil {
+			request, err = resumeCreateRequest(command, transaction)
+			if err != nil {
 				return err
 			}
 			_, _ = fmt.Fprintln(output, "Resuming incomplete Dear Machine setup.")
@@ -135,6 +135,14 @@ func runUp(args []string, getenv func(string) string, deps dependencies) error {
 			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
 				return err
 			}
+		}
+		if request.transport != transaction.Request.Transport {
+			previous := transaction.Request.Transport
+			transaction.Request = newCreateSelection(request)
+			if err := saveCreateTransaction(transactionPath, transaction); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(output, "Changed inbox provider from %s to %s. Completed local setup is retained; previous provider resources are left unchanged.\n", previous, request.transport)
 		}
 		if phaseBeforeCreate(transaction.Phase, createPhaseEntryPointInitialized) {
 			if err := initializeSelectedEntryPoint(context.Background(), cfg, deps, output, command.resume); err != nil {
@@ -616,7 +624,8 @@ background client using the runtime settings recorded by pair creation.
 --foreground keeps that client attached for service managers and containers.
 --pair is repeatable and narrows only this invocation; it never changes global
 state. --create is the sole creation path. Sharing an inbox is always intentional
-and requires --inbox. Pair creation asks the selected transport to authorize the correspondent before publishing local pair state. It also initializes the selected entry point when absent and leaves existing Git repositories unchanged.
+and requires --inbox. With --resume, an explicit --transport change is allowed for a new inbox only before an inbox or pairing is recorded. Completed local setup is retained and previous provider resources are left unchanged.
+Pair creation asks the selected transport to authorize the correspondent before publishing local pair state. It also initializes the selected entry point when absent and leaves existing Git repositories unchanged.
 Creation requires the daemon to be down.
 `)
 	return err
@@ -757,6 +766,26 @@ func phaseBeforeCreate(current, target createPhase) bool {
 
 func knownCreatePhase(phase createPhase) bool {
 	return !phaseBeforeCreate(phase, createPhaseRequested) && !phaseBeforeCreate(createPhasePairCreated, phase)
+}
+
+// A failed provisioning request must not pin a new installation to an
+// unavailable provider. Only an explicit transport change before a durable
+// inbox or pair exists may revise the selection; all other resume checks hold.
+func resumeCreateRequest(command upCommand, transaction createTransaction) (createRequest, error) {
+	request := transaction.Request.createRequest()
+	selected := strings.ToLower(strings.TrimSpace(command.transport))
+	if selected != "" && selected != request.transport {
+		if !request.newInbox || request.inbox != "" ||
+			!phaseBeforeCreate(transaction.Phase, createPhaseInboxResolved) ||
+			transaction.Inbox != (createInbox{}) || transaction.PairID != "" {
+			return createRequest{}, errors.New("cannot change --transport for this incomplete setup: an inbox or pairing is already recorded or an existing inbox was selected; resume with the original selection and preserve that inbox")
+		}
+		request.transport = selected
+	}
+	if err := validateResumeSelection(command, request); err != nil {
+		return createRequest{}, err
+	}
+	return request, nil
 }
 
 func validateResumeSelection(command upCommand, request createRequest) error {
