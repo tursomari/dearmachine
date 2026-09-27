@@ -276,6 +276,10 @@ func (r *AgentRunner) run(
 	if !isCanonicalConversationReference(machtianiID) {
 		return RunResult{}, fmt.Errorf("agent session ID must be a canonical conversation reference")
 	}
+	modelArgs, err := machtianiconfig.RunModelArgs(r.model)
+	if err != nil {
+		return RunResult{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0o700); err != nil {
 		return RunResult{}, fmt.Errorf("create agent output directory: %w", err)
 	}
@@ -289,9 +293,7 @@ func (r *AgentRunner) run(
 	if !session.IsNew {
 		args = append(args, "--resume", machtianiID)
 	}
-	if r.model != "" {
-		args = append(args, "--model", r.model)
-	}
+	args = append(args, modelArgs...)
 	if len(r.backends) == 0 || r.manager == "" {
 		return RunResult{}, fmt.Errorf("agent-managed mode is not configured")
 	}

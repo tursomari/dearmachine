@@ -128,6 +128,26 @@ The suite is organized by responsibility:
   existing-repository settings. Model work and Git LFS are fixtures in this test.
 - `internal/synctrigger` covers maintenance eligibility, fork/run/delete/sync
   ordering, checkpoints, and retries.
+- `internal/machtianiconfig` covers current model selection, explicit run/sync
+  flags, role defaults, and configuration changes between launches. Client
+  follow-up/recovery tests verify forwarding those selections; sync-trigger
+  tests verify cleanup and checkpoint recovery after model failures.
+
+For the native model-selection boundary, build the umbrella-pinned Machtiani
+harness and run this additional credential-free check from `dearmachine/`:
+
+```console
+DEARMACHINE_TEST_MACHTIANI=/absolute/path/to/machtiani go test ./internal/machtianiconfig -run '^TestNativeResumeOverridesRemovedAliases$' -count=1 -v
+```
+
+It uses disposable homes and projects, a loopback provider for real sync, and
+native dry-run sessions. For each of the four roles it removes a historical
+alias, confirms ordinary resume fails, and verifies DearMachine's explicit
+flags allow both the original session and a temporary fork to resume. It also
+checks that sync's explicit selection overrides an unavailable inherited
+discovery alias. The ordinary suite skips this test when the executable is
+not supplied; no installed configuration, real provider, email, or backend is
+used. Dry-run success proves model resolution and resume, not live task output.
 
 The default transport tests remain offline. AgentMail and OpenMail use local
 HTTP servers, Sendmux uses credential-free REST, native JMAP and IMAP protocol fakes, and the agent fixture

@@ -75,7 +75,7 @@ func (r *fakeCommandRunner) Run(
 		return []byte(`{"status":"initialized"}`), nil
 	case "/fake/machtiani project show --json":
 		return []byte(`{"store":"` + r.store + `"}`), nil
-	case "/fake/machtiani sync --include-docs", "/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected":
+	case "/fake/machtiani sync --include-docs", "/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected --file-discovery-model sync-selected":
 		r.syncCount++
 		if r.failSync {
 			return []byte("sync diagnostic"), errors.New("sync failed")
@@ -180,11 +180,11 @@ func TestInitializeCreatesTwoStageBootstrapAndSnapshots(t *testing.T) {
 		"git rev-parse HEAD",
 		"/fake/machtiani init --no-interactive --json",
 		"/fake/machtiani project show --json",
-		"/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected",
+		"/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected --file-discovery-model sync-selected",
 		"git add --all",
 		"git commit -m " + dearMachineCommitMessage,
 		"git rev-parse HEAD",
-		"/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected",
+		"/fake/machtiani sync --include-docs --model sync-selected --answer-model sync-selected --file-discovery-model sync-selected",
 	}
 	if !slices.Equal(runner.calls, wantCalls) {
 		t.Fatalf("commands =\n%s\nwant =\n%s", strings.Join(runner.calls, "\n"), strings.Join(wantCalls, "\n"))

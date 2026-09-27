@@ -230,6 +230,10 @@ func (o *Orchestrator) reviewSession(
 	runCommand CommandRunner,
 	sourceSessionID string,
 ) (string, error) {
+	modelArgs, err := machtianiconfig.RunModelArgs("")
+	if err != nil {
+		return "", err
+	}
 	forkOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, "session", "fork", sourceSessionID)
 	if err != nil {
 		return "", fmt.Errorf("fork session %s: %w: %s", sourceSessionID, err, strings.TrimSpace(string(forkOutput)))
@@ -239,16 +243,9 @@ func (o *Orchestrator) reviewSession(
 		return "", fmt.Errorf("fork session output is empty")
 	}
 
-	runOutput, err := runCommand(
-		ctx,
-		o.RepoPath,
-		o.AgentBinary,
-		"run",
-		"--resume",
-		forkedSessionID,
-		"--file",
-		o.PromptTemplatePath,
-	)
+	runArgs := []string{"run", "--resume", forkedSessionID, "--file", o.PromptTemplatePath}
+	runArgs = append(runArgs, modelArgs...)
+	runOutput, err := runCommand(ctx, o.RepoPath, o.AgentBinary, runArgs...)
 	if err != nil {
 		runErr := fmt.Errorf(
 			"run forked session %s: %w: %s",

@@ -358,6 +358,16 @@ not be mistaken for a complete repository on retry.
 
 ## Entry-point session-driven sync
 
+Every email run, continuation, and maintenance review explicitly selects the
+current planner, answer, file-discovery, and shell-agent aliases from
+DearMachine's private Machtiani configuration. Saved session model choices
+cannot override those flags, so removing a historical alias does not strand a
+conversation. Changes to the configured selections apply on the next launch.
+An explicit DearMachine `--model` overrides the email planner; separately
+configured roles remain independent, and unset roles follow that planner.
+Sync explicitly selects its current sync model for planner, answer, and file
+discovery. Model aliases and provider profiles remain configuration-owned.
+
 When `~/.dearmachine/entrypoint/main` exists, DearMachine Client evaluates its
 machtiani sessions after every successful poll. Override the paths with
 `--entry-point-repo` and `--entry-point-prompt`, or pass an empty

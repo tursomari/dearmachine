@@ -886,7 +886,7 @@ func TestSyncPassesEffectiveModelExplicitly(t *testing.T) {
 			want = oneRun
 		}
 		runner.invoke = func(command *exec.Cmd) error {
-			expected := []string{"machtiani", "sync", "--model", want, "--answer-model", want}
+			expected := []string{"machtiani", "sync", "--model", want, "--answer-model", want, "--file-discovery-model", want}
 			if !slices.Equal(command.Args, expected) {
 				t.Fatalf("sync args = %q", command.Args)
 			}

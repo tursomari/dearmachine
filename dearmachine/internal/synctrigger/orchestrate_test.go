@@ -115,9 +115,9 @@ func TestOrchestrateSuccess(t *testing.T) {
 
 	want := [][]string{
 		{"machtiani", "session", "fork", "older"},
-		{"machtiani", "run", "--resume", "forked-123", "--file", "/prompt.md"},
+		{"machtiani", "run", "--resume", "forked-123", "--file", "/prompt.md", "--model", "sync-selected", "--answer-model", "sync-selected", "--file-discovery-model", "sync-selected", "--shell-agent-model", "sync-selected"},
 		{"machtiani", "session", "delete", "forked-123"},
-		{"machtiani", "sync", "--include-docs", "--model", "sync-selected", "--answer-model", "sync-selected"},
+		{"machtiani", "sync", "--include-docs", "--model", "sync-selected", "--answer-model", "sync-selected", "--file-discovery-model", "sync-selected"},
 	}
 	if len(runner.entries) != len(want) {
 		t.Fatalf("command count = %d, want %d", len(runner.entries), len(want))

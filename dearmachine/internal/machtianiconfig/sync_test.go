@@ -53,7 +53,7 @@ func TestSyncSelectionPrecedence(t *testing.T) {
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
 			args, err := SyncArgs(test.cli, true)
-			want := []string{"sync", "--include-docs", "--model", test.alias, "--answer-model", test.alias}
+			want := []string{"sync", "--include-docs", "--model", test.alias, "--answer-model", test.alias, "--file-discovery-model", test.alias}
 			if err != nil || !reflect.DeepEqual(args, want) {
 				t.Fatalf("args = %q, err = %v", args, err)
 			}

@@ -89,8 +89,8 @@ func ResolveSync(home, oneRun string) (SyncSelection, error) {
 	return SyncSelection{Alias: alias}, nil
 }
 
-// SyncArgs explicitly selects both planner and answer roles: sync uses the
-// answer runtime. Supplying only --model can leave a configured answer model.
+// SyncArgs explicitly selects all prompt roles used by sync. In particular,
+// file discovery must not inherit a different model from the environment.
 func SyncArgs(oneRun string, includeDocs bool) ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -105,7 +105,7 @@ func SyncArgs(oneRun string, includeDocs bool) ([]string, error) {
 		args = append(args, "--include-docs")
 	}
 	if selection.Alias != "" {
-		args = append(args, "--model", selection.Alias, "--answer-model", selection.Alias)
+		args = append(args, "--model", selection.Alias, "--answer-model", selection.Alias, "--file-discovery-model", selection.Alias)
 	}
 	return args, nil
 }
