@@ -97,22 +97,29 @@ while a preview send is uncertain in the same thread remains unprocessed until
 receipt reconciliation can resolve it. It neither starts agent work nor becomes
 approval merely because the thread matches.
 
-An exhausted or uncertain send produces one private notice attempt per record
-and revision. It says delivery could not be confirmed, rather than claiming the
-provider did not send anything. Recovery holds and logs a failing record while
-continuing other records and inbox polling. A scope mismatch never sends old
+An exhausted or uncertain send produces one private notice attempt per phase
+(preview or submission), record and revision. Errors while merely awaiting
+approval do not send or reserve a hold notice. Submission notices explain that
+the reply may already have reached its recipients and will not be sent again
+automatically. Recovery holds and logs a failing record while continuing other
+records and inbox polling. A scope mismatch never sends old
 owner information to a replacement owner.
 
 Consumed, authenticated owner replies that are invalid, superseded, ambiguous
 or not bound to a preview receive private guidance. Feedback neither approves
 nor executes work. Each notice is durably reserved before sending, keyed by the
-consumed message or held revision. A replay or restart cannot create a second
-attempt. If the notice itself fails or its response is lost, it remains visible
-in status; delivery of the notice is not guaranteed and it is not blindly retried.
+consumed message or held phase and revision. A replay or restart cannot create
+a second attempt. If the notice itself fails or its response is lost, it remains
+visible in status; delivery of the notice is not guaranteed and it is not
+blindly retried.
 
 `dearmachine status` and `dearmachine status --json` show unresolved approval
 states and hold reasons, plus unconfirmed private notices. They read metadata
 without migrating databases or loading answer bodies, attachments or tokens.
+
+Historical notices with a shared preview/submission key remain unchanged on
+upgrade. They do not suppress the new phase-specific notices, so an existing
+hold may produce one additional notice after upgrade.
 
 Private pair-database diagnostics are in `outbound_approvals`, keyed by send key
 and revision. Records retain the prepared pair/inbox/owner/request/thread scope,

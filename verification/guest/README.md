@@ -5,14 +5,15 @@ provider diagnostics and remaining live evaluation. The
 [operational contract](../../docs/guest-authorization.md) describes the shipped
 workflow and authentication assumptions.
 
-This suite has four separately checked TLA+ specifications. `Guest.tla` covers
+This suite has five separately checked TLA+ specifications. `Guest.tla` covers
 grant generations, authenticated work and provider reconciliation.
 `Participation.tla` covers automatic owner To/CC invitations, an independent
 private approval for every guest message, recipient privacy and explicit removal.
 `Replacement.tla` covers pending owner replacements, repeated polling, completion
 and restart recovery. `Outbound.tla` specifies owner approval of
 guest-visible answers, now implemented by the runtime durable outbox gate. None is a
-complete refinement proof of the Go application.
+complete refinement proof of the Go application. `OutboundRecovery.tla` is a
+separate companion for recovery and owner feedback.
 
 ```console
 docker pull ghcr.io/viperproject/gobra@sha256:d9dc17cdb3725818943a6224872628610e130c349e059ad393ef4f88878cca19
@@ -256,13 +257,21 @@ of instruction approval, execution, outbox and delivery is claimed.
 
 `OutboundRecovery.tla` and `OutboundRecovery.cfg` check a bounded recovery
 contract separately from `Outbound.tla`; they are not a composed proof or a Go
-refinement. Preview and submission run as separate phase fixtures. Each has
+refinement. Preview and submission retain separate phase fixtures. Each has
 three durable attempts per revision, with a 15-minute retry budget abstracted to
 one time unit starting at its first call. Waiting for approval does not consume
 submission budget. Safe recipient redrafting resets the new revision's budget;
 same-revision retries and restarts cannot refresh it. Exploration bounds time at
 two units and revisions at two. Preview keys change with revision; submission
-keys remain stable.
+keys remain stable. These are provider request keys, separate from notice keys.
+
+The `PhaseFlow = TRUE` fixture follows one record through a preview sending
+hold, matched-receipt reconciliation, abstract exact owner approval, and a
+submission sending hold at the **same revision**. Both operations retain their
+attempt history; submission starts its own budget. This fixture fixes revision
+at one and bounds provider attempts at one per phase; the separate fixtures
+retain three attempts and safe redrafting through revision two. No composition
+with the owner-decision model is claimed.
 
 The default `VerifiedWindow = FALSE` permits retries only after authoritative
 typed evidence that no mutating provider call occurred. Every retry reconciles
@@ -273,23 +282,41 @@ notice. The separate `VerifiedWindow = TRUE` fixture assumes a hypothetical
 external deduplication contract. It does **not** establish a provider guarantee
 or describe runtime support; runtime assumes no verified provider window.
 
-Fourteen state invariants cover types and attempt bounds, durable deadlines,
+Seventeen state invariants cover types and attempt bounds, durable deadlines,
 retry evidence, at-most-one provider acceptance, current eligibility, frozen
 payload/key identity, safe redrafting, notice privacy and at-most-once attempts,
 visible notice/hold status, no invented approval, and premature deferral. Held
-notices are identified by record/revision; consumed-invalid feedback by message
-ID. Durable reservation precedes notice I/O. A crash can leave a notice unsent,
+notices are identified by record/revision/phase; consumed-invalid feedback by
+message ID. Only sending holds are eligible: generic transient failures before
+sending or while awaiting the owner, initial eligibility holds and broken records
+cannot reserve or consume a hold notice. Reservation records retain their
+eligibility and canonical key as history for independent invariants. Every eligible unreserved notice remains
+reservable even when the other phase's notice is already reserved. Durable
+reservation precedes notice I/O. A crash can leave a notice unsent,
 and failure remains visible: notice delivery is not guaranteed. Malformed,
 stale, ambiguous and unbound controls are abstract consumed-invalid inputs;
 premature controls defer without consumption or invalid feedback. Classification,
 authentication, receipt authority, durable storage and lock ordering are trusted
 boundaries, not parser, adapter or database proofs.
 
-The runner includes 43 companion checks: five successful baseline/property
-checks, 26 expected-failing reachability witnesses, 11 safety mutations and one
-liveness mutation. The two-record isolation fixture assumes fair scheduling and
-a reliable provider for the healthy record, with clock/revocation interference
-disabled. Under those assumptions a permanently failing record cannot prevent
+The runner includes 56 companion checks: six successful baseline/property
+checks, 32 expected-failing reachability witnesses, 17 safety mutations and one
+liveness mutation. New witnesses require both notice attempts on revision one,
+including a failed preview notice and a preceding non-sending transient failure;
+an interrupted preview reservation also allows a submission notice. A dedicated
+waiting-owner witness completes the preview, encounters a non-sending transient
+failure, recovers to the same pending state, then reaches a submission hold and
+notice at revision one with the preview notice still unreserved. Preview `done`
+is the pending owner-decision state in this fixture; `BeginSubmission` abstracts
+exact owner approval. Fault recovery restores the saved phase and cannot use
+receipt reconciliation to bypass that pending state. Mutations collapse phase
+storage keys, let a preview reservation suppress submission, reserve notices for
+pre-send and waiting-owner failures, and separately forget preview or submission
+reservations on restart. All checks retain every safety invariant; expected
+failures must identify the named invariant and TLC exit status.
+
+The two-record isolation fixture assumes fair scheduling and a reliable provider
+for the healthy record, with clock/revocation interference disabled. Under those assumptions a permanently failing record cannot prevent
 healthy-record completion or polling; this is not unconditional send liveness.
 
 The full runner and `--outbound-only` include the companion. To check only it:

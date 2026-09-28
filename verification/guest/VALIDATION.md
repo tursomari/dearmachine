@@ -1,5 +1,64 @@
 # Guest authorization validation
 
+## Outbound hold notices by sending phase, 2026-09-28
+
+This revision restricts runtime hold notices to sending states and gives preview
+and submission distinct durable notice keys per record/revision. Submission
+notices explain that delivery is uncertain and will not be retried automatically.
+Legacy shared keys remain stored without suppressing new phase notices. Runtime regression tests, the formal companion,
+its runner and documentation cover the corrected behavior. Generic transient
+failures before sending or while awaiting the owner cannot consume a reservation.
+
+The sequential fixture explicitly reconciles a held preview and then reaches a
+submission hold on revision one. It retains both provider histories and distinct
+durable notice reservations. Separate witnesses exercise two notice attempts, a
+failed preview notice, an interrupted preview reservation, and recovery after a
+pre-send transient. The waiting-owner witness completes preview, enters a
+non-sending transient hold, restores the same pending phase, then holds submission
+and attempts its notice while the preview notice remains unreserved. Faulted
+records cannot enter receipt reconciliation; recovery clears the fault and
+restores the saved phase atomically.
+
+Validation for this state/key fix:
+
+- **PASS — recovery companion.** All 56 checks passed in network-disabled,
+  source-only containers using the pinned TLC/Gobra tooling: six baseline or
+  property checks, 32 expected reachability counterexamples, 17 safety mutations
+  and one liveness mutation. All 17 state invariants remained enabled for the
+  witnesses and mutations; failures required the named property and TLC exit
+  status. The sequential phase fixture exhausted 427,680 distinct states
+  (3,105,229 generated; depth 23). The preview and submission fixtures exhausted
+  648,336 and 630,480 distinct states, respectively. Phase-key collision,
+  suppression by the other phase, pre-send and waiting-owner notice eligibility,
+  and separate preview/submission reservation loss on restart were all detected.
+- **PASS — full expanded formal suite.** All 139 checks completed with their
+  expected results, including the 56 recovery checks, 38 outbound checks, Gobra
+  production predicates, replacement and participation checks, and expanded
+  provider checks. The final provider matrix exhausted 3,748,096 distinct states
+  (53,248,000 generated; depth 17). All 290 saved artifact checksums verified;
+  the saved five models, configurations, runner and production policy match the
+  checked source. Checks used isolated containers without network access.
+- **PASS — full Go checks.** `go test ./...`, `go test -race ./...` and
+  `go vet ./...` exited zero in the isolated Go 1.24.13 container.
+- **PASS — regression sensitivity.** Four focused runtime tests passed the
+  candidate and all four failed against the previous `outbound_recovery.go`,
+  with the expected false-notice or suppressed-notice assertions. They cover
+  sending-only eligibility, independent same-revision phase notices, restart
+  and replay, and preserved legacy shared keys that do not suppress phase keys.
+- **PASS — Linux Nix gate.** All 14 checks and the gate exited zero using
+  Go 1.26.5 in an isolated container.
+
+No new live-provider evaluation was run for this narrow fix. The live results
+in the following historical section describe the earlier source and remain
+historical evidence, not acceptance of this revision.
+
+The fixture bounds provider calls at one per phase and fixes revision one. The
+separate preview/submission fixtures retain the three-attempt budget and two
+revisions. Exact owner approval at `BeginSubmission` is assumed from the outbound
+contract. This is a bounded companion, not a runtime refinement or model
+composition proof. Legacy notice-key migration and runtime replay tests remain
+runtime obligations; this formal run does not establish live provider behavior.
+
 ## Outbound recovery and owner feedback, 2026-09-28
 
 Recovery previously left holds silent, allowed record failures to block polling,

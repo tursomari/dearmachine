@@ -302,7 +302,10 @@ with `outbound-pending:` is only local outbox acceptance, not submission or
 delivery; the outbox retains attachment bytes independently of staging files.
 `outbound_recovery_test.go` covers known non-submission retries, durable budgets,
 revocation before retry, lost responses, private hold notices, record isolation
-and notice replay across restart. `outbound_decision_test.go` covers private
+and notice replay across restart. It also covers transient pending-state errors
+without notices, independent preview/submission notices on the same revision,
+scope suppression and upgrades from historical shared notice keys.
+`outbound_decision_test.go` covers private
 feedback and deferred uncertain decisions; `reply_submission_boundary_test.go`
 checks adapter error classification, disabled AgentMail SDK retries, and
 reused-TCP lost-response/redirect behavior that must not replay mutation bodies. Native

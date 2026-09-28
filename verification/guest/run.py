@@ -84,6 +84,27 @@ def main():
                             'NoSafeRedraft', 'NoExhaustedHold', 'NoExpiredHold',
                             'NoRevokedUnknownHold', 'NoHeldNoticeFailure'):
                 recovery_check('recovery-' + kind + '-' + witness, cfg, witness)
+        # One attempt per phase bounds the sequential fixture; the independent
+        # preview/submission fixtures above retain the full three-attempt budget.
+        phases = recovery.replace('PhaseFlow = FALSE', 'PhaseFlow = TRUE')
+        phases = phases.replace('MaxAttempts = 3', 'MaxAttempts = 1')
+        recovery_check('recovery-phases', phases)
+        for witness in ('NoTwoPhaseNotices', 'NoFailedPreviewThenSubmissionNotice',
+                        'NoTransientThenTwoPhaseNotices', 'NoTransientHold',
+                        'NoInterruptedPreviewThenSubmissionNotice',
+                        'NoPendingTransientThenSubmissionNotice'):
+            recovery_check('recovery-phases-' + witness, phases, witness)
+        for mutant, invariant in {
+            'SharedPhaseNotice': 'NoticePhaseIdentity',
+            'SuppressPhaseNotice': 'NoticeAvailability',
+            'NonSendingNotice': 'NoticeEligibility',
+            'PendingTransientNotice': 'NoticeEligibility',
+            'ForgetPreviewNotice': 'NoticeAtMostOnce',
+            'ForgetSubmissionNotice': 'NoticeAtMostOnce',
+        }.items():
+            recovery_check('recovery-phases-' + mutant,
+                           phases.replace('Mutation = "None"', f'Mutation = "{mutant}"'),
+                           invariant)
         recovery_check('recovery-NoInterruptedNotice', recovery, 'NoInterruptedNotice')
         guaranteed = recovery.replace('VerifiedWindow = FALSE', 'VerifiedWindow = TRUE')
         recovery_check('recovery-verified-window', guaranteed)

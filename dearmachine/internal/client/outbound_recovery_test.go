@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -225,4 +226,167 @@ func TestOutboundRecoveryRedraftTransactionFailureCannotPublishPartialRevision(t
 	if len(records) != 2 || records[0].State != "superseded" || records[1].State != "pending" || len(f.contentReplies(t)) != 2 {
 		t.Fatal("transaction retry did not replace exactly once")
 	}
+}
+
+// A failed recovery transaction while waiting for the owner is not a send
+// failure. It must not consume the notice needed by a subsequent real send.
+func TestOutboundRecoveryPendingFailureThenSubmissionHold(t *testing.T) {
+	f := newOutboundFixture(t, "guest@example.test")
+	f.queue(t)
+	before := f.records(t)[0]
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := f.rig.app.recoverOutbound(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pending := f.records(t)[0]
+	if pending.State != "pending" || pending.HoldReason == "" || len(f.raw.sentReplies()) != 1 {
+		t.Fatal("pending recovery failure sent a false hold notice or lost status")
+	}
+	var notices int
+	if err := f.rig.store.db.QueryRow("SELECT COUNT(*) FROM outbound_notices").Scan(&notices); err != nil || notices != 0 {
+		t.Fatalf("pending failure reserved a notice: count=%d err=%v", notices, err)
+	}
+	f.rig.restartStore(t)
+	f.router.raw = &outboundRejectingTransport{fakeTransport: f.raw, failKey: f.key, reject: true}
+	f.decision(t, "approve-after-transient", "yes", before.PreviewID)
+	recoverOutboundForTest(t, f)
+	assertSubmissionHoldNotice(t, f, 1)
+	if r := f.records(t)[0]; r.State != "sending" || r.Revision != before.Revision || r.SubmissionAttempt.Count != 1 {
+		t.Fatal("submission hold changed revision or retried uncertain send")
+	}
+	f.rig.restartStore(t)
+	f.decision(t, "approve-after-transient", "yes", before.PreviewID)
+	recoverOutboundForTest(t, f)
+	assertSubmissionHoldNotice(t, f, 1)
+}
+
+func assertSubmissionHoldNotice(t *testing.T, f *outboundFixture, index int) {
+	t.Helper()
+	replies := f.raw.sentReplies()
+	if len(replies) != index+1 {
+		t.Fatalf("expected one submission notice at index %d, replies=%d", index, len(replies))
+	}
+	r := replies[index]
+	assertPrivateOutboundNotice(t, r, f.pair.UserEmail)
+	if !strings.Contains(r.Text, "may or may not have reached its recipients") || !strings.Contains(r.Text, "will not be sent again automatically") {
+		t.Fatal("submission notice misrepresents uncertain delivery")
+	}
+}
+
+func TestOutboundRecoveryPreviewAndSubmissionHoldNoticeSameRevision(t *testing.T) {
+	f := newOutboundFixture(t, "guest@example.test")
+	// This test exercises receipt reconciliation, not attachment mapping.
+	f.payload.Files = nil
+	p := &outboundRejectingTransport{fakeTransport: f.raw, failPreview: true, failKey: f.key, reject: true}
+	f.router.raw = p
+	if _, err := f.endpoint.Reply(context.Background(), f.message.MessageID, f.payload, f.key); err == nil {
+		t.Fatal("expected uncertain preview")
+	}
+	held := f.records(t)[0]
+	recoverOutboundForTest(t, f)
+	if replies := f.raw.sentReplies(); len(replies) != 1 || !strings.Contains(replies[0].Text, "approval preview") {
+		t.Fatal("missing preview hold notice")
+	} else {
+		assertPrivateOutboundNotice(t, replies[0], f.pair.UserEmail)
+	}
+	f.rig.restartStore(t)
+	recoverOutboundForTest(t, f)
+	if len(f.raw.sentReplies()) != 1 || len(p.attempts) != 2 {
+		t.Fatal("preview or its notice retried after restart")
+	}
+
+	// Make the original preview's provider acceptance visible after its lost
+	// response. Recovery must reconcile it, without another transport attempt.
+	previewID, err := f.raw.Reply(context.Background(), f.message.MessageID, held.PreviewPayload, "dearmachine-outbound-preview-"+held.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoverOutboundForTest(t, f)
+	if r := f.records(t)[0]; r.State != "pending" || r.Revision != held.Revision || len(p.attempts) != 2 {
+		t.Fatal("preview did not reconcile on the same revision")
+	}
+	f.decision(t, "approve-reconciled-preview", "yes", previewID)
+	recoverOutboundForTest(t, f)
+	assertSubmissionHoldNotice(t, f, 2)
+	if r := f.records(t)[0]; r.State != "sending" || r.Revision != held.Revision || r.SubmissionAttempt.Count != 1 {
+		t.Fatal("submission did not hold on the original revision")
+	}
+	if f.raw.sentReplies()[0].IdempotencyKey == f.raw.sentReplies()[2].IdempotencyKey {
+		t.Fatal("preview and submission share a notice identity")
+	}
+	f.rig.restartStore(t)
+	f.decision(t, "approve-reconciled-preview", "yes", previewID)
+	for i := 0; i < 3; i++ {
+		recoverOutboundForTest(t, f)
+	}
+	assertSubmissionHoldNotice(t, f, 2)
+	if len(p.attempts) != 4 {
+		t.Fatal("uncertain send or phase notice was replayed")
+	}
+}
+
+func TestOutboundHoldNoticeIgnoresNonSendingAndMismatchedScopes(t *testing.T) {
+	for _, state := range []string{"prepared", "pending", "approved", "sent", "rejected", "superseded"} {
+		t.Run(state, func(t *testing.T) {
+			f := newOutboundFixture(t, "guest@example.test")
+			f.queue(t)
+			o := f.records(t)[0]
+			o.State, o.HoldReason = state, "outbound recovery failed; reply held"
+			if err := f.endpoint.reportOutboundHold(context.Background(), f.rig.store, o); err != nil {
+				t.Fatal(err)
+			}
+			var n int
+			if err := f.rig.store.db.QueryRow("SELECT COUNT(*) FROM outbound_notices").Scan(&n); err != nil || n != 0 || len(f.raw.sentReplies()) != 1 {
+				t.Fatalf("non-sending state reserved or sent notice: count=%d err=%v", n, err)
+			}
+		})
+	}
+	for _, state := range []string{"preview_sending", "sending"} {
+		for _, scope := range []string{"pair", "inbox", "owner"} {
+			t.Run(state+"/"+scope, func(t *testing.T) {
+				f := newOutboundFixture(t, "guest@example.test")
+				f.queue(t)
+				o := f.records(t)[0]
+				o.State, o.HoldReason = state, "outbound scope mismatch; reply held"
+				switch scope {
+				case "pair":
+					o.PairID += "-other"
+				case "inbox":
+					o.InboxID += "-other"
+				case "owner":
+					o.Owner = "former-owner@example.test"
+				}
+				if err := f.endpoint.reportOutboundHold(context.Background(), f.rig.store, o); err != nil {
+					t.Fatal(err)
+				}
+				var n int
+				if err := f.rig.store.db.QueryRow("SELECT COUNT(*) FROM outbound_notices").Scan(&n); err != nil || n != 0 || len(f.raw.sentReplies()) != 1 {
+					t.Fatalf("scope mismatch reserved or sent notice: count=%d err=%v", n, err)
+				}
+			})
+		}
+	}
+}
+
+func TestOutboundRecoveryLegacyHoldNoticeDoesNotSuppressPhaseNotice(t *testing.T) {
+	f := newOutboundFixture(t, "guest@example.test")
+	f.queue(t)
+	o := f.records(t)[0]
+	legacyKey := outboundNoticeKey("hold", fmt.Sprintf("%s/%d", o.Key, o.Revision))
+	if err := f.endpoint.sendOutboundNotice(context.Background(), f.rig.store, o.Message, o.Owner, legacyKey, "Synthetic historical shared hold notice"); err != nil {
+		t.Fatal(err)
+	}
+	f.rig.restartStore(t)
+	f.router.raw = &outboundRejectingTransport{fakeTransport: f.raw, failKey: f.key, reject: true}
+	f.decision(t, "approve-after-upgrade", "yes", o.PreviewID)
+	recoverOutboundForTest(t, f)
+	assertSubmissionHoldNotice(t, f, 2)
+	var state, receipt string
+	if err := f.rig.store.db.QueryRow("SELECT state,receipt FROM outbound_notices WHERE notice_key=?", legacyKey).Scan(&state, &receipt); err != nil || state != "sent" || receipt != f.raw.sentReplies()[1].ReceiptID {
+		t.Fatalf("legacy notice changed: state=%s receipt=%s err=%v", state, receipt, err)
+	}
+	f.rig.restartStore(t)
+	recoverOutboundForTest(t, f)
+	assertSubmissionHoldNotice(t, f, 2)
 }

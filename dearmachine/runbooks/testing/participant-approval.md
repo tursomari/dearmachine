@@ -310,8 +310,15 @@ and exact run-created policy entries.
   three attempts per phase/revision within the original 15-minute budget.
   Unknown acceptance must never be treated as local non-submission.
 - Lose a send response and delay or corrupt its receipt. Require one private
-  hold notice attempt, a visible state/reason in native text and JSON status,
-  and no automatic resend. Losing the notice response must not loop notices.
+  hold notice attempt per phase and revision, a visible state/reason in native
+  text and JSON status, and no automatic resend. Losing the notice response must not loop notices.
+- Fail recovery while a record is pending owner approval. Require status/log
+  evidence without a hold notice or notice reservation. Then approve it and
+  hold its submission: require one private submission notice.
+- Hold a preview, observe its private notice, then reconcile the preview and
+  approve the same revision. Hold the submission and require a separate private
+  notice explaining delivery uncertainty. Replay and restart must not repeat
+  either phase notice.
 - Keep a broken outbox record while polling an independent request and
   recovering another record. Confirm that both continue.
 - Send malformed, stale, ambiguous and unmatched owner controls. Require one

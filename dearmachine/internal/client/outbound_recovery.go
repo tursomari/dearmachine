@@ -83,7 +83,7 @@ func (e *pairEndpoint) sendOutboundNotice(ctx context.Context, s *Store, parent 
 }
 
 func (e *pairEndpoint) reportOutboundHold(ctx context.Context, s *Store, o outboundApproval) error {
-	if o.HoldReason == "" || o.State == "sent" || o.State == "rejected" || o.State == "superseded" {
+	if o.HoldReason == "" || (o.State != "preview_sending" && o.State != "sending") {
 		return nil
 	}
 	attempt := o.SubmissionAttempt
@@ -98,9 +98,13 @@ func (e *pairEndpoint) reportOutboundHold(ctx context.Context, s *Store, o outbo
 	if o.PairID != e.pairID || o.InboxID != guestInboxKey(e.router.inbox) || o.Owner != e.controllingParticipant() {
 		return nil
 	}
-	text := "Delivery of the reply to this request could not be confirmed. The reply is held; check Dear Machine status."
+	kind := "hold-submission"
+	text := "Dear Machine could not confirm whether the reply to this request was sent. It may or may not have reached its recipients and will not be sent again automatically; check Dear Machine status."
 	if o.State == "preview_sending" {
+		kind = "hold-preview"
 		text = "Delivery of the approval preview for this request could not be confirmed. The reply is held and has not been released to guests; check Dear Machine status."
 	}
-	return e.sendOutboundNotice(ctx, s, o.Message, o.Owner, outboundNoticeKey("hold", fmt.Sprintf("%s/%d", o.Key, o.Revision)), text)
+	// Keep legacy shared hold keys as history. They cannot establish which
+	// phase was reported and must not suppress either phase-specific notice.
+	return e.sendOutboundNotice(ctx, s, o.Message, o.Owner, outboundNoticeKey(kind, fmt.Sprintf("%s/%d", o.Key, o.Revision)), text)
 }
