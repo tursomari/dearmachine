@@ -305,6 +305,11 @@ revocation before retry, lost responses, private hold notices, record isolation
 and notice replay across restart. It also covers transient pending-state errors
 without notices, independent preview/submission notices on the same revision,
 scope suppression and upgrades from historical shared notice keys.
+`outbound_scheduling_test.go` blocks an independent worker or maintenance lane
+and requires an approved reply to submit through ongoing polling before that
+lane finishes, with exact content/recipients and no replay duplicates. It also
+checks that guest removal later in the same poll requires a new preview before
+any guest-visible submission.
 `outbound_decision_test.go` covers private
 feedback and deferred uncertain decisions; `reply_submission_boundary_test.go`
 checks adapter error classification, disabled AgentMail SDK retries, and

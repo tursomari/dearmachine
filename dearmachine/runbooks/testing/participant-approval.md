@@ -319,6 +319,11 @@ and exact run-created policy entries.
   approve the same revision. Hold the submission and require a separate private
   notice explaining delivery uncertainty. Replay and restart must not repeat
   either phase notice.
+- Keep an independent agent task running, then approve a completed reply in
+  another shared thread. Require submission before the independent task finishes,
+  with the exact approved envelope and content. Repeat while maintenance is
+  active and verify replay does not submit twice. Use a disposable fixture for
+  blocked lanes; do not interrupt production work to create this condition.
 - Keep a broken outbox record while polling an independent request and
   recovering another record. Confirm that both continue.
 - Send malformed, stale, ambiguous and unmatched owner controls. Require one

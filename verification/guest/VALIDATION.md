@@ -1,5 +1,47 @@
 # Guest authorization validation
 
+## Outbound progress during active work, 2026-09-28
+
+A host-client observation exposed a scheduling gap: an authenticated Yes became
+durably approved with zero submission attempts while another thread remained
+running. Dispatch continued polling, but outbox recovery occurred only before
+and after the whole execution batch. Maintenance had the same dependency.
+
+The runtime now advances the outbox after each successful polling batch, using
+the existing durable locking, recipient checks and receipt reconciliation.
+Incoming removals in that batch are handled before submission. Startup and
+post-dispatch recovery remain in place.
+
+- **PASS — scheduling companion.** All 15 checks in
+  `OutboundScheduling.tla` completed with their expected results in isolated,
+  network-disabled containers using the pinned TLC tool. Idle, busy-worker and
+  busy-maintenance schedules preserve approval and eligibility checks and
+  at-most-once submission attempts. Witnesses reach submission while execution
+  remains busy, including uncertain outcomes held without retry. Both mutations
+  restoring the wait-for-idle dependency fail temporal progress while polling
+  continues; eligibility and uncertain-retry mutations fail their named safety
+  invariants.
+- **PASS — runtime regressions.** The production dispatch and maintenance poll
+  loops submit the exact approved result before a deliberately blocked lane is
+  released. Replayed approval does not repeat submission. Both tests fail against
+  the previous polling implementation because submission never happens while
+  the lane is blocked. A same-poll Yes followed by removal requires a revised
+  preview before any guest-visible submission.
+- **PASS — full Go checks.** `go test ./...`, `go test -race ./...` and
+  `go vet ./...` passed in an isolated Go 1.24 container. Tested Go sources,
+  tests and module files were compared with the candidate.
+- **PASS — Linux Nix checks.** All 14 checks passed using the pinned Go 1.26.5
+  toolchain in an isolated container. Build-user runtime directories were
+  provisioned inside that container; no host client was launched for testing.
+
+The scheduling model assumes an issued immutable preview and an authenticated,
+correctly bound owner approval from the outbound contract. Progress additionally
+requires completed polling/outbox passes, stable eligible recipients and a
+responsive reliable provider. It does not assume unrelated work ever finishes.
+The model is a separate bounded companion, not a Go refinement or model
+composition proof. No new live-provider delivery is claimed by these tests;
+the host observation established the pre-fix stall, not delivery by this revision.
+
 ## Outbound hold notices by sending phase, 2026-09-28
 
 This revision restricts runtime hold notices to sending states and gives preview

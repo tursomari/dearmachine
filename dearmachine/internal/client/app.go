@@ -477,7 +477,11 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		}
 		work.enqueue(messageWork{message: message, pending: pending, recovering: existed})
 	}
-	return nil
+	// Dispatch and maintenance both poll while owning execution lanes. Advance
+	// the outbox here so an approved reply never waits for unrelated agent work
+	// to finish. Keep the whole poll batch ahead of submission (including any
+	// revocations), and reuse the durable send/reconciliation lock and checks.
+	return a.recoverOutbound(ctx)
 }
 
 func (a *App) handleParticipantMessage(

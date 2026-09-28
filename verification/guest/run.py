@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True, help='New artifact directory outside the checkout')
     parser.add_argument('--expand', action='store_true', help='Also explore multiple scopes and shared provider entries')
     parser.add_argument('--outbound-only', action='store_true', help='Check outbound approval plus recovery and feedback contracts')
+    parser.add_argument('--scheduling-only', action='store_true', help='Check only outbound scheduling progress')
     parser.add_argument('--recovery-only', action='store_true', help='Check only outbound recovery and feedback')
     args = parser.parse_args()
     output = args.output.resolve()
@@ -41,7 +42,7 @@ def main():
         if hashlib.sha256(data).hexdigest() != TLC_SHA:
             raise SystemExit('TLC checksum mismatch')
         (snapshot / 'tla2tools.jar').write_bytes(data)
-        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg', 'Replacement.tla', 'Replacement.cfg', 'Outbound.tla', 'Outbound.cfg', 'OutboundRecovery.tla', 'OutboundRecovery.cfg'):
+        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg', 'Replacement.tla', 'Replacement.cfg', 'Outbound.tla', 'Outbound.cfg', 'OutboundRecovery.tla', 'OutboundRecovery.cfg', 'OutboundScheduling.tla', 'OutboundScheduling.cfg'):
             shutil.copyfile(ROOT / 'verification/guest' / file, snapshot / file)
             shutil.copyfile(snapshot / file, output / file)
         source = (ROOT / 'dearmachine/internal/client/guest_policy.go').read_text()
@@ -58,6 +59,47 @@ def main():
                 raise SystemExit(f'{label} failed: exit {result.returncode}; inspect {output / (label + ".log")}')
             print(f'{label}: expected exit {expected}', flush=True)
         tlc = common + ['--entrypoint', 'java', IMAGE, '-XX:+UseParallelGC', '-Xmx2g', '-cp', '/proof/tla2tools.jar', 'tlc2.TLC', '-workers', '2', '-metadir', '/tmp/tlc']
+        scheduling = (snapshot / 'OutboundScheduling.cfg').read_text()
+        def scheduling_check(label, cfg, invariant=None, temporal=False):
+            if 'Reliable = FALSE' in cfg or 'AllowRevoke = TRUE' in cfg:
+                cfg = cfg.replace('PROPERTY Progress', '')
+            if invariant:
+                cfg = cfg.replace('INVARIANTS ', 'INVARIANTS ' + invariant + ' ')
+            path = label + '.cfg'
+            (snapshot / path).write_text(cfg)
+            shutil.copyfile(snapshot / path, output / path)
+            expected = 13 if temporal else 12 if invariant else 0
+            marker = ('Temporal properties were violated' if temporal else
+                      f'Invariant {invariant} is violated' if invariant else
+                      'Model checking completed. No error has been found.')
+            run(label, tlc + ['-config', '/proof/' + path, '/proof/OutboundScheduling.tla'],
+                expected, marker)
+        for kind in ('idle', 'worker', 'maintenance'):
+            cfg = scheduling.replace('BusyKind = "worker"', f'BusyKind = "{kind}"')
+            scheduling_check('scheduling-' + kind, cfg)
+            if kind != 'idle':
+                scheduling_check('scheduling-' + kind + '-before-idle', cfg,
+                                 'NoSubmissionWhileBusy')
+                scheduling_check('scheduling-' + kind + '-WaitForIdle',
+                                 cfg.replace('Mutation = "None"', 'Mutation = "WaitForIdle"'),
+                                 temporal=True)
+                uncertain = cfg.replace('Reliable = TRUE', 'Reliable = FALSE')
+                scheduling_check('scheduling-' + kind + '-uncertain', uncertain)
+                scheduling_check('scheduling-' + kind + '-uncertain-witness', uncertain,
+                                 'NoUncertainWhileBusy')
+        revoked = scheduling.replace('AllowRevoke = FALSE', 'AllowRevoke = TRUE')
+        scheduling_check('scheduling-revoked', revoked)
+        scheduling_check('scheduling-redraft', revoked, 'NoRevokedRedraft')
+        scheduling_check('scheduling-SkipEligibility',
+                         revoked.replace('Mutation = "None"', 'Mutation = "SkipEligibility"'),
+                         'EligibilityAtSubmission')
+        scheduling_check('scheduling-RetryUncertain',
+                         scheduling.replace('Reliable = TRUE', 'Reliable = FALSE').replace(
+                             'Mutation = "None"', 'Mutation = "RetryUncertain"'),
+                         'AtMostOneAttempt')
+        if args.scheduling_only:
+            record_artifacts()
+            return
         recovery = (snapshot / 'OutboundRecovery.cfg').read_text()
         recovery_invariants = next(line for line in recovery.splitlines()
                                    if line.startswith('INVARIANTS '))

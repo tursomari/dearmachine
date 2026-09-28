@@ -5,7 +5,7 @@ provider diagnostics and remaining live evaluation. The
 [operational contract](../../docs/guest-authorization.md) describes the shipped
 workflow and authentication assumptions.
 
-This suite has five separately checked TLA+ specifications. `Guest.tla` covers
+This suite has six separately checked TLA+ specifications. `Guest.tla` covers
 grant generations, authenticated work and provider reconciliation.
 `Participation.tla` covers automatic owner To/CC invitations, an independent
 private approval for every guest message, recipient privacy and explicit removal.
@@ -13,7 +13,8 @@ private approval for every guest message, recipient privacy and explicit removal
 and restart recovery. `Outbound.tla` specifies owner approval of
 guest-visible answers, now implemented by the runtime durable outbox gate. None is a
 complete refinement proof of the Go application. `OutboundRecovery.tla` is a
-separate companion for recovery and owner feedback.
+separate companion for recovery and owner feedback. `OutboundScheduling.tla`
+checks outbox progress while unrelated execution or maintenance stays busy.
 
 ```console
 docker pull ghcr.io/viperproject/gobra@sha256:d9dc17cdb3725818943a6224872628610e130c349e059ad393ef4f88878cca19
@@ -323,6 +324,48 @@ The full runner and `--outbound-only` include the companion. To check only it:
 
 ```sh
 python3 verification/guest/run.py --recovery-only --output /path/to/new-recovery-artifacts
+```
+
+## Outbound scheduling progress
+
+`OutboundScheduling.tla` isolates a scheduling obligation omitted by the earlier
+recovery-isolation fixture: polling must advance the outbox even while an agent
+worker or maintenance owns an execution lane. The runtime now calls
+`recoverOutbound` at the end of `pollAndClaim`, after processing the entire
+incoming batch, including decisions and removals. Dispatch and maintenance both
+use that polling path. Initial and post-dispatch recovery remain in place.
+
+The model starts with an issued immutable preview and assumes a correctly
+authenticated, correlated owner decision from the outbound contract. A poll
+records approval; the following outbox pass checks eligibility and attempts
+submission. Unrelated work may remain busy forever: its completion is not a
+fairness assumption. With fair completed polling/outbox passes, stable eligible
+recipients and a responsive reliable provider, the approved reply eventually
+submits. Fairness assumes local database/lock operations finish; arbitrary
+provider outages, endless cancellation and process crashes have no delivery
+guarantee.
+
+Fifteen checks cover idle, busy-worker and busy-maintenance schedules, successful
+submission before the busy lane finishes, uncertain acceptance without retry,
+and revocation requiring redrafting. Mutations restore the old wait-for-idle
+dependency, skip eligibility or retry uncertain sends. The wait-for-idle
+mutations must fail the temporal progress property even though polling continues.
+All safety checks remain enabled for witnesses and mutations. The model is a
+separate bounded abstraction, not a composition or Go refinement proof; immutable
+payloads, exact approval and recovery details remain in the other models.
+
+`outbound_scheduling_test.go` exercises both production polling loops with a
+blocked execution lane, real SQLite state and the fake transport. It requires
+submission of the exact approved content and envelope before releasing the lane,
+and rejects repeated submission on approval replay. A same-poll approval and
+removal must redraft before any guest-visible submission. These are deterministic
+scheduler regressions, not live-provider delivery evidence.
+
+The full runner, `--outbound-only` and `--recovery-only` include scheduling.
+To run just this companion:
+
+```sh
+python3 verification/guest/run.py --scheduling-only --output /path/to/new-scheduling-artifacts
 ```
 
 ## Production Boolean contracts

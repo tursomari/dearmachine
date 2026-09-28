@@ -117,6 +117,11 @@ blindly retried.
 states and hold reasons, plus unconfirmed private notices. They read metadata
 without migrating databases or loading answer bodies, attachments or tokens.
 
+Successful inbox polls also advance the approval outbox, including while
+unrelated agent work or maintenance is active. A recorded Yes does not wait
+for other threads to finish. Each polling pass processes incoming controls first and
+retains recipient rechecks and durable send/reconciliation protections.
+
 Historical notices with a shared preview/submission key remain unchanged on
 upgrade. They do not suppress the new phase-specific notices, so an existing
 hold may produce one additional notice after upgrade.
