@@ -20,11 +20,18 @@ def main():
     parser.add_argument('--tlc-jar', type=Path, help='Pre-downloaded pinned tla2tools.jar')
     parser.add_argument('--output', type=Path, required=True, help='New artifact directory outside the checkout')
     parser.add_argument('--expand', action='store_true', help='Also explore multiple scopes and shared provider entries')
+    parser.add_argument('--outbound-only', action='store_true', help='Check only the proposed outbound approval contract')
     args = parser.parse_args()
     output = args.output.resolve()
     if output == ROOT or ROOT in output.parents:
         parser.error('artifacts must be outside the checkout')
     output.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(Path(__file__), output / 'run.py')
+    (output / 'tools.txt').write_text(f'Gobra image: {IMAGE}\nTLC: {TLC_URL}\nTLC SHA256: {TLC_SHA}\n')
+    def record_artifacts():
+        files = sorted(path for path in output.iterdir() if path.name != 'SHA256SUMS')
+        (output / 'SHA256SUMS').write_text(''.join(
+            f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n' for path in files))
     docker = ['docker'] + (['--host', args.docker_host] if args.docker_host else [])
     subprocess.run(docker + ['image', 'inspect', IMAGE], check=True, stdout=subprocess.DEVNULL)
     with tempfile.TemporaryDirectory(prefix='dearmachine-guest-proof-') as name:
@@ -33,10 +40,11 @@ def main():
         if hashlib.sha256(data).hexdigest() != TLC_SHA:
             raise SystemExit('TLC checksum mismatch')
         (snapshot / 'tla2tools.jar').write_bytes(data)
-        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg', 'Replacement.tla', 'Replacement.cfg'):
+        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg', 'Replacement.tla', 'Replacement.cfg', 'Outbound.tla', 'Outbound.cfg'):
             shutil.copyfile(ROOT / 'verification/guest' / file, snapshot / file)
             shutil.copyfile(snapshot / file, output / file)
         source = (ROOT / 'dearmachine/internal/client/guest_policy.go').read_text()
+        (output / 'guest_policy.go').write_text(source)
         (output / 'source.sha256').write_text(hashlib.sha256(source.encode()).hexdigest() + '\n')
         # Gobra receives the exact production declarations and bodies; only
         # annotation comment prefixes are removed. No independent proof copy.
@@ -48,8 +56,82 @@ def main():
             if result.returncode != expected or (marker and marker not in result.stdout):
                 raise SystemExit(f'{label} failed: exit {result.returncode}; inspect {output / (label + ".log")}')
             print(f'{label}: expected exit {expected}', flush=True)
-        run('gobra', common + [IMAGE, '-i', '/proof/policy.gobra'], marker='Gobra found 0 errors')
         tlc = common + ['--entrypoint', 'java', IMAGE, '-XX:+UseParallelGC', '-Xmx2g', '-cp', '/proof/tla2tools.jar', 'tlc2.TLC', '-workers', '2', '-metadir', '/tmp/tlc']
+        outbound = (snapshot / 'Outbound.cfg').read_text()
+        outbound_invariants = next(line for line in outbound.splitlines()
+                                   if line.startswith('INVARIANTS '))
+        def outbound_check(label, cfg, expected_invariant=None, witness=False):
+            # Keep all independent properties enabled. Mutation expectations name
+            # the specific violated state property; there is no Safety flag.
+            if witness:
+                cfg = cfg.replace(outbound_invariants,
+                                  outbound_invariants + ' ' + expected_invariant)
+            path = label + '.cfg'
+            (snapshot / path).write_text(cfg)
+            shutil.copyfile(snapshot / path, output / path)
+            expected = 12 if expected_invariant else 0
+            marker = (f'Invariant {expected_invariant} is violated' if expected
+                      else 'Model checking completed. No error has been found.')
+            run(label, tlc + ['-config', '/proof/' + path, '/proof/Outbound.tla'], expected, marker)
+        outbound_check('outbound', outbound)
+        mutations = {
+            'PublicPreview': 'PreviewPrivacy',
+            'MissingBanner': 'PreviewPrivacy',
+            'IncompletePreview': 'PreviewPrivacy',
+            'StalePreview': 'PreviewEligibility',
+            'ForgedOwner': 'ApprovalEvidence',
+            'WrongOwner': 'ApprovalEvidence',
+            'WrongRequest': 'ApprovalEvidence',
+            'WrongScopeRequest': 'ApprovalEvidence',
+            'StaleDecision': 'ApprovalEvidence',
+            'InvalidDecision': 'ApprovalEvidence',
+            'NoMeansYes': 'ApprovalEvidence',
+            'IgnoreRevocation': 'SubmissionEligibility',
+            'StaleGeneration': 'SubmissionEligibility',
+            'BypassApproval': 'ApprovalEvidence',
+            'ReuseReplyApproval': 'ApprovalEvidence',
+            'SendRejected': 'ApprovalEvidence',
+            'ChangeBody': 'ApprovedDisclosure',
+            'ChangeAttachments': 'ApprovedDisclosure',
+            'AddRecipient': 'ApprovedDisclosure',
+            'BannerInRelease': 'ReleaseWithoutBanner',
+            'MutableRetry': 'RetryIdentity',
+            'RestartApproves': 'ApprovalEvidence',
+            'ApproveUnseen': 'ApprovedWhatWasPreviewed',
+        }
+        for mutant, invariant in mutations.items():
+            cfg = outbound.replace('Mutation = "None"', f'Mutation = "{mutant}"')
+            if mutant in ('WrongOwner', 'WrongScopeRequest'):
+                cfg = cfg.replace('Scopes = {s1}', 'Scopes = {s1, s2}')
+                cfg = cfg.replace('GuestMessages = {g1}', 'GuestMessages = {}')
+            if mutant == 'AddRecipient':
+                cfg = cfg.replace('Guests = {a}', 'Guests = {a, b}')
+                cfg = cfg.replace('GuestMessages = {g1}', 'GuestMessages = {}')
+            if mutant == 'BypassApproval':
+                # One mutation, separately exercised for both message origins.
+                for origin, without in (('owner', 'GuestMessages = {g1}'),
+                                        ('guest', 'OwnerMessages = {o1}')):
+                    fixture = cfg.replace(without, without.split(' = ')[0] + ' = {}')
+                    outbound_check('outbound-' + mutant + '-' + origin, fixture, invariant)
+            else:
+                outbound_check('outbound-' + mutant, cfg, invariant)
+        for witness in ('NoSharedOwner', 'NoSharedGuest', 'NoPrivate', 'NoRejection',
+                        'NoReapprovedDraft', 'NoRepeatedAnswers', 'NoIndependentAnswer',
+                        'NoReinvitedAnswer', 'NoBoundedHold'):
+            outbound_check('outbound-' + witness, outbound, witness, witness=True)
+        if args.expand:
+            scoped = outbound.replace('Scopes = {s1}', 'Scopes = {s1, s2}')
+            scoped = scoped.replace('GuestMessages = {g1}', 'GuestMessages = {}')
+            outbound_check('outbound-scopes', scoped)
+            multiple = outbound.replace('Guests = {a}', 'Guests = {a, b}')
+            multiple = multiple.replace('GuestMessages = {g1}', 'GuestMessages = {}')
+            outbound_check('outbound-multi-guest', multiple)
+            for witness in ('NoMultiGuest', 'NoReducedRecipients'):
+                outbound_check('outbound-' + witness, multiple, witness, witness=True)
+        if args.outbound_only:
+            record_artifacts()
+            return
+        run('gobra', common + [IMAGE, '-i', '/proof/policy.gobra'], marker='Gobra found 0 errors')
         replacement = (snapshot / 'Replacement.cfg').read_text()
         for fixture, mutation in (
                 ('Clean', 'None'), ('LegacyUnsent', 'None'), ('LegacySent', 'None'),
@@ -117,6 +199,10 @@ def main():
                 matrix = matrix.replace(f'{dimension} = {{{first}}}', f'{dimension} = {{{first}, {second}}}')
             (snapshot / 'Matrix.cfg').write_text(matrix)
             run('tlc-matrix', tlc + ['-config', '/proof/Matrix.cfg', '/proof/Guest.tla'], marker='Model checking completed. No error has been found.')
+        # Include generated baseline configurations as well as checked sources.
+        for path in snapshot.glob('*.cfg'):
+            shutil.copyfile(path, output / path.name)
+        record_artifacts()
 
 
 

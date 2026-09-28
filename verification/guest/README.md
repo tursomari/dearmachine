@@ -5,12 +5,14 @@ provider diagnostics and remaining live evaluation. The
 [operational contract](../../docs/guest-authorization.md) describes the shipped
 workflow and authentication assumptions.
 
-This suite has three separately checked TLA+ specifications. `Guest.tla` covers
+This suite has four separately checked TLA+ specifications. `Guest.tla` covers
 grant generations, authenticated work and provider reconciliation.
 `Participation.tla` covers automatic owner To/CC invitations, an independent
 private approval for every guest message, recipient privacy and explicit removal.
 `Replacement.tla` covers pending owner replacements, repeated polling, completion
-and restart recovery. None is a complete refinement proof of the Go application.
+and restart recovery. `Outbound.tla` specifies the proposed owner approval of
+guest-visible answers; it is not yet implemented in the client. None is a
+complete refinement proof of the Go application.
 
 ```console
 docker pull ghcr.io/viperproject/gobra@sha256:d9dc17cdb3725818943a6224872628610e130c349e059ad393ef4f88878cca19
@@ -23,6 +25,150 @@ checkout. `--docker-host unix:///var/run/docker.sock` selects another socket.
 configurations, hashes and logs. Only dependency download needs networking;
 checks use isolated containers with source-only snapshots and no credentials or
 Git plumbing.
+
+## Proposed outbound approval contract
+
+`Outbound.tla` specifies the next implementation, not shipped behavior. The
+existing participation model still describes direct submission after execution.
+The models are checked separately; composition and Go conformance remain future
+work. The six Gobra-verified production predicates below are unchanged and do
+not yet enforce outbound approval.
+
+A scope identifies the exact owner pair, provider inbox and original thread.
+`Accept` captures original recipient visibility and each active guest's grant
+generation. `Prepare` abstracts the completed result of upstream execution.
+Neither owner nor guest origin bypasses outbound approval. Guest execution and
+its instruction approval are assumed upstream; the model does not represent an
+instruction-approval record or claim a composed proof of the two approvals. The
+gate is intended for every guest-visible reply, including error/status answers;
+the model does not enumerate the Go sending call sites.
+
+The modeled workflow is:
+
+1. Prepare an immutable answer containing body, attachment identity, recipients,
+   per-guest generation bindings and a false approval-banner flag.
+2. Check recipient eligibility and send an owner-only preview. Its payload is
+   exactly the draft with the banner set to true; proposed recipients are part
+   of the preview, not its actual transport envelope. Record the issued revision,
+   complete preview payload and actual owner-only envelope in `issuedPreviews`.
+3. Accept an authenticated owner's Yes or No correlated to an actually issued
+   preview of that exact request and revision. Record the sender, authentication,
+   value, request and revision independently of the resulting approval status.
+   No terminates that proposal. Other replies leave it pending.
+4. Recheck eligibility and submit the exact approved draft without the banner.
+   Record the actual grant state and eligible guests at first submission.
+   Owner-only replies need no approval, even in a previously shared thread.
+
+**Recipient changes require re-preview when any guests remain.** If the owner
+removes a guest while a preview is pending, a Yes to that old preview cannot
+release the old envelope. Dear Machine must prepare a new revision with the
+reduced recipients, send a new private preview and obtain a new Yes. If no guests
+remain, the owner-only exemption applies. A guest removed before preview creation
+must not appear in a newly sent preview: `Preview` checks current eligibility,
+requiring redrafting first. This model allows shrinking the original recipient
+set, not adding new recipients to an old request.
+
+Content or attachment changes likewise invalidate approval. Redrafting clears
+the decision and approved payload while preserving the original acceptance
+generations and issued-preview history. Approval must match an issued record for
+the current revision and exact payload; an older preview cannot authorize the
+revised answer. Revoking and reinviting cannot subscribe the new generation to old
+work; fresh work accepted after reinvitation can receive its own preview and
+approval. The finite `MaxRevision` bound can leave a revoked-while-pending answer
+permanently unsent, including after a valid Yes. This is intentional bounded
+safety, not a liveness or eventual-delivery claim.
+
+Once submission may have occurred, retries retain its first payload, envelope
+and submission-time eligibility evidence. Later revocation does not retroactively
+invalidate that submission. Submission is not proof of delivery or recall.
+Correct `Restart` is a stutter: durable state preservation is **assumed**, not
+proved. Its mutation checks that recovery cannot invent an approval without a
+recorded owner decision; it does not verify crash/write ordering or receipt
+recovery.
+
+The outbound model has no `violation` variable or `Safety` flag. Its independent
+state invariants are:
+
+| Invariant | Property |
+| --- | --- |
+| `PreviewPrivacy` | Owner-only envelope; complete preview with the banner. |
+| `PreviewEligibility` | Every previewed guest was eligible when that preview was sent. |
+| `ApprovalEvidence` | Recorded Yes/No decisions are authenticated and bound to the exact owner, request and revision; approval or shared submission specifically requires Yes. |
+| `ApprovedWhatWasPreviewed` | Approval and shared submission require an issued owner-only preview of the exact draft and decision revision. |
+| `ReleaseWithoutBanner` | Every submitted payload has its banner cleared. |
+| `RetryIdentity` | Retries preserve the first-submission payload and envelope. |
+| `ApprovedDisclosure` | Submitted content matches the prepared draft and, when shared, the exact approved draft. |
+| `SubmissionEligibility` | Recipients match the saved eligible set and were active on the accepted generations at submission. |
+
+`TypeOK` checks all state types. Preview/submission eligibility uses recorded
+historical grants, not current grants that may subsequently be revoked.
+
+The runner maps each of 23 mutations to its required named invariant failure,
+with all state invariants enabled. The approval bypass is tested separately for
+owner and guest origins, for 24 negative checks. There are no separate mutations
+claiming to model instruction-approval reuse. Tests cover forged or misbound
+decisions, an old token incorrectly authorizing the current revision, No/other
+treated as Yes, stale previews, revoked/stale grants, approval bypass/reuse,
+rejection, content/attachment/recipient substitution, banner leakage, mutable
+retries and recovery inventing approval. `ApproveUnseen` permits a valid owner
+Yes from `ready`, skips the issued-preview lookup and approves the draft directly;
+`ApprovedWhatWasPreviewed` must catch it even though the other decision fields
+are valid. TLC must exit 12 and name the expected invariant as its first reported
+failure. A mutation may violate multiple invariants; parser/tool failures or a
+different first-reported invariant cannot pass the check.
+
+Nine default and two expanded positive reachability checks require valid owner,
+guest, private, repeated and independent answers; rejection; reapproval of an
+already-approved edited draft; fresh generation-2 work; the finite revision-limit
+hold; a multi-guest answer; and new approval after reducing a recipient set.
+These expected witness-invariant failures retain every safety invariant. The
+default bound has one scope, an owner and a guest request, one guest, two
+revisions and two generations. Expanded safety checks cover two scopes and two
+guests in one envelope.
+
+The normal full runner includes outbound checks. To run only this contract:
+
+```console
+python3 verification/guest/run.py --outbound-only --expand --output /path/to/new-proof-artifacts
+```
+
+Choose a new output directory outside the checkout. Artifacts include the exact
+models, configurations, runner, production Boolean source, logs, pinned-tool
+identifiers and a `SHA256SUMS` manifest. See the [validation record](VALIDATION.md)
+for the full-suite reproduce command and results.
+
+An outbound decision must resolve to the approval reference of an **issued
+outbound-preview message** for the exact scope, request, revision and payload.
+Instruction-approval and outbound-approval references must have distinct
+namespaces or type tags. An instruction-approval reference must never resolve to
+an outbound decision, even if an outbound preview for the same request is already
+pending. Looking up approval by request or thread alone is insufficient.
+
+Allocating a reference or creating pending state does not establish issuance.
+`Preview` abstracts successful private issuance and durable history recording as
+one atomic action. Failed sends must not create issued records; uncertain sends
+require authoritative receipt reconciliation before decisions can be released.
+Issuance does not prove arrival or that the owner read the message. Reference
+parsing/type separation, receipt matching and persistence remain implementation
+obligations: the model has no instruction-approval records and assumes correctly
+resolved outbound references.
+
+The later Go conformance tests must cover:
+
+- A Yes to the instruction-approval email cannot release that request's answer,
+  including when its outbound preview is already pending.
+- A Yes with no matching issued outbound preview is ignored: failed-send,
+  guessed/unknown and superseded-revision references cannot release a draft.
+- A Yes to request R's outbound preview cannot approve request S, including in
+  the same thread.
+
+Body and attachment identities abstract serialized content, not MIME parsing,
+rendering or file storage. Yes/No abstracts normalization and exclusion of quoted
+history, not a verified parser. Authentication, prompt correlation, private
+transport envelopes, To-owner/CC-guest encoding, durable writes, provider
+idempotency and atomic eligibility-check/submission remain implementation
+obligations. There is no composed proof, Go refinement proof, liveness guarantee,
+or guarantee that the current client obeys this proposed gate.
 
 ## Production Boolean contracts
 

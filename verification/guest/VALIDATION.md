@@ -1,5 +1,89 @@
 # Guest authorization validation
 
+## Reviewed outbound owner approval contract, 2026-09-28
+
+This verifies a **proposed contract**, not an implemented client feature.
+`Outbound.tla` is checked separately from participation, replacement and provider
+reconciliation. The Go client and its six existing Gobra predicates are unchanged.
+
+The review revision removes the outbound `violation` variable and `Safety` flag.
+Decisions retain actual owner/authentication/value/request/revision evidence;
+previews and submissions retain the observed grant state. Accepted generations
+are captured per request, not hardcoded. The payload includes the banner, and
+release has a dedicated banner-free invariant. Mutations must violate named
+state properties. An old-token mutation now authorizes the current revision,
+so its retained evidence, not `ExactApproval`, must reject it.
+
+The second review adds durable `issuedPreviews` history containing each issued
+revision, full preview payload and actual recipient envelope. Redrafting preserves
+that history. `ApprovedWhatWasPreviewed` independently requires a matching issued
+owner-only preview for approval and shared submission. `ApproveUnseen` skips
+preview issuance while supplying a valid authenticated Yes and approving the
+current draft; the new invariant rejects that exact gap. Actual reference-type
+separation from instruction approvals remains a documented implementation and
+Go conformance obligation.
+
+- **PASS — outbound bounded safety.** All nine invariants (including `TypeOK`)
+  passed for 16,790 distinct states in the default bound, 56,644 with two scopes,
+  and 10,734 with two guests. The semantic properties are `PreviewPrivacy`,
+  `PreviewEligibility`, `ApprovalEvidence`, `ApprovedWhatWasPreviewed`,
+  `ReleaseWithoutBanner`,
+  `RetryIdentity`, `ApprovedDisclosure` and `SubmissionEligibility`.
+- **PASS — 24 negative checks for 23 mutations.** Each produced TLC exit 12 and
+  its mapped state-invariant failure, with all other state invariants enabled.
+  The same approval-bypass mutation runs separately for owner and guest origins.
+  The previous redundant origin-specific mutation names were removed; no test
+  claims to model an instruction-approval record. New mutations test an
+  already-stale preview and release of the approval banner. Authentication,
+  correlation, No/other, generation, rejection, payload and restart mutations
+  no longer depend on an action reporting its own violation. `ApproveUnseen`
+  fails specifically on `ApprovedWhatWasPreviewed`; the trace contains Accept,
+  Prepare and a valid owner Yes, with no Preview and an empty issued history.
+  The mapped invariant must be the first reported failure, not necessarily the
+  only violated property.
+- **PASS — 11 positive reachability checks.** Witnesses cover shared owner and
+  guest answers, private answers without any preview, rejection, repeated and
+  independent answers, reapproval of an edited approved draft, fresh work after
+  reinvitation, a hold at the finite revision bound, multi-guest sending and
+  renewed approval after recipient reduction. All state invariants remain
+  enabled alongside the expected-failing witness invariant.
+- **PASS — full expanded suite on the final snapshot.** The same invocation
+  checked all 38 outbound cases (three safety bounds, 24 negative checks and
+  11 witnesses), the six production Gobra contracts, replacement safety/progress
+  fixtures and mutations, participation safety/mutations/witnesses and its
+  two-scope expansion, and provider reconciliation including the 3,748,096-state
+  sparse matrix. All succeeded. Saved models, configurations, runner and
+  production Boolean source match the final workspace inputs byte for byte;
+  all 176 artifact checksums verified.
+- **Boundary.** Correct restart preserves state by assumption; no crash/write
+  protocol is proved. Guest instruction approval remains upstream and is not
+  composed with this model. MIME, parsing, authentication, correlation, transport
+  encoding/privacy, SQL atomicity and provider receipt recovery remain trusted
+  abstractions or future implementation obligations. No Go conformance or live
+  mail checks for the new gate exist yet. Preview issuance plus history recording
+  is atomic in this abstraction, not a verified send/persistence protocol, and
+  issuance does not prove receipt or reading. There is no liveness or delivery
+  claim.
+
+Reproduce the full suite from the Dear Machine component root using the pinned
+tooling described in [the verification guide](README.md). Choose a new output
+directory outside the checkout:
+
+```console
+python3 verification/guest/run.py --expand --output /path/to/new-proof-artifacts
+```
+
+For outbound-only checks, add `--outbound-only`. The runner saves all checked
+models and configurations, its own source, the production Boolean source, tool
+pins and logs. `SHA256SUMS` covers the artifact files; retain that directory with
+the validation evidence rather than relying on any machine-local temporary path.
+
+The checked `Outbound.tla` SHA-256 is:
+
+```text
+8501ccd2fd27b456c0470f81d28052f8954dc97e4d9ee14a347246f699488670
+```
+
 ## Remembered guest authentication exceptions, 2026-09-15
 
 The current implementation distinguishes verified sender identity from an
