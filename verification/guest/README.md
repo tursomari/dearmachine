@@ -10,8 +10,8 @@ grant generations, authenticated work and provider reconciliation.
 `Participation.tla` covers automatic owner To/CC invitations, an independent
 private approval for every guest message, recipient privacy and explicit removal.
 `Replacement.tla` covers pending owner replacements, repeated polling, completion
-and restart recovery. `Outbound.tla` specifies the proposed owner approval of
-guest-visible answers; it is not yet implemented in the client. None is a
+and restart recovery. `Outbound.tla` specifies owner approval of
+guest-visible answers, now implemented by the runtime durable outbox gate. None is a
 complete refinement proof of the Go application.
 
 ```console
@@ -26,13 +26,13 @@ configurations, hashes and logs. Only dependency download needs networking;
 checks use isolated containers with source-only snapshots and no credentials or
 Git plumbing.
 
-## Proposed outbound approval contract
+## Outbound approval contract and runtime correspondence
 
-`Outbound.tla` specifies the next implementation, not shipped behavior. The
-existing participation model still describes direct submission after execution.
-The models are checked separately; composition and Go conformance remain future
-work. The six Gobra-verified production predicates below are unchanged and do
-not yet enforce outbound approval.
+`Outbound.tla` is unchanged by the runtime implementation. The existing
+participation model still describes direct submission after execution. The
+models are checked separately; composition and a Go refinement proof remain
+future work. The six Gobra-verified production predicates below are unchanged;
+the runtime outbound gate is additional code outside those Boolean proofs.
 
 A scope identifies the exact owner pair, provider inbox and original thread.
 `Accept` captures original recipient visibility and each active guest's grant
@@ -153,7 +153,7 @@ parsing/type separation, receipt matching and persistence remain implementation
 obligations: the model has no instruction-approval records and assumes correctly
 resolved outbound references.
 
-The later Go conformance tests must cover:
+The runtime regression obligations include:
 
 - A Yes to the instruction-approval email cannot release that request's answer,
   including when its outbound preview is already pending.
@@ -168,7 +168,81 @@ history, not a verified parser. Authentication, prompt correlation, private
 transport envelopes, To-owner/CC-guest encoding, durable writes, provider
 idempotency and atomic eligibility-check/submission remain implementation
 obligations. There is no composed proof, Go refinement proof, liveness guarantee,
-or guarantee that the current client obeys this proposed gate.
+or proof that the current client obeys the gate in every execution.
+
+## Current runtime implementation
+
+`outbound_approval.go` gates every paired shared reply, including shared
+error/status replies, through the durable pair-store `outbound_approvals` table.
+`approvedReply` freezes text, HTML, file bytes and envelope under a send key;
+`advanceOutbound` rechecks the request's accepted grant generations before
+preview and first submission. Owner-only replies are exempt. Execution can
+complete with a local `outbound-pending:` receipt because the outbox owns the
+bytes; that receipt is neither provider submission nor delivery. Routine control
+routing reads a small reference projection; recovery loads payloads only for
+active records. State/reference projections update atomically with payload
+records, and upgrades backfill them without changing pending approvals.
+
+Prepared records persist pair, inbox, owner, request and original thread scope.
+Production correspondence to the issued, version-bound reference contract is
+explicit: each revision has a random token, stored preview payload and receipt,
+preview grant snapshot, and separate decision ID, sender and authentication
+fact. Superseded revisions retain their issued-history snapshots. An allocated
+token does not count as issuance. `handleOutboundDecision`
+requires an authenticated owner, exact scope, one matching issued preview and
+newly authored exact `yes`/`no` after case/whitespace normalization and quoted
+history exclusion. It gives instruction-approval references precedence rather
+than reusing their Yes/No/Other decisions. Before shared release, the saved
+preview must equal the current frozen draft with its pending header and private
+envelope. Recipient reduction supersedes the old revision and clears decision
+evidence; remaining guests require a fresh preview/Yes. No remaining guests
+uses the private exemption. Content/file mutation under the same key is rejected;
+the model's general edited-draft transition is not an implemented editing UI.
+
+The generated preview carries the exact draft text/HTML/files with the pending
+header added to text and HTML; actual To is owner-only and CC/BCC are empty.
+Provider branding and quoted-message additions are outside the frozen API
+payload; destination checks must also exclude private control history. Shared
+submission removes the header and saves the eligible grant generations while
+the guest-store transaction orders the first send attempt against revocation.
+
+Intent is durable before network I/O. `preview_sending` and `sending` recover
+only from a unique matching Sent receipt, without blind resend. Matching uses
+scope, parent, envelope, text, HTML and attachment metadata/bytes. Text permits
+only CRLF/LF normalization; HTML must equal `RawHTML` exactly. AgentMail,
+OpenMail and Sendmux adapters retain provider HTML in `RawHTML`. Missing, ambiguous or mismatched
+receipts remain held, including provider rewrites that cannot be conservatively
+matched. Content matching alone cannot distinguish an older byte-identical send
+to the same parent and envelope from the uncertain attempt; exact attempt
+provenance remains a provider boundary. It never authorizes a resend. Pair DB
+`State` and `HoldReason` provide diagnostic evidence. The
+[operational contract](../../docs/guest-authorization.md#owner-approval-before-shared-sending)
+describes all states and privacy precautions for inspection.
+
+An authenticated header-only exact yes/no with an unresolved reply reference
+while a preview is `preview_sending` in the same thread remains unprocessed.
+Receipt recovery must establish issuance and reference correlation before the
+decision can resolve; it does not become an agent instruction or gain authority
+from the thread alone.
+
+`outbound_approval_test.go` contains regressions for frozen payload/restart,
+exact decisions and terminal rejection, authentication/scope/reference separation,
+recipient reduction and reinvitation, removal, payload/key substitution,
+uncertain preview/submission recovery, delayed header-only decisions, HTML
+mismatch, shared status replies, private exemption and concurrent revocation.
+The guest regression tests explicitly approve outbound previews before checking
+shared answers. Run the source client suite and outbound race tests in a
+credential-free container; Nix checks and live provider delivery validation
+remain separate obligations. See the [validation record](VALIDATION.md) for
+results and the scope and revision of each run.
+
+Trusted boundaries still include authentication and authored-body parsing,
+provider ID/reference mapping, normalized MIME and file extraction, Sent labels,
+transport submission semantics, SQLite durability and transaction ordering, and
+the local operator/platform. A provider success receipt or exact reconciled Sent
+copy is treated as issuance/submission evidence, not proof of arrival or reading.
+The formal model abstracts these boundaries; no Go refinement or composed proof
+of instruction approval, execution, outbox and delivery is claimed.
 
 ## Production Boolean contracts
 

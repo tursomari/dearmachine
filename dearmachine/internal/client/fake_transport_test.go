@@ -185,6 +185,8 @@ func (f *fakeTransport) Reply(
 		BCC:       append([]string(nil), payload.BCC...),
 		Timestamp: time.Now(),
 		Body:      payload.Text,
+		RawBody:   payload.Text,
+		RawHTML:   payload.HTML,
 		InReplyTo: messageID,
 		Labels:    []string{"sent"},
 	}

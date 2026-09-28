@@ -63,13 +63,13 @@ func TestGuestAuthenticationExceptionRequiresIndependentApproval(t *testing.T) {
 	if rig.capture("count") != "2" {
 		t.Fatal("approved guest did not execute")
 	}
-	answer := raw.sentReplies()[3]
+	answer := approveGuestOutboundPreview(t, rig, raw, router, pair, inbox, guest, raw.sentReplies()[3])
 	if !sameRecipientSet(answer.CC, []string{guest.From}) {
 		t.Fatalf("unverified headers expanded recipients: %v", answer.CC)
 	}
 	guest.MessageID = "unverified-2"
 	process(guest)
-	if len(raw.sentReplies()) != 5 || rig.capture("count") != "2" || !strings.Contains(raw.sentReplies()[4].Text, "Yes — approve") {
+	if len(raw.sentReplies()) != 6 || rig.capture("count") != "2" || !strings.Contains(raw.sentReplies()[5].Text, "Yes — approve") {
 		t.Fatal("future message needs approval, without repeated risk warning")
 	}
 	key := GuestKey{pair.ID, guestInboxKey(inbox), guest.From, guest.ThreadID}

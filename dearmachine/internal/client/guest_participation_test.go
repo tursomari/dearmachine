@@ -64,13 +64,13 @@ func TestGuestAutomaticParticipationApprovalPrivacyAndRemoval(t *testing.T) {
 			t.Fatalf("automatic %s synchronization: %+v %v", direction, permission, err)
 		}
 	}
-	shared := raw.sentReplies()[0]
+	shared := approveGuestOutboundPreview(t, rig, raw, router, pair, inbox, owner, raw.sentReplies()[0])
 	if !equalFoldSlice(shared.CC, []string{key.Address}) || strings.Contains(shared.Text, "REMOVE GUEST") {
 		t.Fatalf("shared answer or private footer isolation: %+v", shared)
 	}
 	guest := Message{MessageID: "guest-1", ThreadID: owner.ThreadID, From: key.Address, To: []string{pair.UserEmail}, CC: []string{inbox.Address}, Body: "First guest request", Timestamp: time.Now().UTC()}
 	process(guest)
-	prompt := raw.sentReplies()[1]
+	prompt := raw.sentReplies()[2]
 	assertPrivateParticipantControlReply(t, prompt, guest.MessageID, pair.UserEmail)
 	request, _, _ := rig.store.ParticipantRequestByMessage(guest.MessageID)
 	if request.Kind != participantRequestInstruction || request.State != participantAwaitingDecision || rig.capture("count") != "1" {
@@ -83,20 +83,20 @@ func TestGuestAutomaticParticipationApprovalPrivacyAndRemoval(t *testing.T) {
 	private := owner
 	private.MessageID, private.CC, private.Body = "owner-private", nil, "Private continuation"
 	process(private)
-	answer := raw.sentReplies()[2]
+	answer := raw.sentReplies()[3]
 	if len(answer.CC) != 0 || !strings.Contains(answer.Text, command) {
 		t.Fatal("private continuation recipient/footer mismatch")
 	}
 	yes := private
 	yes.MessageID, yes.Body, yes.InReplyTo = "approve-1", "yes\n\nOn Mon, Jan 2, 2006 at 1:29 AM AgentMail <inbox@example.test> wrote:\n> Yes — approve this one instruction.", prompt.ReceiptID
 	process(yes)
-	answer = raw.sentReplies()[3]
+	answer = approveGuestOutboundPreview(t, rig, raw, router, pair, inbox, guest, raw.sentReplies()[4])
 	if rig.capture("count") != "3" || !equalFoldSlice(answer.To, []string{pair.UserEmail}) || !equalFoldSlice(answer.CC, []string{key.Address}) || strings.Contains(answer.Text, command) {
 		t.Fatal("approved guest answer did not preserve its original shared recipients")
 	}
 	guest.MessageID, guest.Body = "guest-2", "Second guest request"
 	process(guest)
-	second := raw.sentReplies()[4]
+	second := raw.sentReplies()[6]
 	assertPrivateParticipantControlReply(t, second, guest.MessageID, pair.UserEmail)
 	process(yes) // Replaying approval #1 cannot release request #2.
 	if rig.capture("count") != "3" {

@@ -13,13 +13,94 @@ of that request allows lower-authority agent execution. Retained admission or
 trust cannot bypass approval. A guest cannot invite others, start an unrelated
 conversation, become a controller or access another pair's thread.
 
-Answers go To the owner and CC active guests visible in the original request's
+After separate outbound approval, answers go To the owner and CC active guests visible in the original request's
 From, To or CC. The private approval's recipients do not determine the answer's
 recipients. When the owner continues without the guest in To/CC, the answer goes
 only to the owner. This omission neither revokes the guest nor cancels pending
 approvals. BCC, quoted headers, forwarded inner messages and body addresses do
 not invite guests or add answer recipients. Another paired owner cannot become
 a guest, including when their worker is not selected.
+
+## Owner approval before shared sending
+
+The runtime implements a durable outbox gate for **all paired shared replies**,
+including owner-origin answers, approved guest work, and shared error/status
+replies. Instruction approval and outbound approval are separate: guest
+instruction `Yes` permits execution, `No` rejects the instruction, and `Other`
+requests a newly authored owner replacement. None approves sending its result
+to guests. An owner-only reply needs no outbound approval.
+
+Before shared submission, the owner receives a private preview To the owner
+with empty CC/BCC. Dear Machine adds no quoted history to the frozen draft;
+providers may add branding or quote the original message. The preview contains the exact
+frozen plain text, HTML (when present), and files, with a pending header added
+to text and HTML. The header begins:
+
+```text
+PENDING APPROVAL — this reply has not been sent to guests.
+```
+
+It lists the proposed To/CC recipients and an outbound approval reference.
+Those listed guests are not recipients of the preview. Reply with only newly
+authored `yes` or `no` (case insensitive, surrounding whitespace ignored),
+referencing that issued preview through reply correlation or its quoted
+`Dear Machine outbound approval:` reference line. Quoted history is excluded
+from the decision. Extra authored text, including `Other`, does not approve or
+reject an outbound draft. `no` terminates that proposal; a later `yes` cannot
+revive it.
+
+The decision must come from the authenticated owner and resolve uniquely to an
+actually issued preview for the same pair, inbox, thread, request and revision.
+An allocated token or pending row alone does not establish issuance. An
+instruction-approval reference cannot authorize outbound sending. Successful
+submission uses the frozen draft without the pending header; approval does not
+rerun the agent.
+
+Recipients remain bound to the grant generations accepted for that request.
+Eligibility is checked at preview and first submission. Removing recipients
+creates a new revision and clears its approval: if any guests remain, a new
+private preview and a new `yes` are required. If all guests are gone, the answer
+can use the owner-only exemption. Reinvitation cannot add a new generation to
+an older answer. Content or file substitution under an existing send key is
+rejected rather than silently changing what was approved.
+
+Execution may complete while the answer remains pending. The durable outbox
+owns the frozen text, HTML and attachment bytes even after execution staging
+files are removed. A local `outbound-pending:<token>` receipt means only durable
+outbox acceptance: it is **not provider submission or delivery**.
+
+After an uncertain preview or final send, recovery only reconciles receipts;
+it never blindly retries that send. Missing, ambiguous or mismatched receipts
+leave it held. Matching checks the scoped Sent message, reply parent, complete
+envelope, plain text, HTML and attachment metadata/bytes. Plain text permits
+only CRLF/LF normalization; HTML matches `RawHTML` exactly. AgentMail, OpenMail
+and Sendmux adapters retain provider HTML in that field. Whitespace trimming, HTML rendering
+equivalence or lossy provider summaries are insufficient. Provider rewriting
+can therefore leave a valid send held for diagnosis. A matching Sent copy is evidence of matching content at the provider, not
+destination delivery. Without provider evidence tied to the attempt key, it
+cannot distinguish an older byte-identical send to the same parent and envelope.
+Recovery never uses that observation to authorize a resend.
+
+An authenticated header-only `yes`/`no` whose reply reference is not yet known
+while a preview send is uncertain in the same thread remains unprocessed until
+receipt reconciliation can resolve it. It neither starts agent work nor becomes
+approval merely because the thread matches.
+
+Private pair-database diagnostics are in `outbound_approvals`, keyed by send key
+and revision. Records retain the prepared pair/inbox/owner/request/thread scope,
+`State`, `HoldReason`, preview/submission grant snapshots, issued preview
+payload/receipt history and decision ID, sender and authentication evidence.
+Superseded revisions preserve their history. States are `prepared`,
+`preview_sending`, `pending`, `approved`, `sending`, `sent`, `rejected` and
+`superseded`. Uncertain-send states retain a preview or submission receipt
+reconciliation hold reason. Inspect only necessary metadata; records contain
+private answer/file bytes and reference tokens and must not be published or
+edited to manufacture approval.
+
+The [validation record](../verification/guest/VALIDATION.md) documents passing
+scoped AgentMail/OpenMail live checks and their provider rewriting boundary.
+The formal outbound contract is unchanged; neither it nor the Go regressions
+establish a Go refinement/composition proof or actual provider delivery.
 
 ## Sender authentication
 
@@ -112,7 +193,7 @@ other addresses. Future verified messages continue through the ordinary path.
 Removing the guest invalidates the exception and old commands. Explicitly
 reinviting the guest requires fresh risk acceptance for unverified mail. Merely
 omitting a guest from an owner continuation does not remove the guest or exception.
-Approved unverified requests send their answer to the owner and that requesting
+After outbound approval, approved unverified requests send their answer to the owner and that requesting
 guest only; their unverified To/CC cannot subscribe other guests to the answer.
 Owner continuations retain the ordinary recipient rules.
 
@@ -180,9 +261,11 @@ request and current grant while holding the revocation lock across process start
 
 Recipient grant generations are recorded at instruction acceptance. Revoking
 and reinviting a guest cannot subscribe them to an older, unsubmitted answer.
-The complete To/CC envelope is persisted immediately before first submission.
-Receipt recovery matches that envelope; retries retain it and its idempotency
-key even after revocation. Already-submitted uncertain deliveries may complete.
+The outbox persists the frozen payload and To/CC envelope before previewing it.
+First submission saves eligibility evidence while holding the grant lock across
+the send attempt. Receipt reconciliation retains that payload, envelope and
+idempotency key even after revocation; it does not resend uncertain mail.
+Already-submitted uncertain deliveries may complete.
 
 An upgrade creates the new tables automatically. Existing guest grants remain.
 Old queued/held guest work without content bindings fails closed: send a fresh

@@ -23,6 +23,18 @@ listing returns the message with the `unread` label. DearMachine unions the
 filtered listing with an incremental unfiltered listing and must process the
 message exactly once.
 
+All paired shared replies pass through the implemented durable outbound approval
+gate. First verify the owner-only preview's exact text/HTML/files plus pending
+header and zero guest copies. Then send a new authenticated owner exact `yes`
+referencing the issued preview; only the approved draft without the header may
+be submitted to guests. Instruction Yes/No/Other does not authorize outbound
+sending. Outbound accepts only exact newly authored yes/no after case/whitespace
+normalization and quoted-history exclusion. Owner-only replies are exempt.
+
+The [validation record](../../../verification/guest/VALIDATION.md) documents
+passing scoped outbound live checks and their limits. The steps below are a
+protocol, not a record that every delivery check has passed.
+
 ## Deterministic container gate
 
 Snapshot the exact candidate worktree as described in
@@ -30,7 +42,7 @@ Snapshot the exact candidate worktree as described in
 container, and run:
 
 ```console
-go test ./internal/client -run 'TestMailboxPollRecoversUnreadMessageOmittedByLabelFilter|TestInboxRouter.*Delivery|Test(OpenMail|Sendmux)NormalizePreservesRecipientRolesAndDelivery|TestPolledMessageSeam' -count=1 -v
+go test ./internal/client -run 'TestOutboundApproval|TestMailboxPollRecoversUnreadMessageOmittedByLabelFilter|TestInboxRouter.*Delivery|Test(OpenMail|Sendmux)NormalizePreservesRecipientRolesAndDelivery|TestPolledMessageSeam' -count=1 -v
 go test ./...
 ```
 
@@ -57,8 +69,10 @@ closed, and a duplicate candidate is emitted once.
    `labels=unread` omits it; omission is expected evidence, not a reason to
    alter provider state.
 6. Require one durable claim, one completed agent turn, one sender-visible
-   reply, and one successful acknowledgement. Restart the candidate and prove
-   there is no duplicate claim, turn, or reply.
+   private outbound preview, and one successful acknowledgement. Confirm no
+   guest copy before a new owner Yes to that preview. Require one approved
+   shared answer and check each destination inbox. Restart the candidate and
+   prove there is no duplicate claim, turn, preview, or shared answer.
 7. Repeat with the controller in `To` and the receiver in `CC`. If the sending
    provider supports BCC without exposing the recipient header, repeat with the
    receiver in `BCC`. Authentication requires visible Dear Machine recipients,
@@ -67,8 +81,9 @@ closed, and a duplicate candidate is emitted once.
    entries without explicit guest allow or manual guest rules. Have the guest
    Reply All. Require one private approval prompt To owner with empty CC/BCC and
    a quoted guest preview. One exact Yes must release exactly that instruction
-   for lower-authority execution and an answer To owner, CC guest. There is no
-   separate admission prompt.
+   for lower-authority execution and a private outbound preview. A separate
+   authenticated owner Yes referencing that issued preview must release the
+   answer To owner, CC guest. There is no separate admission prompt.
 
 ## Persistent guest lifecycle extension
 
@@ -116,14 +131,25 @@ unchanged.
 
 For each supported receiver, automatically grant a signed visible invitation and exercise:
 
-1. Guest Reply All, one private instruction approval, then an answer
-   with the owner in To and the guest in CC.
-2. Owner request with an active guest in To or CC, then an answer to both.
+1. Guest Reply All, one private instruction approval, then a private outbound
+   preview. Only a separate Yes to that preview releases the answer with owner
+   in To and guest in CC.
+2. Owner request with an active guest in To or CC, then a private outbound
+   preview and separate Yes before an answer to both.
 3. Owner continuation omitting the guest, then an owner-only answer. Verify the
    guest inbox received no copy using a distinct synthetic result marker.
-4. BCC-only, revoked and ungranted recipients never enter answer CC.
-5. Lost send response and client restart retain the original answer envelope;
-   the private approval prompt cannot be mistaken for the final answer.
+4. BCC-only, revoked and ineligible recipients never enter answer CC. An
+   authenticated owner's visible To/CC can create a new grant. Removing some
+   recipients requires a new preview/Yes if guests remain; removing all uses
+   the private exemption. Reinvitation cannot add a new generation to old work.
+5. Lost send response and client restart retain the frozen payload/envelope;
+   recovery only reconciles a unique exact receipt, never blindly resends.
+   Missing/ambiguous/mismatched receipts remain held. Plain text permits only
+   CRLF/LF normalization and HTML must match adapter-retained `RawHTML` exactly;
+   file metadata/bytes must match.
+   Neither an instruction prompt nor a pending preview is a final-answer receipt.
+   Inspect pair DB state/hold reason privately. Completed execution and local
+   `outbound-pending:` receipts establish neither submission nor delivery.
 6. Verify AgentMail receive/reply/send and OpenMail inbound/outbound entries
    individually. Revoke one of two grants, then the last; inspect preservation of
    permanent/pre-existing rules and removal of every owned unneeded direction.

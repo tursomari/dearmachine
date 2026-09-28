@@ -39,7 +39,24 @@ decision. There is no separate admission exchange or retained-trust bypass.
 newly authored owner replacement. Guest work remains lower authority. Shared
 answers use the original request's visible recipients, never the approval's.
 Owner continuations omitting the guest remain private without canceling pending
-approvals or participation. Private mail includes `REMOVE GUEST <code>`.
+approvals or participation. Private instruction prompts and owner-only answers
+include `REMOVE GUEST <code>`. Outbound previews retain the frozen shared draft
+and add the pending header; do not require a removal footer in that draft.
+
+Every paired shared reply now requires a separate outbound decision once its
+payload is prepared. Expect a private To-owner preview with empty CC/BCC, exact frozen
+plain text/HTML/files and the pending header. Only newly authored exact `yes`
+or `no` (case insensitive, surrounding whitespace ignored) from the authenticated
+owner, bound to an issued outbound preview and its revision, can resolve it.
+Quoted history is not the decision. Outbound `Other` leaves the draft pending;
+instruction Yes/No/Other remains a separate workflow. Final shared submission
+contains the approved draft without the pending header.
+
+This protocol describes required validation. The
+[validation record](../../../verification/guest/VALIDATION.md) documents passing
+scoped outbound live checks; it does not claim a completed run of this entire
+protocol. The unchanged formal outbound contract does not prove Go refinement
+or composition.
 
 ## Deterministic container gate
 
@@ -52,6 +69,7 @@ store. The required tests are:
 ```text
 TestGuest*
 TestParticipant*
+TestOutboundApproval*
 TestSender*
 TestAgentMailAuthentication*
 TestUnsupportedProvider*
@@ -142,7 +160,7 @@ docker run --rm --network "$PARTICIPANT_OPENROUTER_NETWORK" \
   -w /src/dearmachine golang:1.24-bookworm bash -c 'set -eu
     umask 022
     mkdir -p "$HOME"
-    go test ./internal/client -run "^TestParticipant|^TestMailboxReplyMapsPrivateRecipientWithoutReplyAll$|^TestOpenMailReplyPreservesThreadWithPrivateRecipient$|^TestSendmuxReplyPreservesThreadWithPrivateRecipient$" -count=1
+    go test ./internal/client -run "^TestParticipant|^TestGuest|^TestOutboundApproval|^TestMailboxReplyMapsPrivateRecipientWithoutReplyAll$|^TestOpenMailReplyPreservesThreadWithPrivateRecipient$|^TestSendmuxReplyPreservesThreadWithPrivateRecipient$" -count=1
     go test -tags participant_live ./internal/client -run "^TestParticipantAuthorityLive$" -count=1 -v -timeout=60m'
 ```
 
@@ -191,13 +209,18 @@ Run these scenarios in order:
 
 1. Send an authenticated owner instruction with Dear Machine in To and the guest
    in CC. Verify the exact automatic grant, every provider permission direction,
-   and one answer to owner and guest. No separate admission prompt may appear.
+   and one private outbound preview. Verify zero guest copies, then send a new
+   authenticated owner `yes` referencing that preview and verify the answer
+   reaches owner and guest. No separate admission prompt may appear.
 2. Send a guest Reply All. Before approval prove zero agent invocations and no
    guest marker body in application SQLite/WAL, logs or session files. Verify one
    private approval email To owner, empty CC/BCC, quoted request preview and
    copyable removal command. The guest must not receive this prompt.
-3. Reply exact `Yes`. Require one lower-authority execution and one answer To
-   owner, CC guest. Duplicate delivery/approval must not repeat execution.
+3. Reply exact `Yes` to the instruction prompt. Require one lower-authority
+   execution and a private outbound preview, with no guest copy. A Yes replay
+   to the instruction prompt must not release the answer. Send a new owner
+   `yes` referencing the outbound preview receipt; require one answer To owner,
+   CC guest. Duplicate delivery/approval must not repeat execution or submission.
 4. Send another guest request before deciding a third. Each must have a distinct
    approval; approving one cannot release the other. Replaying an earlier Yes,
    guest-authored decisions and wrong-thread decisions cannot authorize either.
@@ -219,7 +242,8 @@ Run these scenarios in order:
    execution and that content refetch/authentication and grant checks still apply.
 8. While a guest decision is pending, send an ordinary owner instruction omitting
    the guest. Verify an owner-only answer, unchanged participation and a still
-   pending guest decision. A later exact Yes may release that guest request.
+   pending guest decision. A later exact Yes may release that guest request
+   for execution; sharing its result still requires outbound approval.
 9. Reply with the private removal command while guest work is held/queued.
    Verify local revocation, no subsequent guest execution starts and eventual
    removal of owned, unneeded provider permissions. Restart and submit stale
@@ -236,6 +260,40 @@ Run these scenarios in order:
     routing must never label guest content as owner work; report the separate
     exact-model authority probe independently. Already-started effects and
     submitted mail are outside the revocation guarantee.
+
+## Outbound recovery and recipient-change extension
+
+On disposable state, exercise both owner-origin and guest-origin shared answers,
+including a shared error/status reply. Each reply requires its own preview and
+decision. Verify these independently of model-behavior verdicts:
+
+1. Restart after execution completion while outbound approval is pending. The
+   outbox must retain exact text/HTML/file bytes after staging cleanup and must
+   not rerun execution. A local `outbound-pending:` receipt is not a submitted or
+   delivered answer. Reject with `no`; a later Yes cannot revive that proposal.
+2. Send extra authored text, `Other`, unauthenticated/wrong-scope decisions,
+   unknown references, and Yes to another request's preview. None releases the
+   draft. A token allocated before uncertain issuance is insufficient; require
+   its exact private receipt to reconcile before accepting the decision. A
+   header-only yes/no with an unresolved reference during uncertain preview
+   issuance must stay unprocessed until receipt recovery, without agent work.
+3. Remove one of two guests while pending or approved. Require a new revision,
+   reduced private preview and fresh Yes. Old Yes cannot release it. Remove all
+   guests and verify the owner-only exemption. Revoke/reinvite and verify the
+   new generation cannot receive the older request's answer.
+4. Simulate lost preview and final-send responses with delayed receipt visibility
+   in an isolated transport fixture. Record fault injection separately from live
+   provider observations. Recovery may only reconcile the original send, never
+   blindly resend it. Missing, ambiguous and mismatched receipts remain held.
+   Match text conservatively with CRLF/LF normalization only, `RawHTML` exactly, and
+   files by metadata and bytes. Do not relax comparisons for provider rewrites.
+5. Inspect private pair DB `outbound_approvals` metadata: `State`, `HoldReason`,
+   revision and presence of issued-preview/decision/submission evidence. Expected
+   states are `prepared`, `preview_sending`, `pending`, `approved`, `sending`,
+   `sent`, `rejected`, `superseded`. Uncertain sends retain a receipt reconciliation
+   hold reason. Do not dump payloads, file bytes or tokens into evidence or edit
+   state to force progress. Record provider submission and destination arrival
+   separately; `sent` alone does not prove delivery.
 
 Capture only sanitized recipient sets, provider thread/message identifiers,
 state transitions, invocation counts, model/config preflight, and presence or

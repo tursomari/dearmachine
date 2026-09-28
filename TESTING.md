@@ -274,8 +274,8 @@ and the authentication policy and supported-provider limits.
 [The guest verification guide](verification/guest/README.md) documents the
 pinned Gobra/TLC runner, finite model, intentional counterexamples, production
 policy correspondence and trusted boundaries. Run its credential-free container
-checks alongside `go test ./internal/client -run '^TestGuest' -count=1` when the
-guest authorization lifecycle changes. These checks do not authenticate external
+checks alongside `go test ./internal/client -run '^Test(Guest|OutboundApproval)' -count=1`
+in a credential-free container when the guest authorization lifecycle changes. These checks do not authenticate external
 email providers or establish model obedience.
 
 For a candidate source snapshot (including reviewed uncommitted changes), run:
@@ -292,6 +292,28 @@ image afterward. Source hashes and logs stay in the new output directory.
 Use `--docker-host unix:///var/run/docker.sock` when needed. The host Nix gate
 remains mandatory and checks the repository's own pinned production toolchain.
 
+
+The runtime durable outbox gate is implemented for all paired shared replies.
+`outbound_approval_test.go` exercises exact frozen text/HTML/files, owner-only
+pending previews, authenticated issued revision-bound decisions, instruction
+approval separation, recipient reduction/reapproval, accepted grant generations,
+restart, uncertain-send reconciliation and revocation ordering. A completed turn
+with `outbound-pending:` is only local outbox acceptance, not submission or
+delivery; the outbox retains attachment bytes independently of staging files.
+Pair DB `outbound_approvals` records expose state and hold reason for private
+diagnostics. Missing/ambiguous/mismatched receipts stay held without blind
+resends. Plain text matching normalizes only CRLF/LF; HTML must match the
+provider HTML retained by adapters in `RawHTML` exactly, and files must match
+metadata and bytes. Header-only yes/no decisions with unresolved references
+during uncertain preview issuance remain unprocessed until receipt recovery.
+
+Run the container suite above when the candidate source changes, including the
+outbound race tests. Nix checks and live provider delivery validation remain
+separate obligations. The unchanged `Outbound.tla` contract and these regressions
+are not a Go refinement/composition proof. Use the participant-approval and
+recipient-delivery protocols linked here to distinguish private preview,
+approved submission and observed destination delivery. See the
+[validation record](verification/guest/VALIDATION.md) for results and run scope.
 
 Guest answer-recipient regressions live in `guest_reply_test.go` and
 `reply_cc_test.go`. They cover owner/guest visibility, private approval prompts,

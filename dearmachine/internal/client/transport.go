@@ -34,7 +34,9 @@ type Message struct {
 	// RawBody preserves the transport-normalized message before DearMachine
 	// removes reply history and its own footer metadata. It is used when a
 	// forwarded message must be delivered to the agent as ordinary content.
-	RawBody                string
+	RawBody string
+	// RawHTML retains provider HTML for exact outbound receipt reconciliation.
+	RawHTML                string
 	InReplyTo              string
 	References             []string
 	ConversationReferences []string
@@ -122,6 +124,8 @@ type Transport interface {
 	Poll(ctx context.Context) ([]Message, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
 	Message(ctx context.Context, messageID string) (Message, error)
+	// Paired shared replies return an outbound-pending: local outbox handle
+	// until approval. Such a handle is neither submission nor delivery evidence.
 	Reply(ctx context.Context, messageID string, payload ReplyPayload, idempotencyKey string) (string, error)
 	// ReplyReceipt finds the provider receipt for a reply to message. Recipient
 	// is empty for the normal reply target and explicit for a private override.

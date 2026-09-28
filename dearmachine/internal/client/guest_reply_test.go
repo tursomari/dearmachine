@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -42,6 +43,9 @@ func TestOwnerAnswersCopyOnlyVisibleGrantedGuests(t *testing.T) {
 			}
 			if mode == "unknown" {
 				want = []string{"stranger@example.test"}
+			}
+			if len(want) > 0 {
+				got = approveGuestOutboundPreview(t, rig, raw, router, pair, inbox, m, got)
 			}
 			if !equalFoldSlice(got.To, []string{pair.UserEmail}) || !equalFoldSlice(got.CC, want) || len(got.BCC) != 0 {
 				t.Fatalf("answer envelope: To=%v CC=%v BCC=%v", got.To, got.CC, got.BCC)
@@ -141,4 +145,32 @@ func TestGuestReinvitationCannotSubscribeToAnOlderAnswer(t *testing.T) {
 	if err != nil || len(after.CC) != 0 || !equalFoldSlice(after.To, []string{pair.UserEmail}) {
 		t.Fatalf("new grant received an older answer: %+v %v", after, err)
 	}
+}
+
+// approveGuestOutboundPreview is called only where a scenario expects a shared
+// answer, after instruction approval (if needed) has already run the work.
+func approveGuestOutboundPreview(t *testing.T, rig *testRig, raw *fakeTransport, router *InboxRouter, pair Pair, inbox Inbox, original Message, preview fakeTransportReply) fakeTransportReply {
+	t.Helper()
+	if !strings.HasPrefix(preview.Text, "PENDING APPROVAL — this reply has not been sent to guests.\n") || preview.MessageID != original.MessageID || preview.ReceiptID == "" {
+		t.Fatalf("expected outbound preview for %s: %+v", original.MessageID, preview)
+	}
+	if !equalFoldSlice(preview.To, []string{pair.UserEmail}) || len(preview.CC) != 0 || len(preview.BCC) != 0 || preview.IncludeQuotedContent {
+		t.Fatalf("outbound preview must remain private: %+v", preview)
+	}
+	before := len(raw.sentReplies())
+	runs := rig.capture("count")
+	yes := Message{MessageID: "outbound-yes-" + preview.ReceiptID, ThreadID: original.ThreadID, From: pair.UserEmail, To: []string{inbox.Address}, Body: "yes", InReplyTo: preview.ReceiptID, Timestamp: time.Now().UTC()}
+	raw.setThread(yes.ThreadID, append(raw.thread(yes.ThreadID), yes))
+	raw.setPoll([]Message{yes})
+	router.lastPoll = time.Time{}
+	mustProcess(t, rig)
+	replies := raw.sentReplies()
+	if len(replies) != before+1 || rig.capture("count") != runs {
+		t.Fatalf("outbound approval must send one answer without executing work: replies=%d want=%d runs=%s want=%s", len(replies), before+1, rig.capture("count"), runs)
+	}
+	answer := replies[before]
+	if answer.MessageID != original.MessageID || strings.HasPrefix(answer.Text, "PENDING APPROVAL") {
+		t.Fatalf("outbound approval did not release the original answer: %+v", answer)
+	}
+	return answer
 }

@@ -1,5 +1,74 @@
 # Guest authorization validation
 
+## Runtime outbound approval gate, 2026-09-28
+
+The client now freezes guest-visible replies in a durable approval outbox.
+Owner-only issuance, exact Yes/No decisions, revision/generation binding and
+first submission are enforced at the paired reply boundary. This is tested
+runtime correspondence, not a Go refinement or composed formal proof.
+
+- **PASS — credential-free Go checks.** The complete `go test ./...`,
+  `go test -race ./...` and `go vet ./...` suites passed from the candidate
+  source in a network-disabled container using the pinned Go 1.24 test image.
+  All clients and subprocess fixtures ran inside that container.
+- **PASS — outbound runtime regressions.** The new suite covers exact text,
+  HTML and attachment bytes across restart; terminal No; invalid decisions;
+  owner authentication and scope; instruction/outbound reference separation;
+  recipient reduction/reapproval; revocation/reinvitation; removal replies;
+  payload, recipient and send-key substitution; lost preview/submission
+  responses; delayed receipts; header-only and References-only correlation;
+  unknown references; shared status replies; private replies; and SQLite
+  ordering of concurrent revocation against submission. A schema-upgrade fixture
+  preserves a pending preview and its complete payload while backfilling small
+  reference/state records, then releases the original files after approval.
+  Existing guest scenarios now explicitly approve outbound previews before asserting shared
+  delivery. The outbound suite also passed separately under the race detector.
+- **PASS — expanded formal suite.** All 38 outbound checks and the existing
+  Gobra, replacement, participation and provider-reconciliation checks passed.
+  All 176 artifact checksums verified; saved models, configurations and runner
+  match the candidate inputs. The formal specifications and production Gobra
+  predicates are unchanged from the reviewed contract below.
+- **PASS — production Nix gate.** All 14 `x86_64-linux` flake checks passed
+  inside an isolated container, including the production Go 1.26.5 suite,
+  packaging, service/lifecycle and runbook checks. Runtime, build and test
+  source hashes match the checked snapshot. Other systems were not evaluated.
+- **PASS — scoped live production acceptance.** The final runtime ran in an
+  isolated rootless container with an AgentMail receiver and owner and an
+  OpenMail guest. Machtiani used DeepInfra `zai-org/GLM-5.3-Flash` configured
+  with reasoning effort `high`; the model probe passed. Pending database
+  migration and restart preserved the exact frozen preview without rerunning
+  work or duplicating mail. Yes released one shared reply and replay released
+  none; independent No rejected another. A guest instruction required separate
+  instruction and outbound approvals. `yes please` left the draft pending
+  without additional execution or guest delivery; exact Yes then released it.
+  An owner-only continuation remained private.
+- **PASS — live payload and privacy checks.** Frozen payloads, including HTML
+  and files, remained identical across migration and release. Owner preview,
+  owner result and guest result carried the exact 26-byte synthetic attachment.
+  Provider quoting and branding rewrote delivered text/HTML: byte equality
+  applies to durable adapter inputs, not delivered MIME; no HTTP wire capture
+  was performed. The final guest raw-MIME sweep found no private approval,
+  control or removal content, nor the private continuation marker. Final
+  replies referenced original shared requests. These cases do not constitute
+  the complete provider runbooks, Sendmux coverage or the live authority probe.
+- **PASS — live cleanup.** All three test-created inboxes were deleted and
+  verified absent. Fixture policy rules, containers, images and copied runtime
+  credentials were removed; protected inboxes were untouched. Private evidence
+  is retained outside the repository.
+
+The checked outbound runtime source SHA-256 is:
+
+```text
+550f069e049b4bb0dcc06c8b9cedeb8b793d557ae6fb05a1f92219d092d48c27
+```
+
+Uncertain transport attempts are never blindly resent. Missing or mismatched
+receipts can leave a draft held; content matching alone cannot prove the exact
+attempt behind an older byte-identical Sent copy. Provider authentication,
+receipt attribution, actual destination delivery and local durable storage
+remain trusted boundaries or separate live evidence. The formal result does
+not establish liveness or end-to-end delivery.
+
 ## Reviewed outbound owner approval contract, 2026-09-28
 
 This verifies a **proposed contract**, not an implemented client feature.

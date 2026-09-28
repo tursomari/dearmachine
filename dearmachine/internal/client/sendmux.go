@@ -539,7 +539,7 @@ func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
 			to, raw.CC, raw.BCC, "", readState,
 		),
 		Timestamp: firstNonZeroTime(raw.ReceivedAt, raw.SentAt), CreatedAt: firstNonZeroTime(raw.ReceivedAt, raw.SentAt),
-		Subject: raw.Subject, Body: body, RawBody: rawBody, InReplyTo: raw.InReplyTo,
+		Subject: raw.Subject, Body: body, RawBody: rawBody, RawHTML: raw.HTML, InReplyTo: raw.InReplyTo,
 		References:             append([]string(nil), raw.References...),
 		ConversationReferences: conversationReferences, Labels: labels, Attachments: attachments,
 	}

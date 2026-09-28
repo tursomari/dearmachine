@@ -416,7 +416,7 @@ func (endpoint *pairEndpoint) Reply(ctx context.Context, messageID string, paylo
 	if err := endpoint.ensureMessage(ctx, messageID); err != nil {
 		return "", err
 	}
-	return endpoint.router.raw.Reply(ctx, messageID, payload, key)
+	return endpoint.approvedReply(ctx, messageID, payload, key)
 }
 
 func (endpoint *pairEndpoint) ReplyReceipt(ctx context.Context, message Message, recipient string) (string, bool, error) {

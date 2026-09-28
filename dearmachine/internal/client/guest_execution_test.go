@@ -127,7 +127,7 @@ func TestGuestHistoricalInvitationStartsOnlyApprovedNewWork(t *testing.T) {
 	if pending, found, err := rig.store.PendingByID(invitation.MessageID); err != nil || found {
 		t.Fatalf("historical invitation became work: %+v %v %v", pending, found, err)
 	}
-	result := raw.sentReplies()[1]
+	result := approveGuestOutboundPreview(t, rig, raw, router, pair, inbox, guest, raw.sentReplies()[1])
 	if !equalFoldSlice(result.To, []string{pair.UserEmail}) || !equalFoldSlice(result.CC, []string{"guest@example.test"}) || len(result.BCC) != 0 {
 		t.Fatal("guest result did not reach the owner and guest")
 	}

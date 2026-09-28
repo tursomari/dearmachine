@@ -745,6 +745,7 @@ func (transport *OpenMailTransport) normalize(message openMailMessage, isRead bo
 		Subject:                message.Subject,
 		Body:                   body,
 		RawBody:                rawBody,
+		RawHTML:                message.BodyHTML,
 		ConversationReferences: conversationReferences,
 		Labels:                 labels,
 		Attachments:            attachments,

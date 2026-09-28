@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattn/go-sqlite3"
 )
 
 type Store struct {
+	outboundMu         sync.Mutex
 	db                 *sql.DB
 	warnings           *log.Logger
 	referenceGenerator func() string
@@ -243,6 +245,12 @@ CREATE TABLE IF NOT EXISTS forward_requests (
 	updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS outbound_approvals (
+ send_key TEXT NOT NULL, revision INTEGER NOT NULL, token TEXT NOT NULL UNIQUE, record TEXT NOT NULL,
+ reference TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT '',
+ PRIMARY KEY(send_key, revision)
+);
+
 CREATE TABLE IF NOT EXISTS result_recipients (
  message_id TEXT PRIMARY KEY, envelope TEXT NOT NULL
 );
@@ -275,6 +283,9 @@ CREATE TABLE IF NOT EXISTS admitted_participants (
 );`
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate SQLite store: %w", err)
+	}
+	if err := s.migrateOutbound(); err != nil {
+		return err
 	}
 	hasMagnificaHumanitas, err := sqliteTableHasColumn(
 		s.db,

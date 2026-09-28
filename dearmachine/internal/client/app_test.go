@@ -1858,6 +1858,9 @@ func (r *testRig) restartStore(t *testing.T) {
 	})
 	r.store = store
 	r.app.store = store
+	if binder, ok := r.app.transport.(interface{ bindStore(*Store) }); ok {
+		binder.bindStore(store)
+	}
 }
 
 func (r *testRig) setAnswer(answer string) {

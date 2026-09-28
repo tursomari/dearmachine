@@ -678,6 +678,7 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 		Subject:                message.Subject,
 		Body:                   body,
 		RawBody:                rawBody,
+		RawHTML:                message.HTML,
 		InReplyTo:              message.InReplyTo,
 		References:             append([]string(nil), message.References...),
 		ConversationReferences: conversationReferences,

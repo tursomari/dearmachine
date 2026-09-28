@@ -211,6 +211,9 @@ func (a *App) start(ctx context.Context) (func() error, error) {
 }
 
 func (a *App) ProcessOnce(ctx context.Context) error {
+	if err := a.recoverOutbound(ctx); err != nil {
+		return err
+	}
 	work := newThreadWorkQueue()
 	if err := a.recoverPending(ctx, work); err != nil {
 		return err
@@ -221,7 +224,10 @@ func (a *App) ProcessOnce(ctx context.Context) error {
 	if err := a.pollAndClaim(ctx, work); err != nil {
 		return err
 	}
-	return a.dispatch(ctx, work)
+	if err := a.dispatch(ctx, work); err != nil {
+		return err
+	}
+	return a.recoverOutbound(ctx)
 }
 
 func (a *App) recoverParticipantPrompts(ctx context.Context) error {
@@ -320,6 +326,12 @@ func (a *App) pollAndClaim(ctx context.Context, work *threadWorkQueue) error {
 		}
 		controller, controlling, participantBoundaryEnabled := participantBoundary(a.transport, original)
 		if handled, err := a.handleGuestRemoval(ctx, original); handled || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if handled, err := a.handleOutboundDecision(ctx, original); handled || err != nil {
 			if err != nil {
 				return err
 			}

@@ -139,6 +139,9 @@ func (a *App) resultReplyPayload(message Message, payload ReplyPayload) (ReplyPa
 }
 
 func (a *App) resultReplyReceipt(ctx context.Context, message Message) (string, bool, error) {
+	if id, found, err := a.store.outboundResultReceipt(message.MessageID); found || err != nil {
+		return id, found, err
+	}
 	envelope, found, err := a.store.resultEnvelope(message.MessageID)
 	if err != nil {
 		return "", false, err
