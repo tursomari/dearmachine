@@ -351,11 +351,22 @@ func (m *Mailbox) Reply(
 			})
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return "", beforeReplySubmission(err)
+	}
 	receipt, err := m.client.Inboxes.Messages.Reply(
 		ctx,
 		messageID,
 		params,
 		option.WithHeader("Idempotency-Key", idempotencyKey),
+		// An ambiguous response must return to durable outbox recovery.
+		option.WithMaxRetries(0),
+		option.WithMiddleware(func(request *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+			// The SDK has serialized the nonempty reply body by this point.
+			// The idempotency header must not enable net/http's own replays.
+			request.GetBody = nil
+			return next(request)
+		}),
 	)
 	if err != nil {
 		return "", fmt.Errorf("reply to AgentMail message %s: %w", messageID, err)

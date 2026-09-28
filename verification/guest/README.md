@@ -206,8 +206,13 @@ payload; destination checks must also exclude private control history. Shared
 submission removes the header and saves the eligible grant generations while
 the guest-store transaction orders the first send attempt against revocation.
 
-Intent is durable before network I/O. `preview_sending` and `sending` recover
-only from a unique matching Sent receipt, without blind resend. Matching uses
+Intent is durable before network I/O. `preview_sending` and `sending` reconcile
+receipts first. An adapter's typed local non-submission failure permits at most
+three same-key attempts per phase/revision within 15 minutes of the first
+attempt, with eligibility checked again under the guest lock. All uncertain
+attempts recover only from a unique matching Sent receipt, without blind resend.
+No runtime provider deduplication window is assumed; AgentMail SDK reply retries
+and transparent replay of mutating HTTP request bodies are disabled. Matching uses
 scope, parent, envelope, text, HTML and attachment metadata/bytes. Text permits
 only CRLF/LF normalization; HTML must equal `RawHTML` exactly. AgentMail,
 OpenMail and Sendmux adapters retain provider HTML in `RawHTML`. Missing, ambiguous or mismatched
@@ -215,7 +220,10 @@ receipts remain held, including provider rewrites that cannot be conservatively
 matched. Content matching alone cannot distinguish an older byte-identical send
 to the same parent and envelope from the uncertain attempt; exact attempt
 provenance remains a provider boundary. It never authorizes a resend. Pair DB
-`State` and `HoldReason` provide diagnostic evidence. The
+`State` and `HoldReason` provide diagnostic evidence in native status. Failing
+records do not stop other recovery or polling. Private hold and invalid-control
+notices are reserved durably before I/O and attempted once, so lost responses
+or restarts cannot create notice loops; status reports unconfirmed notices. The
 [operational contract](../../docs/guest-authorization.md#owner-approval-before-shared-sending)
 describes all states and privacy precautions for inspection.
 
@@ -243,6 +251,52 @@ the local operator/platform. A provider success receipt or exact reconciled Sent
 copy is treated as issuance/submission evidence, not proof of arrival or reading.
 The formal model abstracts these boundaries; no Go refinement or composed proof
 of instruction approval, execution, outbox and delivery is claimed.
+
+## Outbound recovery and feedback companion
+
+`OutboundRecovery.tla` and `OutboundRecovery.cfg` check a bounded recovery
+contract separately from `Outbound.tla`; they are not a composed proof or a Go
+refinement. Preview and submission run as separate phase fixtures. Each has
+three durable attempts per revision, with a 15-minute retry budget abstracted to
+one time unit starting at its first call. Waiting for approval does not consume
+submission budget. Safe recipient redrafting resets the new revision's budget;
+same-revision retries and restarts cannot refresh it. Exploration bounds time at
+two units and revisions at two. Preview keys change with revision; submission
+keys remain stable.
+
+The default `VerifiedWindow = FALSE` permits retries only after authoritative
+typed evidence that no mutating provider call occurred. Every retry reconciles
+first, stays within its attempt/deadline bounds, and atomically rechecks current
+eligibility. Unknown outcomes cannot resend or redraft; they remain held unless
+receipt reconciliation resolves them, including receipts found after a hold
+notice. The separate `VerifiedWindow = TRUE` fixture assumes a hypothetical
+external deduplication contract. It does **not** establish a provider guarantee
+or describe runtime support; runtime assumes no verified provider window.
+
+Fourteen state invariants cover types and attempt bounds, durable deadlines,
+retry evidence, at-most-one provider acceptance, current eligibility, frozen
+payload/key identity, safe redrafting, notice privacy and at-most-once attempts,
+visible notice/hold status, no invented approval, and premature deferral. Held
+notices are identified by record/revision; consumed-invalid feedback by message
+ID. Durable reservation precedes notice I/O. A crash can leave a notice unsent,
+and failure remains visible: notice delivery is not guaranteed. Malformed,
+stale, ambiguous and unbound controls are abstract consumed-invalid inputs;
+premature controls defer without consumption or invalid feedback. Classification,
+authentication, receipt authority, durable storage and lock ordering are trusted
+boundaries, not parser, adapter or database proofs.
+
+The runner includes 43 companion checks: five successful baseline/property
+checks, 26 expected-failing reachability witnesses, 11 safety mutations and one
+liveness mutation. The two-record isolation fixture assumes fair scheduling and
+a reliable provider for the healthy record, with clock/revocation interference
+disabled. Under those assumptions a permanently failing record cannot prevent
+healthy-record completion or polling; this is not unconditional send liveness.
+
+The full runner and `--outbound-only` include the companion. To check only it:
+
+```sh
+python3 verification/guest/run.py --recovery-only --output /path/to/new-recovery-artifacts
+```
 
 ## Production Boolean contracts
 

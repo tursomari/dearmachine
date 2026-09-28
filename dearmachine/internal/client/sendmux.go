@@ -311,22 +311,25 @@ func (transport *SendmuxTransport) rawMessage(ctx context.Context, messageID str
 }
 
 func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, payload ReplyPayload, idempotencyKey string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", beforeReplySubmission(err)
+	}
 	if err := transport.requireMutationOptIn("reply"); err != nil {
-		return "", err
+		return "", beforeReplySubmission(err)
 	}
 	if strings.TrimSpace(idempotencyKey) == "" {
-		return "", fmt.Errorf("reply to Sendmux message %s: idempotency key is required", messageID)
+		return "", beforeReplySubmission(fmt.Errorf("reply to Sendmux message %s: idempotency key is required", messageID))
 	}
 	if len(idempotencyKey) > 255 {
-		return "", fmt.Errorf("reply to Sendmux message %s: idempotency key exceeds 255 characters", messageID)
+		return "", beforeReplySubmission(fmt.Errorf("reply to Sendmux message %s: idempotency key exceeds 255 characters", messageID))
 	}
 	inbound, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
-		return "", err
+		return "", beforeReplySubmission(err)
 	}
 	mailboxInfo, err := transport.mailbox(ctx)
 	if err != nil {
-		return "", err
+		return "", beforeReplySubmission(err)
 	}
 	recipients := inbound.ReplyTo
 	if len(recipients) == 0 {
@@ -334,6 +337,9 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 	}
 	if len(payload.To) > 0 {
 		recipients = append([]string(nil), payload.To...)
+	}
+	if strings.TrimSpace(payload.Text) == "" && strings.TrimSpace(payload.HTML) == "" {
+		return "", beforeReplySubmission(fmt.Errorf("reply to Sendmux message %s: body is required", messageID))
 	}
 	request := sendmuxSendRequest{
 		ReplyToMessageID:   messageID,
@@ -349,14 +355,15 @@ func (transport *SendmuxTransport) Reply(ctx context.Context, messageID string, 
 	if request.ParentRFCMessageID != "" && !containsFold(request.References, request.ParentRFCMessageID) {
 		request.References = append(request.References, request.ParentRFCMessageID)
 	}
-	if strings.TrimSpace(request.Text) == "" && strings.TrimSpace(request.HTML) == "" {
-		return "", fmt.Errorf("reply to Sendmux message %s: body is required", messageID)
-	}
 	for _, file := range payload.Files {
 		request.Files = append(request.Files, sendmuxSendFile{
 			Filename: file.Filename, ContentType: file.ContentType,
 			Content: base64.StdEncoding.EncodeToString(file.Contents),
 		})
+	}
+	// All work above is read-only preparation; no send has been attempted.
+	if err := ctx.Err(); err != nil {
+		return "", beforeReplySubmission(err)
 	}
 	var receipt string
 	if transport.outbound != nil {
@@ -663,8 +670,35 @@ type sendmuxSDKSendingAPI struct {
 	client *sending.Client
 }
 
+// Place this inside the SDK retry transport: it recreates GetBody even when
+// configured for one attempt. A nonempty mutation body must reach net/http
+// without replay capability. Read-only requests retain normal retry behavior.
+type sendmuxNoReplayTransport struct {
+	base http.RoundTripper
+}
+
+func (t sendmuxNoReplayTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.Method != http.MethodGet && request.Method != http.MethodHead {
+		request = request.Clone(request.Context())
+		request.GetBody = nil
+	}
+	return t.base.RoundTrip(request)
+}
+
+func sendmuxNoReplayHTTPClient(base *http.Client) *http.Client {
+	client := *base
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	client.Transport = sendmuxNoReplayTransport{base: transport}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &client
+}
+
 func newSendmuxSDKAPI(apiKey string) (*sendmuxSDKAPI, error) {
-	client, err := mailbox.New(apiKey, mailbox.WithRetryOptions(core.RetryOptions{MaxAttempts: 1}))
+	client, err := mailbox.New(apiKey, mailbox.WithRetryOptions(core.RetryOptions{MaxAttempts: 1}),
+		mailbox.WithHTTPClient(sendmuxNoReplayHTTPClient(http.DefaultClient)))
 	if err != nil {
 		return nil, err
 	}
@@ -672,7 +706,8 @@ func newSendmuxSDKAPI(apiKey string) (*sendmuxSDKAPI, error) {
 }
 
 func newSendmuxSDKSendingAPI(apiKey string) (*sendmuxSDKSendingAPI, error) {
-	client, err := sending.New(apiKey, sending.WithRetryOptions(core.RetryOptions{MaxAttempts: 1}))
+	client, err := sending.New(apiKey, sending.WithRetryOptions(core.RetryOptions{MaxAttempts: 1}),
+		sending.WithHTTPClient(sendmuxNoReplayHTTPClient(http.DefaultClient)))
 	if err != nil {
 		return nil, err
 	}
@@ -868,7 +903,7 @@ func (api *sendmuxSDKAPI) Send(ctx context.Context, mailboxID string, request se
 
 func (api *sendmuxSDKSendingAPI) Send(ctx context.Context, from string, request sendmuxSendRequest, idempotencyKey string) (string, error) {
 	if len(request.To) != 1 {
-		return "", fmt.Errorf("Sendmux Sending API requires exactly one reply recipient")
+		return "", beforeReplySubmission(fmt.Errorf("Sendmux Sending API requires exactly one reply recipient"))
 	}
 	body := sending.EmailSendRequest{
 		From:     sending.Address{Email: from},

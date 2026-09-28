@@ -20,7 +20,8 @@ def main():
     parser.add_argument('--tlc-jar', type=Path, help='Pre-downloaded pinned tla2tools.jar')
     parser.add_argument('--output', type=Path, required=True, help='New artifact directory outside the checkout')
     parser.add_argument('--expand', action='store_true', help='Also explore multiple scopes and shared provider entries')
-    parser.add_argument('--outbound-only', action='store_true', help='Check only the proposed outbound approval contract')
+    parser.add_argument('--outbound-only', action='store_true', help='Check outbound approval plus recovery and feedback contracts')
+    parser.add_argument('--recovery-only', action='store_true', help='Check only outbound recovery and feedback')
     args = parser.parse_args()
     output = args.output.resolve()
     if output == ROOT or ROOT in output.parents:
@@ -40,7 +41,7 @@ def main():
         if hashlib.sha256(data).hexdigest() != TLC_SHA:
             raise SystemExit('TLC checksum mismatch')
         (snapshot / 'tla2tools.jar').write_bytes(data)
-        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg', 'Replacement.tla', 'Replacement.cfg', 'Outbound.tla', 'Outbound.cfg'):
+        for file in ('Guest.tla', 'Guest.cfg', 'Participation.tla', 'Participation.cfg', 'Replacement.tla', 'Replacement.cfg', 'Outbound.tla', 'Outbound.cfg', 'OutboundRecovery.tla', 'OutboundRecovery.cfg'):
             shutil.copyfile(ROOT / 'verification/guest' / file, snapshot / file)
             shutil.copyfile(snapshot / file, output / file)
         source = (ROOT / 'dearmachine/internal/client/guest_policy.go').read_text()
@@ -57,6 +58,71 @@ def main():
                 raise SystemExit(f'{label} failed: exit {result.returncode}; inspect {output / (label + ".log")}')
             print(f'{label}: expected exit {expected}', flush=True)
         tlc = common + ['--entrypoint', 'java', IMAGE, '-XX:+UseParallelGC', '-Xmx2g', '-cp', '/proof/tla2tools.jar', 'tlc2.TLC', '-workers', '2', '-metadir', '/tmp/tlc']
+        recovery = (snapshot / 'OutboundRecovery.cfg').read_text()
+        recovery_invariants = next(line for line in recovery.splitlines()
+                                   if line.startswith('INVARIANTS '))
+
+        def recovery_check(label, cfg, invariant=None, temporal=False):
+            path = label + '.cfg'
+            if invariant and not temporal:
+                # Witnesses and mutations retain ALL independent safety checks.
+                if invariant not in recovery_invariants.split():
+                    cfg = cfg.replace(recovery_invariants, recovery_invariants + ' ' + invariant)
+            (snapshot / path).write_text(cfg)
+            shutil.copyfile(snapshot / path, output / path)
+            expected = 13 if temporal else 12 if invariant else 0
+            marker = ('Temporal properties were violated' if temporal else
+                      f'Invariant {invariant} is violated' if invariant else
+                      'Model checking completed. No error has been found.')
+            run(label, tlc + ['-config', '/proof/' + path, '/proof/OutboundRecovery.tla'],
+                expected, marker)
+
+        for kind in ('preview', 'submission'):
+            cfg = recovery.replace('Kind = "submission"', f'Kind = "{kind}"')
+            recovery_check('recovery-' + kind, cfg)
+            for witness in ('NoTypedRecovery', 'NoLostReconciliation', 'NoLateReceipt', 'NoUnknownHold',
+                            'NoSafeRedraft', 'NoExhaustedHold', 'NoExpiredHold',
+                            'NoRevokedUnknownHold', 'NoHeldNoticeFailure'):
+                recovery_check('recovery-' + kind + '-' + witness, cfg, witness)
+        recovery_check('recovery-NoInterruptedNotice', recovery, 'NoInterruptedNotice')
+        guaranteed = recovery.replace('VerifiedWindow = FALSE', 'VerifiedWindow = TRUE')
+        recovery_check('recovery-verified-window', guaranteed)
+        recovery_check('recovery-NoGuaranteedRecovery', guaranteed, 'NoGuaranteedRecovery')
+        for case in ('malformed', 'stale', 'ambiguous', 'bare'):
+            cfg = recovery.replace('DecisionCase = "malformed"', f'DecisionCase = "{case}"')
+            recovery_check('recovery-feedback-' + case, cfg, 'NoInvalidFeedback')
+        premature = recovery.replace('DecisionCase = "malformed"', 'DecisionCase = "premature"')
+        recovery_check('recovery-premature', premature)
+        recovery_check('recovery-NoPrematureDeferral', premature, 'NoPrematureDeferral')
+        recovery_check('recovery-ConsumePremature',
+                       premature.replace('Mutation = "None"', 'Mutation = "ConsumePremature"'),
+                       'PrematureDeferred')
+        for mutant, invariant in {
+            'BlindRetry': 'RetryEvidence',
+            'AbsentMeansRejected': 'RetryEvidence',
+            'ExpiredRetry': 'BoundedAttempts',
+            'SkipGrantCheck': 'FreshEligibility',
+            'RenewDeadline': 'DurableDeadline',
+            'MutableRequest': 'FrozenRequest',
+            'RedraftUnknown': 'SafeRedraft',
+            'PublicNotice': 'NoticePrivacy',
+            'ForgetNotice': 'NoticeAtMostOnce',
+            'FeedbackApproves': 'NoInventedApproval',
+        }.items():
+            cfg = recovery.replace('Mutation = "None"', f'Mutation = "{mutant}"')
+            recovery_check('recovery-' + mutant, cfg, invariant)
+        isolated = recovery.replace('Records = {r1}', 'Records = {"broken", "healthy"}')
+        isolated = isolated.replace('Isolation = FALSE', 'Isolation = TRUE')
+        isolated = isolated.replace('SPECIFICATION Spec', 'SPECIFICATION IsolationSpec')
+        recovery_check('recovery-isolation-witness', isolated, 'NoIsolation')
+        isolated += '\nPROPERTY Progress\n'
+        recovery_check('recovery-isolation', isolated)
+        recovery_check('recovery-GlobalFailure',
+                       isolated.replace('Mutation = "None"', 'Mutation = "GlobalFailure"'),
+                       temporal=True)
+        if args.recovery_only:
+            record_artifacts()
+            return
         outbound = (snapshot / 'Outbound.cfg').read_text()
         outbound_invariants = next(line for line in outbound.splitlines()
                                    if line.startswith('INVARIANTS '))

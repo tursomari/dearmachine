@@ -69,6 +69,17 @@ owns the frozen text, HTML and attachment bytes even after execution staging
 files are removed. A local `outbound-pending:<token>` receipt means only durable
 outbox acceptance: it is **not provider submission or delivery**.
 
+Adapters distinguish local failures before any mutating provider request from
+uncertain acceptance. Only the former permit automatic retry, after checking
+receipts first. Preview and submission each have at most three attempts per
+revision within 15 minutes of their first durable attempt, with a short backoff.
+Restart does not reset this budget. Every retry uses the same key and frozen
+payload and rechecks guest eligibility under the guest database lock. A revoked
+recipient requires a new revision and, if guests remain, fresh approval.
+AgentMail's automatic SDK reply retries are disabled, and mutating HTTP request
+bodies cannot be transparently replayed, including on redirects. No provider idempotency
+retention window is assumed; sending an idempotency header is not proof of one.
+
 After an uncertain preview or final send, recovery only reconciles receipts;
 it never blindly retries that send. Missing, ambiguous or mismatched receipts
 leave it held. Matching checks the scoped Sent message, reply parent, complete
@@ -86,6 +97,23 @@ while a preview send is uncertain in the same thread remains unprocessed until
 receipt reconciliation can resolve it. It neither starts agent work nor becomes
 approval merely because the thread matches.
 
+An exhausted or uncertain send produces one private notice attempt per record
+and revision. It says delivery could not be confirmed, rather than claiming the
+provider did not send anything. Recovery holds and logs a failing record while
+continuing other records and inbox polling. A scope mismatch never sends old
+owner information to a replacement owner.
+
+Consumed, authenticated owner replies that are invalid, superseded, ambiguous
+or not bound to a preview receive private guidance. Feedback neither approves
+nor executes work. Each notice is durably reserved before sending, keyed by the
+consumed message or held revision. A replay or restart cannot create a second
+attempt. If the notice itself fails or its response is lost, it remains visible
+in status; delivery of the notice is not guaranteed and it is not blindly retried.
+
+`dearmachine status` and `dearmachine status --json` show unresolved approval
+states and hold reasons, plus unconfirmed private notices. They read metadata
+without migrating databases or loading answer bodies, attachments or tokens.
+
 Private pair-database diagnostics are in `outbound_approvals`, keyed by send key
 and revision. Records retain the prepared pair/inbox/owner/request/thread scope,
 `State`, `HoldReason`, preview/submission grant snapshots, issued preview
@@ -99,8 +127,8 @@ edited to manufacture approval.
 
 The [validation record](../verification/guest/VALIDATION.md) documents passing
 scoped AgentMail/OpenMail live checks and their provider rewriting boundary.
-The formal outbound contract is unchanged; neither it nor the Go regressions
-establish a Go refinement/composition proof or actual provider delivery.
+The formal approval and recovery models and Go regressions do not establish a
+Go refinement/composition proof or actual provider delivery.
 
 ## Sender authentication
 

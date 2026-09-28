@@ -1,5 +1,80 @@
 # Guest authorization validation
 
+## Outbound recovery and owner feedback, 2026-09-28
+
+Recovery previously left holds silent, allowed record failures to block polling,
+and omitted feedback for consumed owner controls. It now retries only adapter-proven
+local non-submission, with receipt lookup first, durable attempt/deadline limits
+and a fresh guest grant check. No provider deduplication window is assumed.
+Unknown acceptance remains held. Private hold/control notices reserve an attempt
+before I/O, and native status exposes holds without loading answer payloads.
+
+- **PASS — focused runtime regressions.** Preview and submission failures before
+  mutation recover using the same frozen request/key; restart preserves the
+  budget. Recipient revocation requires a new preview before release. Attempt
+  exhaustion, deadline expiry and unknown acceptance produce private hold
+  feedback without retries or notice loops. One invalid-scope record does not
+  block approval polling or another record. An injected replacement-transaction
+  failure cannot publish a partial revision. Decision feedback covers invalid,
+  stale, ambiguous and unmatched controls, privacy boundaries and restart.
+- **PASS — adapter boundary regressions.** Pre-dispatch errors are distinguished
+  from post-dispatch HTTP errors, missing receipts and lost responses. AgentMail
+  reply calls disable SDK retries. A real reused-TCP fixture accepts a complete
+  POST then drops its response: each protected adapter path submits once, while
+  an unprotected control submits twice. JSON/multipart OpenMail, AgentMail,
+  both Sendmux SDK paths and JMAP are covered, along with 307/308 replay checks.
+  These are isolated transport fixtures, not live provider failures.
+- **PASS — full Go checks.** `go test ./...`, `go test -race ./...` and
+  `go vet ./...` passed on the frozen runtime source in a network-disabled,
+  credential-free Go 1.24 container. Dependencies were prepared separately;
+  no clients or tests ran on the host.
+- **PASS — Linux Nix gate.** All 14 `x86_64-linux` checks passed in an isolated
+  container using Go 1.26.5 on the final adapters with body replay disabled.
+  Other operating systems and architectures were not evaluated.
+- **PASS — expanded formal suite.** All 43 recovery companion checks passed:
+  five baseline/property checks, 26 reachability witnesses, 11 safety mutations
+  and one liveness mutation. Each preview/submission baseline explored 315,348
+  distinct states. The existing 38 outbound checks, Gobra predicates,
+  replacement, participation and provider checks also passed, including the
+  3,748,096-state expanded provider matrix. All 264 artifact checksums verified;
+  saved models, configurations and runner match the candidate source. The
+  companion's optional verified-window fixture is a hypothetical provider
+  assumption, not implemented retry behavior or an established provider contract.
+- **PASS — scoped live production acceptance.** The final runtime ran only in
+  an isolated container with an AgentMail receiver/owner and an OpenMail guest,
+  using DeepInfra `zai-org/GLM-5.3-Flash` configured at high reasoning effort.
+  `yes please` produced exactly one owner-only guidance notice, left the frozen
+  draft pending, and caused neither another execution nor a guest result.
+  Restart did not duplicate the notice; exact Yes delivered the approved result
+  once to owner and guest.
+- **PASS — live fixture holds and isolation.** A stopped, disposable database
+  received an uncertain `sending` record with no decision evidence. It stayed
+  held, produced one private notice and metadata-only native status, and neither
+  retried nor duplicated its notice after restart. A separate `prepared` record
+  with an obsolete owner caused a real scope error without blocking an
+  independent owner-private model reply. These were explicit persisted-state
+  fault injections, not actual provider outages or live retry-window proofs.
+  The final guest raw-MIME sweep verified recipients/parents and absence of
+  private feedback, approval controls and the private continuation.
+- **PASS — live cleanup.** The three test-created inboxes were deleted and
+  verified absent. Scoped fixture rules, containers, images and copied runtime
+  credentials were removed. Account policies and protected inboxes were
+  untouched. Private evidence remains outside the repository; its credential
+  scan passed.
+
+The runtime gate SHA-256 is:
+
+```text
+50e3ac82cad9340892a61c3cdfd0aaa6e66c110a1d8723f0d8f98cec47478a0e
+```
+
+A private notice is an at-most-once attempt, not guaranteed delivery. Interrupted
+or uncertain notice attempts remain visible in status. Provider authentication,
+receipt provenance, transport behavior and local storage remain trusted
+boundaries; neither the model nor these tests prove end-to-end delivery or a
+Go refinement/composition result. Earlier validation below describes its own
+source and scope.
+
 ## Runtime outbound approval gate, 2026-09-28
 
 The client now freezes guest-visible replies in a durable approval outbox.

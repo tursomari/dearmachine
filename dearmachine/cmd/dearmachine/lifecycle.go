@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -30,15 +29,18 @@ func runStatus(args []string, deps dependencies) error {
 		return err
 	}
 	s, managed, stateErr := observeStatus(lockPath, deps.daemonStatus)
+	outbound := observeOutboundStatus(deps.userHomeDir)
 	if *asJSON {
 		// A successful observation can describe an unhealthy or unknown runtime.
-		// Do not include pair identities or private exit diagnostics in this API.
-		s.LastExit = ""
-		return json.NewEncoder(outputOrDiscard(deps.stdout)).Encode(supervisor.Response{Version: 1, OK: true, Status: s})
+		// Include opaque pair IDs only, not addresses or private exit diagnostics.
+		return writeStatusJSON(outputOrDiscard(deps.stdout), s, outbound)
 	}
 	output := outputOrDiscard(deps.stdout)
 	m := nativeServiceManager(filepath.Dir(stateFromLock(lockPath)))
 	if err := writeStatusReport(output, s, managed, m.observeStartup(), *details); err != nil {
+		return err
+	}
+	if err := writeOutboundStatus(output, outbound); err != nil {
 		return err
 	}
 	if *details {

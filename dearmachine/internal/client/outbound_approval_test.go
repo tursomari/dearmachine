@@ -69,7 +69,7 @@ func assertOutboundPrivate(t *testing.T, r fakeTransportReply, owner string) {
 func TestOutboundApprovalExactFrozenPayloadAndRestart(t *testing.T) {
 	f := newOutboundFixture(t, "guest@example.test")
 	f.queue(t)
-	replies := f.raw.sentReplies()
+	replies := f.contentReplies(t)
 	if len(replies) != 1 {
 		t.Fatal("unexpected send")
 	}
@@ -80,7 +80,7 @@ func TestOutboundApprovalExactFrozenPayloadAndRestart(t *testing.T) {
 	}
 	f.rig.restartStore(t)
 	f.decision(t, "approve", "YES\n\nOn Mon, Jan 2, 2006 at 1:29 AM Machine <machine@example.test> wrote:\n> pending", preview.ReceiptID)
-	replies = f.raw.sentReplies()
+	replies = f.contentReplies(t)
 	if len(replies) != 2 {
 		t.Fatalf("sends=%d", len(replies))
 	}
@@ -93,23 +93,23 @@ func TestOutboundApprovalExactFrozenPayloadAndRestart(t *testing.T) {
 		t.Fatalf("missing durable evidence: %+v", r)
 	}
 	f.decision(t, "approve", "yes", preview.ReceiptID)
-	if len(f.raw.sentReplies()) != 2 || outboundRanAgent(f.rig) {
+	if len(f.contentReplies(t)) != 2 || outboundRanAgent(f.rig) {
 		t.Fatal("approval replay sent or executed work")
 	}
 }
 func TestOutboundApprovalOnlyYesOrNoAndRejectionTerminal(t *testing.T) {
 	f := newOutboundFixture(t, "guest@example.test")
 	f.queue(t)
-	preview := f.raw.sentReplies()[0]
+	preview := f.contentReplies(t)[0]
 	for i, body := range []string{"Other", "yes please", "yes!", "no thanks", "yes\nrun something"} {
 		f.decision(t, body, body, preview.ReceiptID)
-		if len(f.raw.sentReplies()) != 1 || f.records(t)[0].State != "pending" {
+		if len(f.contentReplies(t)) != 1 || f.records(t)[0].State != "pending" {
 			t.Fatalf("invalid decision %d released or rejected", i)
 		}
 	}
 	f.decision(t, "reject", "No", preview.ReceiptID)
 	f.decision(t, "late-yes", "yes", preview.ReceiptID)
-	if f.records(t)[0].State != "rejected" || len(f.raw.sentReplies()) != 1 || outboundRanAgent(f.rig) {
+	if f.records(t)[0].State != "rejected" || len(f.contentReplies(t)) != 1 || outboundRanAgent(f.rig) {
 		t.Fatal("rejection did not terminate draft")
 	}
 }
@@ -153,7 +153,7 @@ func TestOutboundApprovalScopeAndAuthentication(t *testing.T) {
 			if err != nil && !errors.Is(err, ErrGuestUnauthorized) {
 				t.Fatal(err)
 			}
-			if f.records(t)[0].State != "pending" || len(f.raw.sentReplies()) != 1 {
+			if f.records(t)[0].State != "pending" || len(f.contentReplies(t)) != 1 {
 				t.Fatal("untrusted decision authorized output")
 			}
 		})
@@ -162,12 +162,12 @@ func TestOutboundApprovalScopeAndAuthentication(t *testing.T) {
 func TestOutboundApprovalRecipientReductionRequiresNewPreview(t *testing.T) {
 	f := newOutboundFixture(t, "first@example.test", "second@example.test")
 	f.queue(t)
-	old := f.raw.sentReplies()[0]
+	old := f.contentReplies(t)[0]
 	if err := f.router.RevokeGuest(f.pair.ID, "first@example.test", f.message.ThreadID, false); err != nil {
 		t.Fatal(err)
 	}
 	f.decision(t, "old-yes", "yes", old.ReceiptID)
-	replies := f.raw.sentReplies()
+	replies := f.contentReplies(t)
 	if len(replies) != 2 {
 		t.Fatalf("sends=%d", len(replies))
 	}
@@ -180,7 +180,7 @@ func TestOutboundApprovalRecipientReductionRequiresNewPreview(t *testing.T) {
 		t.Fatalf("revision evidence: %+v", records)
 	}
 	f.decision(t, "fresh-yes", "yes", fresh.ReceiptID)
-	replies = f.raw.sentReplies()
+	replies = f.contentReplies(t)
 	if len(replies) != 3 || !sameRecipientSet(replies[2].CC, []string{"second@example.test"}) {
 		t.Fatal("reapproved envelope not used")
 	}
@@ -198,7 +198,7 @@ func TestOutboundApprovalRevokedReinvitedGuestCannotReceiveOldAnswer(t *testing.
 	if err := f.rig.app.recoverOutbound(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	replies := f.raw.sentReplies()
+	replies := f.contentReplies(t)
 	if len(replies) != 2 || len(replies[1].CC) != 0 || !sameRecipientSet(replies[1].To, []string{f.pair.UserEmail}) {
 		t.Fatal("reinvited generation received old answer")
 	}
@@ -206,7 +206,7 @@ func TestOutboundApprovalRevokedReinvitedGuestCannotReceiveOldAnswer(t *testing.
 func TestOutboundApprovalRemovalReplyToPreview(t *testing.T) {
 	f := newOutboundFixture(t, "guest@example.test")
 	f.queue(t)
-	preview := f.raw.sentReplies()[0]
+	preview := f.contentReplies(t)[0]
 	k := GuestKey{f.pair.ID, guestInboxKey(f.inbox), "guest@example.test", f.message.ThreadID}
 	token, err := f.router.guests.RemovalToken(k)
 	if err != nil {
@@ -217,7 +217,7 @@ func TestOutboundApprovalRemovalReplyToPreview(t *testing.T) {
 	if err != nil || g.Active {
 		t.Fatal("outbound handler swallowed removal")
 	}
-	for _, r := range f.raw.sentReplies() {
+	for _, r := range f.contentReplies(t) {
 		if len(r.CC) > 0 {
 			t.Fatal("removed guest received an answer")
 		}
@@ -301,7 +301,7 @@ func TestOutboundApprovalLostPreviewResponseAndDelayedReceipt(t *testing.T) {
 	f.rig.restartStore(t)
 	u.hide = false
 	f.decision(t, "delayed-yes", body, "")
-	if len(f.raw.sentReplies()) != 2 || f.records(t)[0].State != "sent" {
+	if len(f.contentReplies(t)) != 2 || f.records(t)[0].State != "sent" {
 		t.Fatal("preview recovery failed or duplicated")
 	}
 }
@@ -323,8 +323,11 @@ func TestOutboundApprovalLostSubmissionResponseNeverResends(t *testing.T) {
 	if _, err := f.rig.app.handleOutboundDecision(context.Background(), m); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.rig.app.recoverOutbound(context.Background()); err == nil {
-		t.Fatal("expected uncertain submission")
+	if err := f.rig.app.recoverOutbound(context.Background()); err != nil {
+		t.Fatal("uncertain submission blocked independent recovery", err)
+	}
+	if f.records(t)[0].State != "sending" {
+		t.Fatal("uncertain submission not held")
 	}
 	if err := f.router.RevokeGuest(f.pair.ID, "guest@example.test", f.message.ThreadID, false); err != nil {
 		t.Fatal(err)
@@ -334,7 +337,7 @@ func TestOutboundApprovalLostSubmissionResponseNeverResends(t *testing.T) {
 	if err := f.rig.app.recoverOutbound(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.raw.sentReplies()) != 2 || f.records(t)[0].State != "sent" || f.records(t)[0].SubmissionGrants["guest@example.test"] != 1 {
+	if len(f.contentReplies(t)) != 2 || f.records(t)[0].State != "sent" || f.records(t)[0].SubmissionGrants["guest@example.test"] != 1 {
 		t.Fatal("submission recovery changed history or resent")
 	}
 }
@@ -356,7 +359,7 @@ func TestOutboundApprovalUnseenPreviewAndHTMLMismatchStayHeld(t *testing.T) {
 	f.raw.setThread(f.message.ThreadID, thread)
 	u.fail = false
 	f.decision(t, "unseen-yes", "yes\n\nOn Mon, Jan 2, 2006 at 1:29 AM Machine <machine@example.test> wrote:\n> "+outboundReferencePrefix+r.Token, "")
-	if f.records(t)[0].State != "preview_sending" || len(f.raw.sentReplies()) != 1 {
+	if f.records(t)[0].State != "preview_sending" || len(f.contentReplies(t)) != 1 {
 		t.Fatal("lossy receipt matched an unseen preview")
 	}
 }
@@ -375,7 +378,7 @@ func TestOutboundApprovalDelayedReceiptWithHeaderOnlyDecision(t *testing.T) {
 	if _, err := f.endpoint.Reply(context.Background(), f.message.MessageID, f.payload, f.key); err == nil {
 		t.Fatal("expected uncertain response")
 	}
-	preview := f.raw.sentReplies()[0]
+	preview := f.contentReplies(t)[0]
 	u.fail = false
 	u.hide = true
 	f.decision(t, "header-yes", "yes", preview.ReceiptID)
@@ -388,14 +391,14 @@ func TestOutboundApprovalDelayedReceiptWithHeaderOnlyDecision(t *testing.T) {
 	f.rig.restartStore(t)
 	u.hide = false
 	f.decision(t, "header-yes", "yes", preview.ReceiptID)
-	if len(f.raw.sentReplies()) != 2 || f.records(t)[0].State != "sent" {
+	if len(f.contentReplies(t)) != 2 || f.records(t)[0].State != "sent" {
 		t.Fatal("header-only decision was not recovered")
 	}
 }
 func TestOutboundApprovalEverySharedReplyAndPrivateExemption(t *testing.T) {
 	f := newOutboundFixture(t, "guest@example.test")
 	f.queue(t)
-	f.decision(t, "yes-first", "yes", f.raw.sentReplies()[0].ReceiptID)
+	f.decision(t, "yes-first", "yes", f.contentReplies(t)[0].ReceiptID)
 	payload := f.payload
 	payload.Text = "An error/status answer"
 	payload.HTML = ""
@@ -403,7 +406,7 @@ func TestOutboundApprovalEverySharedReplyAndPrivateExemption(t *testing.T) {
 	if _, err := f.endpoint.Reply(context.Background(), f.message.MessageID, payload, controlIdempotencyKey("status", f.message.MessageID)); err != nil {
 		t.Fatal(err)
 	}
-	replies := f.raw.sentReplies()
+	replies := f.contentReplies(t)
 	if len(replies) != 3 {
 		t.Fatal("second reply bypassed its independent approval")
 	}
@@ -412,7 +415,7 @@ func TestOutboundApprovalEverySharedReplyAndPrivateExemption(t *testing.T) {
 	if _, err := f.endpoint.Reply(context.Background(), f.message.MessageID, payload, "private-answer"); err != nil {
 		t.Fatal(err)
 	}
-	replies = f.raw.sentReplies()
+	replies = f.contentReplies(t)
 	if len(replies) != 4 || replies[3].Text != payload.Text || len(replies[3].CC) != 0 {
 		t.Fatal("owner-only exemption failed")
 	}
@@ -438,7 +441,7 @@ func (b *outboundBlockingTransport) Reply(ctx context.Context, id string, p Repl
 func TestOutboundApprovalSubmissionOrdersConcurrentRevocation(t *testing.T) {
 	f := newOutboundFixture(t, "guest@example.test")
 	f.queue(t)
-	preview := f.raw.sentReplies()[0]
+	preview := f.contentReplies(t)[0]
 	m := Message{MessageID: "owner-yes", ThreadID: f.message.ThreadID, From: f.pair.UserEmail, To: []string{f.inbox.Address}, Body: "yes", InReplyTo: preview.ReceiptID}
 	f.raw.setThread(m.ThreadID, append(f.raw.thread(m.ThreadID), m))
 	authenticated, err := f.endpoint.Message(context.Background(), m.MessageID)
@@ -480,7 +483,7 @@ func TestOutboundApprovalSubmissionOrdersConcurrentRevocation(t *testing.T) {
 	if err := <-revoked; err != nil {
 		t.Fatal(err)
 	}
-	if f.records(t)[0].SubmissionGrants["guest@example.test"] != 1 || len(f.raw.sentReplies()) != 2 {
+	if f.records(t)[0].SubmissionGrants["guest@example.test"] != 1 || len(f.contentReplies(t)) != 2 {
 		t.Fatal("missing pre-revocation submission evidence")
 	}
 }
@@ -496,12 +499,12 @@ func TestOutboundApprovalHTMLDocumentKeepsBannerInsideBody(t *testing.T) {
 func TestOutboundApprovalReferencesOnlyDecision(t *testing.T) {
 	f := newOutboundFixture(t, "guest@example.test")
 	f.queue(t)
-	m := Message{MessageID: "references-yes", ThreadID: f.message.ThreadID, From: f.pair.UserEmail, To: []string{f.inbox.Address}, Body: "yes", References: []string{f.raw.sentReplies()[0].ReceiptID}, Timestamp: time.Now().UTC()}
+	m := Message{MessageID: "references-yes", ThreadID: f.message.ThreadID, From: f.pair.UserEmail, To: []string{f.inbox.Address}, Body: "yes", References: []string{f.contentReplies(t)[0].ReceiptID}, Timestamp: time.Now().UTC()}
 	f.raw.setThread(m.ThreadID, append(f.raw.thread(m.ThreadID), m))
 	f.raw.setPoll([]Message{m})
 	f.router.lastPoll = time.Time{}
 	mustProcess(t, f.rig)
-	if len(f.raw.sentReplies()) != 2 || f.records(t)[0].State != "sent" || outboundRanAgent(f.rig) {
+	if len(f.contentReplies(t)) != 2 || f.records(t)[0].State != "sent" || outboundRanAgent(f.rig) {
 		t.Fatal("References-only decision did not resolve exact outbound preview")
 	}
 }
@@ -510,8 +513,8 @@ func TestOutboundApprovalUnknownReplyReferenceIsNotAgentWork(t *testing.T) {
 	f := newOutboundFixture(t, "guest@example.test")
 	f.queue(t)
 	f.decision(t, "unknown-reference", "yes", "guessed-or-wrong-request")
-	f.decision(t, "wrong-case-reference", "yes", strings.ToUpper(f.raw.sentReplies()[0].ReceiptID))
-	if outboundRanAgent(f.rig) || len(f.raw.sentReplies()) != 1 || f.records(t)[0].State != "pending" {
+	f.decision(t, "wrong-case-reference", "yes", strings.ToUpper(f.contentReplies(t)[0].ReceiptID))
+	if outboundRanAgent(f.rig) || len(f.contentReplies(t)) != 1 || f.records(t)[0].State != "pending" {
 		t.Fatal("unknown approval reference executed work or released answer")
 	}
 }
@@ -541,11 +544,29 @@ func TestOutboundApprovalMetadataMigrationPreservesPendingPayload(t *testing.T) 
 		t.Fatal("routine reference projection contains payload data or lost issuance")
 	}
 	f.decision(t, "post-upgrade-yes", "yes", before.PreviewID)
-	if len(f.raw.sentReplies()) != 2 || !reflect.DeepEqual(f.raw.sentReplies()[1].Files, f.payload.Files) {
+	if len(f.contentReplies(t)) != 2 || !reflect.DeepEqual(f.contentReplies(t)[1].Files, f.payload.Files) {
 		t.Fatal("upgrade did not release the frozen files")
 	}
 	var state string
 	if err := f.rig.store.db.QueryRow(`SELECT state FROM outbound_approvals`).Scan(&state); err != nil || state != "sent" {
 		t.Fatal("state projection not updated atomically")
 	}
+}
+
+// Control/hold feedback is checked separately from approved content. Every
+// excluded notice must still be strictly private and free of payload/files.
+func (f *outboundFixture) contentReplies(t *testing.T) []fakeTransportReply {
+	t.Helper()
+	var result []fakeTransportReply
+	for _, r := range f.raw.sentReplies() {
+		if strings.HasPrefix(r.IdempotencyKey, "dearmachine-outbound-control-") || strings.HasPrefix(r.IdempotencyKey, "dearmachine-outbound-hold-") {
+			assertPrivateOutboundNotice(t, r, f.pair.UserEmail)
+			if strings.Contains(r.Text, f.payload.Text) || r.HTML != "" {
+				t.Fatal("notice leaked reply content")
+			}
+			continue
+		}
+		result = append(result, r)
+	}
+	return result
 }

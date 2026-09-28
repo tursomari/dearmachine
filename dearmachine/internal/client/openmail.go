@@ -365,46 +365,49 @@ func (transport *OpenMailTransport) Reply(
 	payload ReplyPayload,
 	idempotencyKey string,
 ) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", beforeReplySubmission(err)
+	}
 	if err := transport.requireMutationOptIn("reply"); err != nil {
-		return "", err
+		return "", beforeReplySubmission(err)
 	}
 	if strings.TrimSpace(idempotencyKey) == "" {
-		return "", fmt.Errorf("reply to OpenMail message %s: idempotency key is required", messageID)
+		return "", beforeReplySubmission(fmt.Errorf("reply to OpenMail message %s: idempotency key is required", messageID))
 	}
 	inbound, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
-		return "", err
+		return "", beforeReplySubmission(err)
 	}
 	if inbound.Direction != "inbound" {
-		return "", fmt.Errorf("OpenMail message %s is not an allowed inbound user turn", messageID)
+		return "", beforeReplySubmission(fmt.Errorf("OpenMail message %s is not an allowed inbound user turn", messageID))
 	}
 	recipient, ok := canonicalOpenMailAddress(inbound.FromAddr)
 	if !ok {
-		return "", fmt.Errorf("OpenMail message %s has no reply recipient", messageID)
+		return "", beforeReplySubmission(fmt.Errorf("OpenMail message %s has no reply recipient", messageID))
 	}
 	if len(payload.To) > 0 {
 		if len(payload.To) != 1 {
-			return "", fmt.Errorf("reply to OpenMail message %s: exactly one primary recipient is required", messageID)
+			return "", beforeReplySubmission(fmt.Errorf("reply to OpenMail message %s: exactly one primary recipient is required", messageID))
 		}
 		var valid bool
 		recipient, valid = canonicalOpenMailAddress(payload.To[0])
 		if !valid {
-			return "", fmt.Errorf("reply to OpenMail message %s: primary recipient is invalid", messageID)
+			return "", beforeReplySubmission(fmt.Errorf("reply to OpenMail message %s: primary recipient is invalid", messageID))
 		}
 	}
 	if len(payload.BCC) > 0 {
-		return "", fmt.Errorf("OpenMail reply does not support BCC")
+		return "", beforeReplySubmission(fmt.Errorf("OpenMail reply does not support BCC"))
 	}
 	body := payload.Text
 	if body == "" {
 		body = payload.HTML
 	}
 	if body == "" {
-		return "", fmt.Errorf("reply to OpenMail message %s: body is required", messageID)
+		return "", beforeReplySubmission(fmt.Errorf("reply to OpenMail message %s: body is required", messageID))
 	}
 	inboxID, err := transport.inboxID(ctx)
 	if err != nil {
-		return "", err
+		return "", beforeReplySubmission(err)
 	}
 	request, err := transport.replyRequest(
 		ctx,
@@ -416,13 +419,19 @@ func (transport *OpenMailTransport) Reply(
 		idempotencyKey,
 	)
 	if err != nil {
-		return "", fmt.Errorf("prepare OpenMail reply to message %s: %w", messageID, err)
+		return "", beforeReplySubmission(fmt.Errorf("prepare OpenMail reply to message %s: %w", messageID, err))
+	}
+	// All work above is read-only preparation; no send has been attempted.
+	if err := ctx.Err(); err != nil {
+		return "", beforeReplySubmission(err)
 	}
 	var receipt struct {
 		MessageID string `json:"messageId"`
 		ThreadID  string `json:"threadId"`
 		Status    string `json:"status"`
 	}
+	// This nonempty send body must not be replayed by net/http after a lost response.
+	request.GetBody = nil
 	if err := transport.doJSON(request, &receipt); err != nil {
 		return "", fmt.Errorf("reply to OpenMail message %s: %w", messageID, err)
 	}

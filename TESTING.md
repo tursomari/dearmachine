@@ -300,6 +300,14 @@ approval separation, recipient reduction/reapproval, accepted grant generations,
 restart, uncertain-send reconciliation and revocation ordering. A completed turn
 with `outbound-pending:` is only local outbox acceptance, not submission or
 delivery; the outbox retains attachment bytes independently of staging files.
+`outbound_recovery_test.go` covers known non-submission retries, durable budgets,
+revocation before retry, lost responses, private hold notices, record isolation
+and notice replay across restart. `outbound_decision_test.go` covers private
+feedback and deferred uncertain decisions; `reply_submission_boundary_test.go`
+checks adapter error classification, disabled AgentMail SDK retries, and
+reused-TCP lost-response/redirect behavior that must not replay mutation bodies. Native
+status tests verify visible holds without payload or token disclosure.
+
 Pair DB `outbound_approvals` records expose state and hold reason for private
 diagnostics. Missing/ambiguous/mismatched receipts stay held without blind
 resends. Plain text matching normalizes only CRLF/LF; HTML must match the

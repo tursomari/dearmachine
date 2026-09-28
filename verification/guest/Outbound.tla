@@ -163,7 +163,9 @@ Submit(r) ==
   /\ UNCHANGED grants
 
 \* First submission is irreversible. Provider idempotency/receipt lookup and
-\* durable writes are assumptions, NOT proved recovery protocols. Retain the
+\* durable writes are assumptions here. OutboundRecovery separately checks
+\* bounded recovery/feedback; the two models are not a composed refinement.
+\* Retain the
 \* actual first-submission payload and eligibility even after revocation.
 Retry(r) ==
   /\ work[r].phase = "submitted"

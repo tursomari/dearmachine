@@ -300,3 +300,24 @@ state transitions, invocation counts, model/config preflight, and presence or
 absence verdicts. Do not retain guest bodies or body-derived hashes. Teardown
 only the recorded Compose project, scratch root, temporary inboxes, credentials,
 and exact run-created policy entries.
+
+### Recovery and feedback checks
+
+- Inject a failure before a mutating send in an isolated transport fixture.
+  Require receipt lookup, the same frozen request/key on retry, and a fresh
+  guest grant check. Exercise preview and approved submission independently.
+- Restart during backoff and after the retry budget expires. Require at most
+  three attempts per phase/revision within the original 15-minute budget.
+  Unknown acceptance must never be treated as local non-submission.
+- Lose a send response and delay or corrupt its receipt. Require one private
+  hold notice attempt, a visible state/reason in native text and JSON status,
+  and no automatic resend. Losing the notice response must not loop notices.
+- Keep a broken outbox record while polling an independent request and
+  recovering another record. Confirm that both continue.
+- Send malformed, stale, ambiguous and unmatched owner controls. Require one
+  private guidance notice per consumed message, no approval or agent execution,
+  and no notice duplicates after replay/restart. Uncertain-preview decisions
+  remain unprocessed until receipt reconciliation resolves issuance.
+- Inspect guest inboxes for absence of all feedback/hold notices and private
+  control content. Label injected state/transport failures separately from
+  actual provider faults in the validation record.

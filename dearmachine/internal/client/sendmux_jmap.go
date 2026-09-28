@@ -49,6 +49,11 @@ func (s *sendmuxJMAPSender) request(ctx context.Context, address, target, conten
 	if err != nil {
 		return errors.New("prepare Sendmux mailbox request failed")
 	}
+	if method == http.MethodPost {
+		// HTTP/2 may replay POSTs without an idempotency header. Keep remote
+		// creations behind the journal, including when a response is lost.
+		req.GetBody = nil
+	}
 	req.SetBasicAuth(address, s.credential)
 	req.Header.Set("Accept", "application/json")
 	if contentType != "" {

@@ -9,33 +9,37 @@ import (
 	"errors"
 	"html"
 	"reflect"
-	"slices"
 	"strings"
+	"time"
 
 	htmlparser "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
+
+var errOutboundScope = errors.New("outbound scope mismatch")
+var errOutboundAmbiguousReceipt = errors.New("ambiguous outbound receipt")
 
 const outboundReferencePrefix = "Dear Machine outbound approval: "
 
 // A local receipt means immutable mail was accepted into the durable approval
 // outbox, not sent. Completed turns may release staging files: this owns bytes.
 type outboundApproval struct {
-	Key                             string
-	Revision                        int
-	Token                           string
-	PairID, InboxID, Owner          string
-	Message                         Message
-	Payload                         ReplyPayload
-	State                           string
-	PreviewID, PreviewRFCID, SentID string
-	DecisionID, Decision            string
-	PreviewPayload                  ReplyPayload
-	PreviewGrants                   map[string]int64
-	SubmissionGrants                map[string]int64
-	DecisionSender                  string
-	DecisionAuthenticated           bool
-	HoldReason                      string
+	Key                               string
+	Revision                          int
+	Token                             string
+	PairID, InboxID, Owner            string
+	Message                           Message
+	Payload                           ReplyPayload
+	State                             string
+	PreviewID, PreviewRFCID, SentID   string
+	DecisionID, Decision              string
+	PreviewPayload                    ReplyPayload
+	PreviewGrants                     map[string]int64
+	SubmissionGrants                  map[string]int64
+	DecisionSender                    string
+	DecisionAuthenticated             bool
+	HoldReason                        string
+	PreviewAttempt, SubmissionAttempt outboundAttempt
 }
 
 func (o outboundApproval) receipt() string {
@@ -215,10 +219,11 @@ func outboundPreview(o outboundApproval) ReplyPayload {
 
 // BEGIN IMMEDIATE in the guest database orders revocation with first network
 // attempts. The pair store commits intent BEFORE I/O. Uncertain sends only
-// reconcile receipts: absence of a receipt does not authorize a second send.
+// reconcile receipts. A retry requires authoritative adapter evidence that no
+// mutating provider call was attempted, plus a fresh eligibility check.
 func (e *pairEndpoint) advanceOutbound(ctx context.Context, s *Store, o *outboundApproval) error {
 	if o.PairID != e.pairID || o.InboxID != guestInboxKey(e.router.inbox) || o.Owner != e.controllingParticipant() {
-		return errors.New("outbound scope mismatch")
+		return errOutboundScope
 	}
 	if o.State == "rejected" || o.State == "sent" || o.State == "superseded" {
 		return nil
@@ -234,20 +239,41 @@ func (e *pairEndpoint) advanceOutbound(ctx context.Context, s *Store, o *outboun
 			return err
 		}
 		if id == "" {
-			return nil
-		}
-		if preview {
-			o.HoldReason = ""
-			o.State, o.PreviewID, o.PreviewRFCID = "pending", id, rfc
+			attempt := o.SubmissionAttempt
+			if preview {
+				attempt = o.PreviewAttempt
+			}
+			if !attempt.retryable(time.Now().UTC()) {
+				if attempt.NotSubmitted {
+					o.HoldReason = "send not submitted; automatic retry budget exhausted"
+					return s.saveOutbound(*o)
+				}
+				return nil
+			}
+			if time.Now().UTC().Before(attempt.RetryAt) {
+				return nil
+			}
+			// Only authoritative non-submission permits a new attempt. It must
+			// pass the current grant check below; an unknown attempt cannot.
+			if preview {
+				o.State = "prepared"
+			} else {
+				o.State = "approved"
+			}
 		} else {
-			o.HoldReason = ""
-			o.State, o.SentID = "sent", id
-		}
-		if err := s.saveOutbound(*o); err != nil {
-			return err
-		}
-		if !preview {
-			return nil
+			if preview {
+				o.HoldReason = ""
+				o.State, o.PreviewID, o.PreviewRFCID = "pending", id, rfc
+			} else {
+				o.HoldReason = ""
+				o.State, o.SentID = "sent", id
+			}
+			if err := s.saveOutbound(*o); err != nil {
+				return err
+			}
+			if !preview {
+				return nil
+			}
 		}
 	}
 	tx, err := e.router.guests.db.BeginTx(ctx, nil)
@@ -277,33 +303,49 @@ func (e *pairEndpoint) advanceOutbound(ctx context.Context, s *Store, o *outboun
 	}
 	if !sameRecipientSet(eligible, o.Payload.CC) {
 		old := *o
+		next := old
 		token, err := newOutboundToken()
 		if err != nil {
 			return err
 		}
-		o.Revision++
-		o.Token, o.State = token, "prepared"
-		o.PreviewID, o.PreviewRFCID, o.DecisionID, o.Decision = "", "", "", ""
-		o.PreviewPayload = ReplyPayload{}
-		o.PreviewGrants, o.SubmissionGrants = nil, nil
-		o.DecisionSender, o.DecisionAuthenticated = "", false
-		o.Payload.CC = eligible
-		if err := s.replaceOutbound(old, *o); err != nil {
+		next.Revision++
+		next.Token, next.State = token, "prepared"
+		next.PreviewID, next.PreviewRFCID, next.DecisionID, next.Decision = "", "", "", ""
+		next.PreviewPayload = ReplyPayload{}
+		next.PreviewGrants, next.SubmissionGrants = nil, nil
+		next.DecisionSender, next.DecisionAuthenticated = "", false
+		next.PreviewAttempt, next.SubmissionAttempt = outboundAttempt{}, outboundAttempt{}
+		next.HoldReason = ""
+		next.Payload.CC = eligible
+		if err := s.replaceOutbound(old, next); err != nil {
 			return err
 		}
+		*o = next
 	}
 	if len(o.Payload.CC) == 0 || o.State == "approved" {
 		if len(o.Payload.CC) > 0 && (o.PreviewID == "" || o.Decision != "yes" || o.DecisionID == "" || o.DecisionSender != o.Owner || !o.DecisionAuthenticated || !reflect.DeepEqual(o.PreviewPayload, outboundPreview(*o))) {
 			return errors.New("outbound approval evidence missing")
 		}
+		if o.SubmissionAttempt.Count > 0 && !o.SubmissionAttempt.retryable(time.Now().UTC()) {
+			o.HoldReason = "submission not attempted; automatic retry budget exhausted"
+			return s.saveOutbound(*o)
+		}
 		o.SubmissionGrants = eligibleGrants
 		o.HoldReason = "submission receipt reconciliation required"
 		o.State = "sending"
+		o.SubmissionAttempt.begin(time.Now().UTC())
 		if err := s.saveOutbound(*o); err != nil {
 			return err
 		}
 		id, err := e.router.raw.Reply(ctx, o.Message.MessageID, o.Payload, o.Key)
 		if err != nil {
+			o.SubmissionAttempt.failed(err)
+			if o.SubmissionAttempt.NotSubmitted {
+				o.HoldReason = "submission not attempted; retry scheduled"
+			}
+			if saveErr := s.saveOutbound(*o); saveErr != nil {
+				return saveErr
+			}
 			return err
 		}
 		if id == "" {
@@ -314,15 +356,27 @@ func (e *pairEndpoint) advanceOutbound(ctx context.Context, s *Store, o *outboun
 		return s.saveOutbound(*o)
 	}
 	if o.State == "prepared" {
+		if o.PreviewAttempt.Count > 0 && !o.PreviewAttempt.retryable(time.Now().UTC()) {
+			o.HoldReason = "preview not attempted; automatic retry budget exhausted"
+			return s.saveOutbound(*o)
+		}
 		o.PreviewPayload = outboundPreview(*o)
 		o.PreviewGrants = eligibleGrants
 		o.HoldReason = "preview receipt reconciliation required"
 		o.State = "preview_sending"
+		o.PreviewAttempt.begin(time.Now().UTC())
 		if err := s.saveOutbound(*o); err != nil {
 			return err
 		}
-		id, err := e.router.raw.Reply(ctx, o.Message.MessageID, outboundPreview(*o), "dearmachine-outbound-preview-"+o.Token)
+		id, err := e.router.raw.Reply(ctx, o.Message.MessageID, o.PreviewPayload, "dearmachine-outbound-preview-"+o.Token)
 		if err != nil {
+			o.PreviewAttempt.failed(err)
+			if o.PreviewAttempt.NotSubmitted {
+				o.HoldReason = "preview not attempted; retry scheduled"
+			}
+			if saveErr := s.saveOutbound(*o); saveErr != nil {
+				return saveErr
+			}
 			return err
 		}
 		if id == "" {
@@ -330,6 +384,10 @@ func (e *pairEndpoint) advanceOutbound(ctx context.Context, s *Store, o *outboun
 		}
 		o.HoldReason = ""
 		o.State, o.PreviewID = "pending", id
+		return s.saveOutbound(*o)
+	}
+	if o.State == "pending" && o.HoldReason != "" {
+		o.HoldReason = ""
 		return s.saveOutbound(*o)
 	}
 	return nil
@@ -374,7 +432,7 @@ func (e *pairEndpoint) outboundReceipt(ctx context.Context, o outboundApproval, 
 			continue
 		}
 		if id != "" && id != m.MessageID {
-			return "", "", errors.New("ambiguous outbound receipt")
+			return "", "", errOutboundAmbiguousReceipt
 		}
 		id, rfc = m.MessageID, m.RFCMessageID
 	}
@@ -392,139 +450,34 @@ func (a *App) recoverOutbound(ctx context.Context) error {
 		return err
 	}
 	for i := range records {
-		if err := e.advanceOutbound(ctx, a.store, &records[i]); err != nil {
+		o := &records[i]
+		attemptsBefore := o.PreviewAttempt.Count + o.SubmissionAttempt.Count
+		if err := e.advanceOutbound(ctx, a.store, o); err != nil {
+			// Provider error strings can contain private content. Persist and
+			// log only a local reason; each record remains independently held.
+			switch {
+			case errors.Is(err, errOutboundScope):
+				o.HoldReason = "outbound scope mismatch; reply held"
+			case errors.Is(err, errOutboundAmbiguousReceipt):
+				o.HoldReason = "ambiguous outbound receipt; reply held"
+			case o.PreviewAttempt.Count+o.SubmissionAttempt.Count == attemptsBefore:
+				o.HoldReason = "outbound recovery failed; reply held"
+			}
+			if err := a.store.saveOutbound(*o); err != nil {
+				return err
+			}
+			a.logger.Printf("outbound recovery held revision=%d state=%q", o.Revision, o.State)
+			// Give receipt reconciliation the next pass before notifying about
+			// a newly uncertain attempt; acceptance may already be observable.
+			if o.PreviewAttempt.Count+o.SubmissionAttempt.Count > attemptsBefore {
+				continue
+			}
+		}
+		if err := e.reportOutboundHold(ctx, a.store, *o); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-func outboundTokens(message Message) map[string]bool {
-	body := message.RawBody
-	if body == "" {
-		body = message.Body
-	}
-	tokens := map[string]bool{}
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimSpace(line)
-		for strings.HasPrefix(line, ">") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, ">"))
-		}
-		if strings.HasPrefix(line, outboundReferencePrefix) {
-			tokens[strings.TrimPrefix(line, outboundReferencePrefix)] = true
-		}
-	}
-	return tokens
-}
-func (a *App) handleOutboundDecision(ctx context.Context, message Message) (bool, error) {
-	e, ok := a.transport.(*pairEndpoint)
-	if !ok {
-		return false, nil
-	}
-	a.store.outboundMu.Lock()
-	defer a.store.outboundMu.Unlock()
-	records, err := a.store.queryOutbound(`SELECT reference FROM outbound_approvals ORDER BY send_key, revision`)
-	if err != nil {
-		return false, err
-	}
-	tokens := outboundTokens(message)
-	// An instruction approval reference never resolves to an outbound decision.
-	control, err := a.participantControlReferences(ctx, message)
-	if err != nil {
-		return false, err
-	}
-	if _, _, found, err := a.store.ParticipantRequestForControl(control); err != nil {
-		return false, err
-	} else if found {
-		return false, nil
-	}
-	var matches []int
-	attempted := len(tokens) > 0
-	references := message.References
-	if message.InReplyTo != "" {
-		references = []string{message.InReplyTo}
-	}
-	for i, o := range records {
-		direct := o.PreviewID != "" && (slices.Contains(references, o.PreviewID) || o.PreviewRFCID != "" && slices.Contains(references, o.PreviewRFCID))
-		token := tokens[o.Token]
-		if !direct && !token && message.RFCMessageID != "" && len(references) > 0 && o.PreviewID != "" && o.Message.ThreadID == message.ThreadID {
-			thread, err := e.router.raw.Thread(ctx, message.ThreadID)
-			if err != nil {
-				return true, err
-			}
-			for _, m := range thread {
-				if m.MessageID == o.PreviewID && m.ThreadID == o.Message.ThreadID && containsFold(m.Labels, "sent") && canonicalAddressOrLower(m.From) == e.router.inbox.Address && sameRecipientSet(m.To, []string{o.Owner}) && len(m.CC) == 0 && len(m.BCC) == 0 && m.RFCMessageID != "" && slices.Contains(references, m.RFCMessageID) {
-					direct = true
-				}
-			}
-		}
-		if direct || token {
-			attempted = true
-			matches = append(matches, i)
-		}
-	}
-	if !attempted {
-		decision := strings.ToLower(strings.TrimSpace(authoredControlBody(message)))
-		if e.isControllingParticipant(message) && len(references) > 0 && (decision == "yes" || decision == "no") {
-			for _, o := range records {
-				if o.Message.ThreadID != message.ThreadID {
-					continue
-				}
-				if o.State == "preview_sending" {
-					return true, nil
-				}
-				if o.State == "prepared" || o.State == "pending" || o.State == "approved" {
-					attempted = true
-				}
-			}
-		}
-		if !attempted {
-			return false, nil
-		}
-	}
-	seen, err := a.store.Seen(message.MessageID)
-	if err != nil {
-		return true, err
-	}
-	if !seen && len(matches) == 1 && e.isControllingParticipant(message) {
-		ref := records[matches[0]]
-		full, err := a.store.queryOutbound(`SELECT record FROM outbound_approvals WHERE send_key=? AND revision=?`, ref.Key, ref.Revision)
-		if err != nil {
-			return true, err
-		}
-		if len(full) != 1 {
-			return true, errors.New("outbound approval record missing")
-		}
-		o := &full[0]
-		if o.Message.ThreadID == message.ThreadID && o.PairID == e.pairID && o.InboxID == guestInboxKey(e.router.inbox) && o.Owner == e.controllingParticipant() {
-			// Reference allocation is not issuance. Recover uncertain private issuance
-			// before accepting a decision; recovery itself can never approve anything.
-			tokenBefore := o.Token
-			if o.State == "preview_sending" {
-				if err := e.advanceOutbound(ctx, a.store, o); err != nil {
-					return true, err
-				}
-			}
-			if o.Token == tokenBefore && o.State == "preview_sending" {
-				return true, nil
-			} // Retry the decision when provider receipts become visible.
-			decision := strings.ToLower(strings.TrimSpace(authoredControlBody(message)))
-			if o.Token == tokenBefore && o.State == "pending" && o.PreviewID != "" && (decision == "yes" || decision == "no") {
-				o.DecisionID, o.Decision = message.MessageID, decision
-				o.DecisionSender, o.DecisionAuthenticated = canonicalAddressOrLower(message.From), message.authenticated
-				o.State = "approved"
-				if decision == "no" {
-					o.State = "rejected"
-				}
-				if err := a.store.saveOutbound(*o); err != nil {
-					return true, err
-				}
-			}
-		}
-	}
-	if err := a.store.RecordControlMessage(message.MessageID, message.ThreadID, ""); err != nil {
-		return true, err
-	}
-	return true, a.transport.MarkProcessed(ctx, message.MessageID)
 }
 
 // MIME transports may normalize line endings; all other body bytes matter.
@@ -551,6 +504,13 @@ func prependOutboundHTML(body, header string) string {
 // reference projection is updated atomically with the full immutable payload.
 // Backfill older local outboxes once, including pending drafts across upgrades.
 func (s *Store) migrateOutbound() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS outbound_notices (
+ notice_key TEXT PRIMARY KEY, pair_id TEXT NOT NULL, inbox_id TEXT NOT NULL,
+ owner TEXT NOT NULL, message_id TEXT NOT NULL, thread_id TEXT NOT NULL,
+ state TEXT NOT NULL, hold_reason TEXT NOT NULL, receipt TEXT NOT NULL
+)`); err != nil {
+		return err
+	}
 	for _, column := range []string{"reference", "state"} {
 		exists, err := sqliteTableHasColumn(s.db, "outbound_approvals", column)
 		if err != nil {
