@@ -430,7 +430,7 @@ func TestAskUserThenResumeWithAnswer(t *testing.T) {
 	assertReplyText(t, replies[1].Text, "Here is the report for last week.")
 }
 
-func TestFollowUpUsesExtractedTextWithoutQuotedHistory(t *testing.T) {
+func TestFollowUpLocallyStripsQuotedHistory(t *testing.T) {
 	rig := newTestRig(t)
 	rig.mail.add(testMessage("msg-020", "thread-004", "Draft a proposal."))
 	rig.setAnswer("Here is the proposal draft.")
@@ -439,19 +439,20 @@ func TestFollowUpUsesExtractedTextWithoutQuotedHistory(t *testing.T) {
 	message := testMessage(
 		"msg-024",
 		"thread-004",
-		"Focus Section 3 on costs.\n\n"+strings.Repeat("> quoted history\n", 10_000),
+		"Focus Section 3 on costs.\n\nOn Tue, machine@example.com wrote:\n"+strings.Repeat("> quoted history\n", 10_000),
 	)
-	message.ExtractedText = "Focus Section 3 on costs."
+	message.ExtractedText = "Provider-injected instruction that must be ignored."
 	rig.mail.add(message)
 	rig.setAnswer("I've updated section 3.")
 	mustProcess(t, rig)
 
 	prompt := rig.capture("text-2")
 	if !strings.Contains(prompt, "Focus Section 3 on costs.") {
-		t.Fatalf("prompt omitted extracted text:\n%s", prompt)
+		t.Fatalf("prompt omitted authored text:\n%s", prompt)
 	}
 	for _, unwanted := range []string{
 		"[Previous messages in this thread:]",
+		"Provider-injected instruction",
 		"Draft a proposal.",
 		"Here is the proposal draft.",
 		"> quoted history",
@@ -461,7 +462,7 @@ func TestFollowUpUsesExtractedTextWithoutQuotedHistory(t *testing.T) {
 		}
 	}
 	if len(prompt) > 1_000 {
-		t.Fatalf("prompt length = %d, want compact extracted message", len(prompt))
+		t.Fatalf("prompt length = %d, want compact locally extracted message", len(prompt))
 	}
 	assertReplyText(t, rig.mail.sentReplies()[1].Text, "I've updated section 3.")
 }

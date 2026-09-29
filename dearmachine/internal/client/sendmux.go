@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -39,7 +40,7 @@ type SendmuxTransport struct {
 	authRaw       sendmuxRawFetcher
 	authLookupTXT func(context.Context, string) ([]string, error)
 	authMu        sync.Mutex
-	authenticated map[string]string
+	authenticated map[string]authenticatedMessageContent
 }
 
 type sendmuxTransportConfig struct {
@@ -443,9 +444,46 @@ func (transport *SendmuxTransport) FetchAttachment(ctx context.Context, attachme
 	if err != nil {
 		return nil, err
 	}
+	transport.authMu.Lock()
+	verified := transport.authenticated[messageID]
+	attachment, found := verified.attachments[attachmentID]
+	transport.authMu.Unlock()
+	if !found {
+		return nil, ErrMessageUnauthenticated
+	}
+	if attachment.size > maxBytes {
+		return nil, ErrAttachmentTooLarge
+	}
+	contents, err := transport.downloadAttachment(ctx, messageID, rawAttachmentID, attachment.size, verified.fingerprint)
+	if err != nil {
+		if errors.Is(err, ErrAttachmentTooLarge) {
+			return nil, ErrMessageUnauthenticated
+		}
+		return nil, err
+	}
+	if !attachment.matches(contents) {
+		return nil, ErrMessageUnauthenticated
+	}
+	return contents, nil
+}
+
+func (transport *SendmuxTransport) verifyReceiptAttachment(ctx context.Context, id string, expected []byte) (bool, error) {
+	messageID, attachmentID, err := decodeSendmuxAttachmentID(id)
+	if err != nil {
+		return false, err
+	}
+	data, err := transport.downloadAttachment(ctx, messageID, attachmentID, int64(len(expected))+1, "")
+	return err == nil && bytes.Equal(data, expected), err
+}
+
+func (transport *SendmuxTransport) downloadAttachment(ctx context.Context, messageID, rawAttachmentID string, maxBytes int64, fingerprint string) ([]byte, error) {
+	attachmentID := encodeSendmuxAttachmentID(messageID, rawAttachmentID)
 	message, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return nil, err
+	}
+	if message.ID != messageID || (fingerprint != "" && authenticatedContentFingerprint(transport.normalize(message)) != fingerprint) {
+		return nil, ErrMessageUnauthenticated
 	}
 	var attachment *sendmuxRawAttachment
 	for index := range message.Attachments {
@@ -470,7 +508,10 @@ func (transport *SendmuxTransport) FetchAttachment(ctx context.Context, attachme
 		return nil, fmt.Errorf("prepare Sendmux attachment %s download: %w", attachmentID, err)
 	}
 	client := *transport.httpClient
-	client.CheckRedirect = func(request *http.Request, _ []*http.Request) error {
+	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || request.URL.User != nil {
+			return errors.New("invalid attachment redirect")
+		}
 		if request.URL.Scheme != "https" && !(transport.allowInsecureURL && request.URL.Scheme == "http") {
 			return fmt.Errorf("refused non-HTTPS Sendmux attachment redirect")
 		}
@@ -498,16 +539,7 @@ func (transport *SendmuxTransport) FetchAttachment(ctx context.Context, attachme
 }
 
 func (transport *SendmuxTransport) normalize(raw sendmuxRawMessage) Message {
-	body := raw.Text
-	if strings.TrimSpace(body) == "" {
-		body = htmlToText(raw.HTML)
-	}
-	rawBody := body
-	body, bodyReferences := stripConversationFooters(body)
-	conversationReferences := mergeConversationReferences(
-		bodyReferences,
-		conversationReferencesInBodies(raw.Text, htmlToText(raw.HTML)),
-	)
+	body, rawBody, conversationReferences := normalizedMIMEBody(raw.Text, raw.HTML)
 	labels := make([]string, 0, len(raw.Keywords)+3)
 	for _, keyword := range raw.Keywords {
 		if !containsFold([]string{"sent", "outbound", "inbound"}, keyword) {

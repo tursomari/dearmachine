@@ -39,12 +39,12 @@ func (transport *SendmuxTransport) AuthenticateMessage(ctx context.Context, mess
 	if message.Delivery.InboxID != inbox.ID || message.Delivery.Recipient != inbox.Email || !visibleRecipient(message, inbox.Email) {
 		return ErrMessageUnauthenticated
 	}
-	fingerprint := messageFingerprint(message)
+	fingerprint := authenticatedContentFingerprint(message)
 	transport.authMu.Lock()
-	previous := transport.authenticated[message.MessageID]
+	previous, found := transport.authenticated[message.MessageID]
 	transport.authMu.Unlock()
-	if previous != "" {
-		if previous != fingerprint {
+	if found {
+		if previous.fingerprint != fingerprint {
 			return ErrMessageUnauthenticated
 		}
 		return nil
@@ -54,7 +54,7 @@ func (transport *SendmuxTransport) AuthenticateMessage(ctx context.Context, mess
 		return errors.New("get Sendmux authentication record failed")
 	}
 	if source.ID != message.MessageID || sendmuxRFCMessageID(source) != message.RFCMessageID ||
-		messageFingerprint(transport.normalize(source)) != fingerprint {
+		authenticatedContentFingerprint(transport.normalize(source)) != fingerprint {
 		return ErrMessageUnauthenticated
 	}
 	raw, err := transport.authRaw(ctx, inbox.Email, message.RFCMessageID)
@@ -77,11 +77,15 @@ func (transport *SendmuxTransport) AuthenticateMessage(ctx context.Context, mess
 	if err := verifySignedMessage(ctx, raw, expected, lookup); err != nil {
 		return err
 	}
-	transport.authMu.Lock()
-	if transport.authenticated == nil || len(transport.authenticated) >= 2048 {
-		transport.authenticated = make(map[string]string)
+	content, err := parseVerifiedMIME(raw)
+	if err != nil {
+		return ErrMessageUnauthenticated
 	}
-	transport.authenticated[message.MessageID] = fingerprint
-	transport.authMu.Unlock()
-	return nil
+	verified, err := bindVerifiedMIME(message, content)
+	if err != nil {
+		return err
+	}
+	transport.authMu.Lock()
+	defer transport.authMu.Unlock()
+	return rememberAuthenticatedContent(&transport.authenticated, message.MessageID, verified)
 }

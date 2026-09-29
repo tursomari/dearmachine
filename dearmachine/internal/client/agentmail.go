@@ -1,12 +1,14 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +34,7 @@ type Mailbox struct {
 	attachmentMu       sync.RWMutex
 	attachmentMessages map[string]string
 	authMu             sync.Mutex
-	authenticated      map[string]string
+	authenticated      map[string]authenticatedMessageContent
 	authHTTPClient     *http.Client
 	authLookupTXT      func(context.Context, string) ([]string, error)
 }
@@ -404,12 +406,48 @@ func (m *Mailbox) FetchAttachment(
 	attachmentID string,
 	maxBytes int64,
 ) ([]byte, error) {
-	m.attachmentMu.RLock()
-	messageID, ok := m.attachmentMessages[attachmentID]
-	m.attachmentMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("fetch AgentMail attachment %s: message ID is unavailable", attachmentID)
+	if maxBytes < 0 {
+		return nil, fmt.Errorf("fetch AgentMail attachment: maximum size must not be negative")
 	}
+	m.attachmentMu.RLock()
+	messageID := m.attachmentMessages[attachmentID]
+	m.attachmentMu.RUnlock()
+	m.authMu.Lock()
+	attachment, verified := m.authenticated[messageID].attachments[attachmentID]
+	m.authMu.Unlock()
+	if !verified {
+		return nil, ErrMessageUnauthenticated
+	}
+	if attachment.size > maxBytes {
+		return nil, ErrAttachmentTooLarge
+	}
+	contents, err := m.downloadAttachment(ctx, messageID, attachmentID, attachment.size)
+	if err != nil {
+		if errors.Is(err, ErrAttachmentTooLarge) {
+			return nil, ErrMessageUnauthenticated
+		}
+		return nil, err
+	}
+	if !attachment.matches(contents) {
+		return nil, ErrMessageUnauthenticated
+	}
+	return contents, nil
+}
+
+func (m *Mailbox) verifyReceiptAttachment(ctx context.Context, id string, expected []byte) (bool, error) {
+	m.attachmentMu.RLock()
+	messageID := m.attachmentMessages[id]
+	m.attachmentMu.RUnlock()
+	data, err := m.downloadAttachment(ctx, messageID, id, int64(len(expected))+1)
+	return err == nil && bytes.Equal(data, expected), err
+}
+
+func (m *Mailbox) downloadAttachment(ctx context.Context, messageID, attachmentID string, maxBytes int64) ([]byte, error) {
+	if messageID == "" {
+		return nil, ErrMessageUnauthenticated
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 
 	attachment, err := m.client.Inboxes.Messages.GetAttachment(
 		ctx,
@@ -422,13 +460,28 @@ func (m *Mailbox) FetchAttachment(
 	if err != nil {
 		return nil, fmt.Errorf("get AgentMail attachment %s: %w", attachmentID, err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, attachment.DownloadURL, nil)
+	u, err := url.Parse(attachment.DownloadURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return nil, ErrMessageUnauthenticated
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("prepare AgentMail attachment %s download: %w", attachmentID, err)
 	}
-	response, err := http.DefaultClient.Do(request)
+	client := m.authHTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	download := *client
+	download.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || req.URL.Scheme != "https" || req.URL.User != nil {
+			return errors.New("invalid attachment redirect")
+		}
+		return nil
+	}
+	response, err := download.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("download AgentMail attachment %s: %w", attachmentID, err)
+		return nil, errors.New("download AgentMail attachment failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
@@ -634,36 +687,7 @@ func safeHTMLLink(attributes []html.Attribute) string {
 }
 
 func (m *Mailbox) normalize(message agentmail.Message) Message {
-	body := message.ExtractedText
-	if strings.TrimSpace(body) == "" {
-		body = message.Text
-	}
-	if strings.TrimSpace(body) == "" {
-		body = htmlToText(message.ExtractedHTML)
-	}
-	if strings.TrimSpace(body) == "" {
-		body = htmlToText(message.HTML)
-	}
-	if strings.TrimSpace(body) == "" {
-		body = message.Preview
-	}
-	rawBody := message.Text
-	if strings.TrimSpace(rawBody) == "" {
-		rawBody = htmlToText(message.HTML)
-	}
-	if strings.TrimSpace(rawBody) == "" {
-		rawBody = body
-	}
-	body, bodyReferences := stripConversationFooters(body)
-	conversationReferences := mergeConversationReferences(
-		bodyReferences,
-		conversationReferencesInBodies(
-			message.Text,
-			htmlToText(message.HTML),
-			message.ExtractedText,
-			htmlToText(message.ExtractedHTML),
-		),
-	)
+	body, rawBody, conversationReferences := normalizedMIMEBody(message.Text, message.HTML)
 	attachments := make([]AttachmentRef, 0, len(message.Attachments))
 	for _, attachment := range message.Attachments {
 		attachments = append(attachments, AttachmentRef{
@@ -698,8 +722,16 @@ func (m *Mailbox) normalize(message agentmail.Message) Message {
 	}
 	if len(attachments) > 0 {
 		m.attachmentMu.Lock()
+		if m.attachmentMessages == nil {
+			m.attachmentMessages = make(map[string]string)
+		}
 		for _, attachment := range attachments {
-			m.attachmentMessages[attachment.AttachmentID] = message.MessageID
+			previous, exists := m.attachmentMessages[attachment.AttachmentID]
+			if exists && previous != message.MessageID {
+				m.attachmentMessages[attachment.AttachmentID] = "" // Ambiguous IDs never cross messages.
+			} else {
+				m.attachmentMessages[attachment.AttachmentID] = message.MessageID
+			}
 		}
 		m.attachmentMu.Unlock()
 	}

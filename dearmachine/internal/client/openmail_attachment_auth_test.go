@@ -134,7 +134,7 @@ func TestOpenMailVerifiedAttachmentDownload(t *testing.T) {
 				for i := 0; i < maxOpenMailAuthenticatedMessages; i++ {
 					m := expected
 					m.MessageID = fmt.Sprintf("other-%d", i)
-					if err := transport.rememberOpenMailAuthenticatedContent(m, openMailRawContent{}); err != nil {
+					if err := transport.rememberOpenMailAuthenticatedContent(m, verifiedMIMEContent{}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -174,6 +174,14 @@ func TestOpenMailVerifiedAttachmentDownload(t *testing.T) {
 					}()
 				}
 				wg.Wait()
+			}
+			if mode == "missing-authentication" {
+				if same, err := matchesReceiptAttachment(ctx, WithTransportRetries(transport), id, payload); err != nil || !same {
+					t.Fatalf("receipt comparison: %v", err)
+				}
+				if same, err := matchesReceiptAttachment(ctx, transport, id, secondPayload); err != nil || same {
+					t.Fatalf("substituted receipt matched: %v", err)
+				}
 			}
 			maxBytes := int64(len(payload) + 1)
 			if mode == "too-large" {

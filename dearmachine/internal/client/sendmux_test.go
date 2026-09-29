@@ -164,12 +164,11 @@ func TestSendmuxTransportContract(t *testing.T) {
 		t.Fatalf("Thread = %+v, %v", thread, err)
 	}
 	attachmentID := messages[0].Attachments[0].AttachmentID
-	contents, err := transport.FetchAttachment(ctx, attachmentID, 7)
-	if err != nil || string(contents) != "payload" || downloadAuthorized {
-		t.Fatalf("FetchAttachment = %q, authorized=%v, err=%v", contents, downloadAuthorized, err)
+	if _, err := transport.FetchAttachment(ctx, attachmentID, 7); !errors.Is(err, ErrMessageUnauthenticated) {
+		t.Fatalf("unauthenticated attachment: %v", err)
 	}
-	if _, err := transport.FetchAttachment(ctx, attachmentID, 6); !errors.Is(err, ErrAttachmentTooLarge) {
-		t.Fatalf("FetchAttachment too large = %v", err)
+	if matched, err := transport.verifyReceiptAttachment(ctx, attachmentID, []byte("payload")); err != nil || !matched || downloadAuthorized {
+		t.Fatalf("receipt attachment matched=%v, authorized=%v, err=%v", matched, downloadAuthorized, err)
 	}
 
 	receipt, err := transport.Reply(ctx, "message-new", ReplyPayload{

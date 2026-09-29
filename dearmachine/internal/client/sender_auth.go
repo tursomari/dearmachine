@@ -26,7 +26,7 @@ const maxAuthenticationMessageBytes = 32 << 20
 // loading credentials or contacting a provider.
 func SenderAuthenticationStatus(transport string) string {
 	if transport == "agentmail" || transport == "sendmux" {
-		return "enabled: locally verified exact-domain DKIM, signed author and routing headers; trusts the sender domain's mailbox controls"
+		return "enabled: locally verified exact-domain DKIM, signed author and routing headers, bound MIME bodies and attachment bytes; trusts the sender domain's mailbox controls"
 	}
 	if transport == "openmail" {
 		return "enabled: locally verified exact-domain DKIM over the provider's raw MIME, including HTML, multipart and attachments; messages without raw evidence are rejected"
@@ -43,14 +43,14 @@ func (m *Mailbox) AuthenticateMessage(ctx context.Context, message Message) erro
 		!visibleRecipient(message, message.Delivery.Recipient) || containsFold(message.Labels, "unauthenticated") {
 		return ErrMessageUnauthenticated
 	}
-	fingerprint := messageFingerprint(message)
+	fingerprint := authenticatedContentFingerprint(message)
 	m.authMu.Lock()
-	previous := m.authenticated[message.MessageID]
+	previous, found := m.authenticated[message.MessageID]
 	m.authMu.Unlock()
-	if previous != "" && previous != fingerprint {
+	if found && previous.fingerprint != fingerprint {
 		return ErrMessageUnauthenticated
 	}
-	if previous == fingerprint {
+	if found {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -116,13 +116,17 @@ func (m *Mailbox) AuthenticateMessage(ctx context.Context, message Message) erro
 	if err := verifySignedMessage(ctx, data, message, lookup); err != nil {
 		return err
 	}
-	m.authMu.Lock()
-	if m.authenticated == nil || len(m.authenticated) >= 2048 {
-		m.authenticated = map[string]string{}
+	content, err := parseVerifiedMIME(data)
+	if err != nil {
+		return ErrMessageUnauthenticated
 	}
-	m.authenticated[message.MessageID] = fingerprint
-	m.authMu.Unlock()
-	return nil
+	verified, err := bindVerifiedMIME(message, content)
+	if err != nil {
+		return err
+	}
+	m.authMu.Lock()
+	defer m.authMu.Unlock()
+	return rememberAuthenticatedContent(&m.authenticated, message.MessageID, verified)
 }
 
 // Authorization-relevant fields must be covered together by one valid

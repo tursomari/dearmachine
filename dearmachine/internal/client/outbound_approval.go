@@ -419,11 +419,11 @@ func (e *pairEndpoint) outboundReceipt(ctx context.Context, o outboundApproval, 
 				matches = false
 				break
 			}
-			data, err := e.router.raw.FetchAttachment(ctx, ref.AttachmentID, int64(len(f.Contents))+1)
+			same, err := matchesReceiptAttachment(ctx, e.router.raw, ref.AttachmentID, f.Contents)
 			if err != nil {
 				return "", "", err
 			}
-			if !reflect.DeepEqual(data, f.Contents) {
+			if !same {
 				matches = false
 				break
 			}

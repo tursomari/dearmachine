@@ -132,6 +132,7 @@ func TestSenderSignatureBindsAuthorRecipientsAndApprovalCorrelation(t *testing.T
 func TestAgentMailAuthenticationUsesScopedRawBytesAndCachesOnlyExactContent(t *testing.T) {
 	message := signedFixtureMessage()
 	raw, lookup := signedMailFixture(t, message, "sender.test", nil)
+	message.RawBody = message.Body + "\r\n"
 	var endpoint *httptest.Server
 	requests := 0
 	endpoint = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

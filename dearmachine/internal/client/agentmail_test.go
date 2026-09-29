@@ -609,58 +609,28 @@ func captureMailboxReplyBody(t *testing.T, payload ReplyPayload) map[string]json
 	return body
 }
 
-func TestMailboxFetchAttachmentEnforcesMaxBytes(t *testing.T) {
-	const contents = "payload"
-	download := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write([]byte(contents))
-	}))
-	t.Cleanup(download.Close)
-
-	fake, mailbox := newMailboxTestPair(t)
-	message := testMessage("message-1", "thread-1", "body")
-	message.Attachments = []agentmail.AttachmentFile{{
-		AttachmentID: "attachment-1",
-		Filename:     "payload.txt",
-		ContentType:  "text/plain",
-		Size:         int64(len(contents)),
-	}}
-	fake.add(message)
-	fake.fail(
-		http.MethodGet,
-		fakeInboxPrefix+"messages/message-1/attachments/attachment-1",
-		fakeHTTPResponse{
-			status: http.StatusOK,
-			body: `{"attachment_id":"attachment-1","download_url":"` + download.URL +
-				`","expires_at":"2026-08-16T00:00:00Z","size":7}`,
-		},
-	)
-	if _, err := mailbox.Message(context.Background(), "message-1"); err != nil {
-		t.Fatalf("Message: %v", err)
-	}
-
-	got, err := mailbox.FetchAttachment(context.Background(), "attachment-1", int64(len(contents)))
-	if err != nil || string(got) != contents {
-		t.Fatalf("FetchAttachment = %q, %v", got, err)
-	}
-	if _, err := mailbox.FetchAttachment(context.Background(), "attachment-1", int64(len(contents)-1)); !errors.Is(err, ErrAttachmentTooLarge) {
-		t.Fatalf("FetchAttachment error = %v, want %v", err, ErrAttachmentTooLarge)
+func TestMailboxFetchAttachmentRequiresAuthentication(t *testing.T) {
+	_, mailbox := newMailboxTestPair(t)
+	mailbox.attachmentMessages["attachment-1"] = "message-1"
+	if _, err := mailbox.FetchAttachment(context.Background(), "attachment-1", 100); !errors.Is(err, ErrMessageUnauthenticated) {
+		t.Fatalf("unauthenticated attachment: %v", err)
 	}
 }
 
-func TestMessageBodyPrefersExtractedText(t *testing.T) {
+func TestMessageBodyIgnoresProviderExtractionAndPreview(t *testing.T) {
 	tests := []struct {
 		name    string
 		message agentmail.Message
 		want    string
 	}{
 		{
-			name: "extracted text",
+			name: "extracted text ignored",
 			message: agentmail.Message{
 				ExtractedText: "new reply",
 				Text:          "new reply\n\n> quoted history",
 				Preview:       "preview",
 			},
-			want: "new reply",
+			want: "new reply\n\n> quoted history",
 		},
 		{
 			name:    "plain text fallback",
@@ -668,9 +638,9 @@ func TestMessageBodyPrefersExtractedText(t *testing.T) {
 			want:    "plain body",
 		},
 		{
-			name:    "preview fallback",
+			name:    "preview ignored",
 			message: agentmail.Message{Preview: "preview"},
-			want:    "preview",
+			want:    "",
 		},
 		{
 			name: "HTML-only body",
@@ -685,20 +655,20 @@ func TestMessageBodyPrefersExtractedText(t *testing.T) {
 			want:    "plain wins",
 		},
 		{
-			name: "extracted text beats html",
+			name: "extracted text ignored with html",
 			message: agentmail.Message{
 				ExtractedText: "extracted",
 				HTML:          "<p>ignored</p>",
 			},
-			want: "extracted",
+			want: "ignored",
 		},
 		{
-			name: "extracted html beats html",
+			name: "extracted html ignored",
 			message: agentmail.Message{
 				ExtractedHTML: "<p>from extracted</p>",
 				HTML:          "<p>from raw html</p>",
 			},
-			want: "from extracted",
+			want: "from raw html",
 		},
 		{
 			name: "converted html beats preview",
@@ -709,12 +679,12 @@ func TestMessageBodyPrefersExtractedText(t *testing.T) {
 			want: "html body",
 		},
 		{
-			name: "whitespace-only html falls through to preview",
+			name: "whitespace-only html cannot use preview",
 			message: agentmail.Message{
 				HTML:    "<body>   </body>",
 				Preview: "preview fallback",
 			},
-			want: "preview fallback",
+			want: "",
 		},
 	}
 	for _, test := range tests {

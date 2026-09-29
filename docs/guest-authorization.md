@@ -154,7 +154,10 @@ duplicate authorization headers, missing evidence, unsigned CC or reply headers,
 invalid signatures and provider `unauthenticated` labels are rejected. Parsed
 sender, recipients, subject, message ID and reply correlation must match the
 provider's normalized message. API credentials are never sent to the raw-message
-download URL. Positive caching binds the immutable normalized message content.
+download URL. The adapter locally decodes verified MIME and compares the body,
+HTML and conversation references with the normalized message. Provider-generated
+extracted replies and previews are ignored. Quote and footer handling is local.
+Positive caching binds the immutable normalized message content, including HTML.
 
 This policy **trusts the From domain's mail operator to enforce mailbox ownership**.
 DNS key resolution and the signing key's custody are also trusted.
@@ -162,8 +165,9 @@ DKIM proves signing-domain authority and integrity, not the identity of a human
 or independent control of a mailbox local part. A malicious/compromised domain
 operator or signing key can impersonate mailboxes in that domain. There is no
 hardcoded trusted-domain list. Trust also covers AgentMail's configured inbox,
-thread IDs, outbound labels, MIME/body extraction and attachment mapping to the
-verified raw message. This is an explicit boundary, not a proof of the provider.
+thread IDs and outbound labels. Local MIME parsing and normalization remain
+implementation boundaries outside the formal proof. Provider body and attachment
+reports must match locally decoded signed MIME before authentication succeeds.
 Raw From matching, allowlisting and generic SPF/DKIM/DMARC or
 Authentication-Results verdicts are never sufficient.
 
@@ -171,15 +175,23 @@ The check always applies to owner instructions, invitations, approvals and
 removal commands. Guest requests default to the same check; the explicit
 owner exception below changes only guest sender eligibility. A signature that omits a present authorization
 header is insufficient even if an email provider accepts it normally.
-**OpenMail supports a restricted plain-text subset.** Its live message responses
-include an ordered header list in `raw.message-headers`, along with
-`rfcMessageId`, `inReplyTo` and `references`. The adapter reconstructs a
-single-part `text/plain` message with no transfer encoding, `7bit`, or `8bit`,
-and requires the same exact-domain DKIM and signed-header checks as AgentMail.
-Only UTF-8 and US-ASCII bodies are supported. HTML, multipart, attachments,
-encoded bodies, missing evidence and reconstruction failures are rejected.
-The header field is currently undocumented; if its shape changes, verification
-fails closed. A provider verdict never substitutes for the signature.
+**OpenMail fetches original MIME from its authenticated raw-message endpoint.**
+It applies the same exact-domain DKIM and signed-header policy and binds the
+reported body, HTML and attachments to locally decoded MIME. Missing raw evidence
+and mismatches fail closed; a provider verdict never substitutes for the signature.
+
+All three adapters support plain text, HTML, nested multipart, base64 and
+quoted-printable transfer encoding. Text must be UTF-8 or US-ASCII; unsupported
+charsets, encodings and unidentifiable non-text parts fail closed. Body comparison
+normalizes only CRLF/LF line endings; terminal newlines and other whitespace must
+match. Provider formatting changes can therefore prevent authentication.
+Attachment count, unique filenames, sizes and reported media types must agree
+with signed MIME. Every inbound download must match the signed part's decoded
+size and SHA-256 digest before any bytes are exposed to attachment staging.
+Missing cache evidence, including after restart or eviction, requires message
+reauthentication. The unverified guest exception does not authorize unverified
+attachment bytes. Outgoing receipt recovery separately compares downloads with
+the exact saved outgoing bytes and grants no inbound authentication evidence.
 
 OpenMail and Sendmux API message IDs remain distinct from signed Internet Message-IDs.
 Approval replies resolve signed references against outbound records in the same
@@ -191,8 +203,9 @@ inbox/thread metadata and that ID mapping remain trusted.
 infrastructure key is only for provisioning. Original MIME, including HTML,
 encoded bodies and attachments, must pass the same exact-domain DKIM and
 signed-header policy. The adapter checks the REST record's normalized fingerprint
-and single Internet Message-ID against the retrieved message. REST inbox/thread,
-MIME extraction and attachment mapping remain part of the provider trust boundary.
+and single Internet Message-ID against the retrieved message, then binds bodies
+and attachment metadata to its locally decoded MIME. REST inbox/thread metadata
+and the provider-ID mapping remain part of the provider trust boundary.
 Sent status requires provider Sent-folder membership, not just a matching From.
 
 IMAP opens folders read-only and uses `BODY.PEEK`, preserving unread flags.

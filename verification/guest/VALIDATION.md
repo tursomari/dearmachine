@@ -1,5 +1,39 @@
 # Guest authorization validation
 
+## DKIM content binding for AgentMail and Sendmux, 2026-09-29
+
+AgentMail and Sendmux now decode DKIM-verified MIME locally and compare the
+instruction body, HTML, conversation references and attachment metadata before
+publishing authentication evidence. AgentMail ignores provider-generated
+extracted replies and previews. Downloads must match the decoded signed part's
+size and SHA-256 digest. OpenMail retains its existing binding through the shared
+parser. Authentication caches include HTML without changing durable guest-work
+fingerprints. Outgoing receipt reconciliation compares exact saved outgoing bytes
+through a separate internal comparison method that grants no inbound evidence.
+
+- **PASS — focused security regressions.** Real signatures, SDK raw downloads
+  over loopback TLS, consistently substituted API bodies, attachment metadata
+  ambiguity, same-length/truncated/extended download substitution, cache loss,
+  concurrent verification and receipt comparisons are covered. The follow-up
+  execution fixture ignores an injected provider extraction and strips recognized
+  quoted history locally.
+- **PASS — isolated Go checks.** `go test ./...`, `go test -race ./...` and
+  `go vet ./...` passed with Go 1.26.8, no runtime network, no host credentials,
+  a read-only container and disposable scratch state. All Go sources, tests and
+  module files match the tested snapshot. The test runner's image pin was
+  refreshed from Go 1.24 to the project's required Go 1.26.8; this run supplied
+  the identical new digest to the existing runner before updating its default.
+- **PASS — Linux Nix checks.** All 14 checks passed with the pinned Go 1.26.8
+  production toolchain using `nix flake check path:<candidate> --no-update-lock-file`.
+  The path source included the new Go files. Other platforms were not run.
+
+Body comparison permits only CRLF/LF differences, so live provider formatting changes
+can cause rejection. No live email was sent for this change. No new formal proof
+or live-provider compatibility result is claimed: local MIME parsing, signature
+verification and downloaded-byte checks remain implementation evidence outside
+the abstract authorization models. Existing explicit owner risk exceptions for
+unverified guest text remain; they do not permit unverified attachment downloads.
+
 ## Outbound progress during active work, 2026-09-28
 
 A host-client observation exposed a scheduling gap: an authenticated Yes became

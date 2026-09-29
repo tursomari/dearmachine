@@ -79,7 +79,7 @@ func TestSendmuxAuthenticationBindsRESTRecordToSignedIMAPMessage(t *testing.T) {
 			signed := signedFixtureMessage()
 			raw, lookup := signedMailFixture(t, signed, "sender.test", nil)
 			source := sendmuxRawMessage{ID: "opaque-request", RFCMessageIDs: []string{" \t" + signed.MessageID}, ThreadID: signed.ThreadID,
-				From: signed.From, To: signed.To, CC: signed.CC, Subject: signed.Subject, Text: signed.Body,
+				From: signed.From, To: signed.To, CC: signed.CC, Subject: signed.Subject, Text: signed.Body + "\r\n",
 				InReplyTo: signed.InReplyTo, References: signed.References}
 			api := &fakeSendmuxAPI{mailbox: sendmuxMailboxInfo{ID: "inbox", Email: signed.Delivery.Recipient}, data: map[string][]sendmuxRawMessage{signed.ThreadID: {source}}}
 			calls := 0

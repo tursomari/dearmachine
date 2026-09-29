@@ -285,7 +285,7 @@ python3 scripts/test-guest-container.py --output /tmp/dearmachine-guest-check
 ```
 
 The runner builds a disposable image from source-only files with pinned Go
-1.24 tooling, downloads module dependencies during the build, then runs the
+1.26.8 tooling, downloads module dependencies during the build, then runs the
 complete Go suite, race suite and vet with `--network none`, a read-only image,
 and scratch state. It mounts no host state or credentials and removes its exact
 image afterward. Source hashes and logs stay in the new output directory.
@@ -345,6 +345,15 @@ removal-token scope/replay, revocation/reinvitation and immutable request conten
 `sender_auth_test.go` verifies real signatures with ephemeral keys and the real
 AgentMail SDK over loopback TLS. It rejects spoofed or unsigned author/routing
 fields, body tampering, fake verdicts, missing evidence and unsupported adapters.
+`content_auth_test.go` exercises AgentMail and Sendmux with real signatures,
+independent MIME/API bodies, TLS downloads, ambiguous attachment identities,
+byte substitution, cache loss and concurrent authentication. Provider-generated
+AgentMail extraction is deliberately untrusted. `openmail_attachment_auth_test.go`
+covers the corresponding OpenMail byte binding. Receipt-only comparison checks
+exact saved outgoing bytes without creating inbound authentication evidence.
+The shared parser's format/encoding cases remain in `openmail_auth_test.go`.
+These offline tests do not establish current live-provider formatting compatibility;
+use the relevant transport LSE for that boundary.
 The core Gobra contracts cover invitation, delivery, execution and recipient
 eligibility; `Participation.tla` checks the abstract per-message workflow.
 `Replacement.tla` checks polling/completion interleavings and conditional restart

@@ -195,7 +195,7 @@ func TestParseVerifiedOpenMailRawMIME(t *testing.T) {
 
 	t.Run("single-part-7bit", func(t *testing.T) {
 		raw := base + "Content-Type: text/plain; charset=utf-8\r\n\r\nHello world\r\n"
-		content, err := parseVerifiedOpenMailRawMIME([]byte(raw))
+		content, err := parseVerifiedMIME([]byte(raw))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -207,7 +207,7 @@ func TestParseVerifiedOpenMailRawMIME(t *testing.T) {
 	t.Run("single-part-base64", func(t *testing.T) {
 		encoded := base64.StdEncoding.EncodeToString([]byte("Encoded body"))
 		raw := base + "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" + encoded + "\r\n"
-		content, err := parseVerifiedOpenMailRawMIME([]byte(raw))
+		content, err := parseVerifiedMIME([]byte(raw))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -218,7 +218,7 @@ func TestParseVerifiedOpenMailRawMIME(t *testing.T) {
 
 	t.Run("single-part-quoted-printable", func(t *testing.T) {
 		raw := base + "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nCaf=C3=A9\r\n"
-		content, err := parseVerifiedOpenMailRawMIME([]byte(raw))
+		content, err := parseVerifiedMIME([]byte(raw))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -229,7 +229,7 @@ func TestParseVerifiedOpenMailRawMIME(t *testing.T) {
 
 	t.Run("single-part-html", func(t *testing.T) {
 		raw := base + "Content-Type: text/html; charset=utf-8\r\n\r\n<p>Hi</p>\r\n"
-		content, err := parseVerifiedOpenMailRawMIME([]byte(raw))
+		content, err := parseVerifiedMIME([]byte(raw))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -247,7 +247,7 @@ func TestParseVerifiedOpenMailRawMIME(t *testing.T) {
 			htmlBody:       "<p>HTML part</p>",
 			attachmentName: "payload.bin", attachmentType: "application/octet-stream", attachmentBytes: attachmentBytes,
 		})
-		content, err := parseVerifiedOpenMailRawMIME(raw)
+		content, err := parseVerifiedMIME(raw)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -267,35 +267,35 @@ func TestParseVerifiedOpenMailRawMIME(t *testing.T) {
 
 	t.Run("missing-boundary", func(t *testing.T) {
 		raw := base + "Content-Type: multipart/mixed\r\n\r\nbody\r\n"
-		if _, err := parseVerifiedOpenMailRawMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
+		if _, err := parseVerifiedMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("missing boundary err = %v", err)
 		}
 	})
 
 	t.Run("malformed-multipart-body", func(t *testing.T) {
 		raw := base + "Content-Type: multipart/mixed; boundary=X\r\n\r\nnot actually multipart content at all"
-		if _, err := parseVerifiedOpenMailRawMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
+		if _, err := parseVerifiedMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("malformed multipart err = %v", err)
 		}
 	})
 
 	t.Run("unsupported-transfer-encoding", func(t *testing.T) {
 		raw := base + "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: x-custom\r\n\r\nbody\r\n"
-		if _, err := parseVerifiedOpenMailRawMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
+		if _, err := parseVerifiedMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("unsupported encoding err = %v", err)
 		}
 	})
 
 	t.Run("unsupported-charset", func(t *testing.T) {
 		raw := base + "Content-Type: text/plain; charset=iso-8859-1\r\n\r\nbody\r\n"
-		if _, err := parseVerifiedOpenMailRawMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
+		if _, err := parseVerifiedMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("unsupported charset err = %v", err)
 		}
 	})
 
 	t.Run("invalid-utf8-claimed", func(t *testing.T) {
 		raw := append([]byte(base+"Content-Type: text/plain; charset=utf-8\r\n\r\n"), 0xFF, 0xFE)
-		if _, err := parseVerifiedOpenMailRawMIME(raw); !errors.Is(err, ErrMessageUnauthenticated) {
+		if _, err := parseVerifiedMIME(raw); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("invalid utf-8 err = %v", err)
 		}
 	})
@@ -305,14 +305,14 @@ func TestParseVerifiedOpenMailRawMIME(t *testing.T) {
 			headers: base, boundary: "OUTER", plainBody: "text",
 			extraPart: "Content-Type: application/octet-stream\r\n\r\nunnamed binary\r\n",
 		})
-		if _, err := parseVerifiedOpenMailRawMIME(raw); !errors.Is(err, ErrMessageUnauthenticated) {
+		if _, err := parseVerifiedMIME(raw); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("unnamed part err = %v", err)
 		}
 	})
 
 	t.Run("malformed-content-type", func(t *testing.T) {
 		raw := base + "Content-Type: ;;;not-valid\r\n\r\nbody\r\n"
-		if _, err := parseVerifiedOpenMailRawMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
+		if _, err := parseVerifiedMIME([]byte(raw)); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("malformed content-type err = %v", err)
 		}
 	})
@@ -363,7 +363,7 @@ func TestVerifyOpenMailRawContentMatchesReport(t *testing.T) {
 	baseSource := openMailMessage{BodyText: "hello\n", Attachments: []openMailAttachment{
 		{Filename: "a.txt", ContentType: "text/plain", SizeBytes: 3},
 	}}
-	baseContent := openMailRawContent{bodyText: "hello\n", attachments: []openMailRawAttachment{
+	baseContent := verifiedMIMEContent{bodyText: "hello\n", attachments: []verifiedMIMEAttachment{
 		{filename: "a.txt", contentType: "text/plain", data: []byte("abc")},
 	}}
 
@@ -456,7 +456,7 @@ func TestVerifyOpenMailRawContentMatchesReport(t *testing.T) {
 
 	t.Run("attachment-count-mismatch", func(t *testing.T) {
 		content := baseContent
-		content.attachments = append(content.attachments, openMailRawAttachment{filename: "b.txt", data: []byte("x")})
+		content.attachments = append(content.attachments, verifiedMIMEAttachment{filename: "b.txt", data: []byte("x")})
 		if err := verifyOpenMailRawContentMatchesReport(content, baseSource); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("attachment count mismatch err = %v", err)
 		}
@@ -464,7 +464,7 @@ func TestVerifyOpenMailRawContentMatchesReport(t *testing.T) {
 
 	t.Run("attachment-size-mismatch", func(t *testing.T) {
 		content := baseContent
-		content.attachments = []openMailRawAttachment{{filename: "a.txt", contentType: "text/plain", data: []byte("abcd")}}
+		content.attachments = []verifiedMIMEAttachment{{filename: "a.txt", contentType: "text/plain", data: []byte("abcd")}}
 		if err := verifyOpenMailRawContentMatchesReport(content, baseSource); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("attachment size mismatch err = %v", err)
 		}
@@ -472,7 +472,7 @@ func TestVerifyOpenMailRawContentMatchesReport(t *testing.T) {
 
 	t.Run("attachment-filename-mismatch", func(t *testing.T) {
 		content := baseContent
-		content.attachments = []openMailRawAttachment{{filename: "other.txt", contentType: "text/plain", data: []byte("abc")}}
+		content.attachments = []verifiedMIMEAttachment{{filename: "other.txt", contentType: "text/plain", data: []byte("abc")}}
 		if err := verifyOpenMailRawContentMatchesReport(content, baseSource); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("attachment filename mismatch err = %v", err)
 		}
@@ -480,7 +480,7 @@ func TestVerifyOpenMailRawContentMatchesReport(t *testing.T) {
 
 	t.Run("attachment-content-type-mismatch", func(t *testing.T) {
 		content := baseContent
-		content.attachments = []openMailRawAttachment{{filename: "a.txt", contentType: "application/octet-stream", data: []byte("abc")}}
+		content.attachments = []verifiedMIMEAttachment{{filename: "a.txt", contentType: "application/octet-stream", data: []byte("abc")}}
 		if err := verifyOpenMailRawContentMatchesReport(content, baseSource); !errors.Is(err, ErrMessageUnauthenticated) {
 			t.Fatalf("attachment content-type mismatch err = %v", err)
 		}
@@ -691,7 +691,7 @@ func TestOpenMailBodyReportCanonicalization(t *testing.T) {
 	} {
 		for _, field := range []string{"text", "html"} {
 			t.Run(tc.name+"/"+field, func(t *testing.T) {
-				var content openMailRawContent
+				var content verifiedMIMEContent
 				var source openMailMessage
 				if field == "text" {
 					content.bodyText, source.BodyText = tc.raw, tc.reported
@@ -731,14 +731,14 @@ func TestOpenMailMIMEBodyTrailingNewlines(t *testing.T) {
 					if multipartBody {
 						raw = "Content-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\n" + part + "\r\n--B--\r\n"
 					}
-					content, err := parseVerifiedOpenMailRawMIME([]byte(raw))
+					content, err := parseVerifiedMIME([]byte(raw))
 					if err != nil {
 						t.Fatal(err)
 					}
 					if content.bodyText != body {
 						t.Fatalf("decoded body = %q, want %q", content.bodyText, body)
 					}
-					report := normalizeOpenMailLineEndings(body)
+					report := normalizeMIMELineEndings(body)
 					if err := verifyOpenMailRawContentMatchesReport(content, openMailMessage{BodyText: report}); err != nil {
 						t.Fatalf("matching decoded body rejected: %v", err)
 					}

@@ -277,8 +277,8 @@ func TestOpenMailTransportContract(t *testing.T) {
 	attachmentID := messages[0].Attachments[0].AttachmentID
 	// This transport-contract fixture bypasses DKIM; the signed authentication
 	// and download boundary is exercised in openmail_auth_test.go.
-	if err := transport.rememberOpenMailAuthenticatedContent(messages[0], openMailRawContent{
-		attachments: []openMailRawAttachment{{filename: "request.txt", data: []byte("payload")}},
+	if err := transport.rememberOpenMailAuthenticatedContent(messages[0], verifiedMIMEContent{
+		attachments: []verifiedMIMEAttachment{{filename: "request.txt", data: []byte("payload")}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -488,8 +488,8 @@ func TestOpenMailRejectsRedirectOutsideAPIOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := transport.rememberOpenMailAuthenticatedContent(transport.normalize(source, false), openMailRawContent{
-		attachments: []openMailRawAttachment{{filename: "file.txt", data: []byte("x")}},
+	if err := transport.rememberOpenMailAuthenticatedContent(transport.normalize(source, false), verifiedMIMEContent{
+		attachments: []verifiedMIMEAttachment{{filename: "file.txt", data: []byte("x")}},
 	}); err != nil {
 		t.Fatal(err)
 	}

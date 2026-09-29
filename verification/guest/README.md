@@ -505,15 +505,22 @@ recipients, subject, message ID and approval correlation to normalized metadata.
 **The domain's mail operator is trusted to enforce mailbox ownership.** The
 signature proves the domain's authority, not independent control of a local part
 or the human account holder. This assumption supplies the model's authenticated
-mailbox fact; the TLA+ code does not establish it. Provider body/MIME extraction,
-attachment mapping, inbox/thread scope and outbound labels remain trusted.
+mailbox fact; the TLA+ code does not establish it. Inbox/thread scope and outbound
+labels remain trusted. All three adapters locally decode the verified MIME and
+reject mismatched body/HTML and attachment metadata. Downloaded inbound attachment
+bytes must match the signed part's size and SHA-256 digest. AgentMail ignores
+provider-generated extracted replies and previews; local normalization supplies
+instruction text and conversation references. MIME parsing, normalization and
+these I/O checks have Go regression coverage, not a formal refinement proof.
 No raw From match or supplied Authentication-Results verdict replaces verification.
 An explicit owner exception accepts the risk of impersonation in a narrow scope;
 it does not establish the model's authenticated mailbox fact.
-OpenMail verifies the same signature contract for reconstructable, unencoded
-single-part plain text. Unsupported MIME formats and missing evidence are
-rejected. Its provider IDs are mapped separately from signed Internet
-Message-IDs using scoped outbound records. Sendmux verifies original MIME fetched
+OpenMail verifies the same signature contract using its raw-message endpoint.
+The shared parser supports plain text, HTML, nested multipart and encoded bodies
+with named attachments. Unsupported MIME formats and missing evidence are
+rejected. Only CRLF/LF representation differences are tolerated in body comparison;
+other whitespace and terminal newlines must match. Its provider IDs are mapped
+separately from signed Internet Message-IDs using scoped outbound records. Sendmux verifies original MIME fetched
 through mailbox-scoped TLS IMAP. Its SMTP filters do not represent authenticated
 From identities, so local authorization replaces managed address entries.
 Sendmux private approval references are matched only in authenticated owner

@@ -619,11 +619,35 @@ func (transport *OpenMailTransport) FetchAttachment(
 	if attachment.size > maxBytes {
 		return nil, ErrAttachmentTooLarge
 	}
+	contents, err := transport.downloadAttachment(ctx, messageID, filename, attachment.size, verified.fingerprint)
+	if err != nil {
+		if errors.Is(err, ErrAttachmentTooLarge) {
+			return nil, ErrMessageUnauthenticated
+		}
+		return nil, err
+	}
+	if int64(len(contents)) != attachment.size || sha256.Sum256(contents) != attachment.digest {
+		return nil, ErrMessageUnauthenticated
+	}
+	return contents, nil
+}
+
+func (transport *OpenMailTransport) verifyReceiptAttachment(ctx context.Context, id string, expected []byte) (bool, error) {
+	messageID, filename, err := decodeOpenMailAttachmentID(id)
+	if err != nil {
+		return false, err
+	}
+	data, err := transport.downloadAttachment(ctx, messageID, filename, int64(len(expected))+1, "")
+	return err == nil && bytes.Equal(data, expected), err
+}
+
+func (transport *OpenMailTransport) downloadAttachment(ctx context.Context, messageID, filename string, maxBytes int64, fingerprint string) ([]byte, error) {
+	attachmentID := encodeOpenMailAttachmentID(messageID, filename)
 	message, err := transport.rawMessage(ctx, messageID)
 	if err != nil {
 		return nil, err
 	}
-	if messageFingerprint(transport.normalize(message, false)) != verified.fingerprint {
+	if message.ID != messageID || (fingerprint != "" && authenticatedContentFingerprint(transport.normalize(message, false)) != fingerprint) {
 		return nil, ErrMessageUnauthenticated
 	}
 	found := false
@@ -679,17 +703,12 @@ func (transport *OpenMailTransport) FetchAttachment(
 	if response.ContentLength > maxBytes {
 		return nil, fmt.Errorf("download OpenMail attachment %s: %w", attachmentID, ErrAttachmentTooLarge)
 	}
-	// The authenticated MIME size also bounds reads when callers supply a
-	// much larger limit (or the largest possible int64).
-	contents, err := io.ReadAll(io.LimitReader(response.Body, attachment.size+1))
+	contents, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read OpenMail attachment %s: %w", attachmentID, err)
 	}
 	if int64(len(contents)) > maxBytes {
 		return nil, fmt.Errorf("download OpenMail attachment %s: %w", attachmentID, ErrAttachmentTooLarge)
-	}
-	if int64(len(contents)) != attachment.size || sha256.Sum256(contents) != attachment.digest {
-		return nil, ErrMessageUnauthenticated
 	}
 	return contents, nil
 }

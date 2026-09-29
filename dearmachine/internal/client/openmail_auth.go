@@ -1,25 +1,17 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
-	"mime"
-	"mime/multipart"
-	"mime/quotedprintable"
 	"net"
 	"net/http"
-	"net/mail"
-	"net/textproto"
 	"net/url"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 // OpenMail exposes an authenticated raw-message endpoint referenced by each
@@ -47,7 +39,7 @@ func (transport *OpenMailTransport) AuthenticateMessage(ctx context.Context, mes
 	}
 	if source.InboxID != inboxID || source.ID != message.MessageID || source.Direction != "inbound" ||
 		source.RFCMessageID == "" ||
-		messageFingerprint(transport.normalize(source, false)) != messageFingerprint(message) {
+		authenticatedContentFingerprint(transport.normalize(source, false)) != authenticatedContentFingerprint(message) {
 		return ErrMessageUnauthenticated
 	}
 	raw, err := transport.fetchOpenMailRawMessage(ctx, source)
@@ -65,7 +57,7 @@ func (transport *OpenMailTransport) AuthenticateMessage(ctx context.Context, mes
 	if err := verifySignedMessage(ctx, raw, expected, lookup); err != nil {
 		return err
 	}
-	content, err := parseVerifiedOpenMailRawMIME(raw)
+	content, err := parseVerifiedMIME(raw)
 	if err != nil {
 		return err
 	}
@@ -93,9 +85,9 @@ const maxOpenMailAuthenticatedMessages = 2048
 
 // Retain only digests of decoded, verified MIME parts, never entire messages
 // or attachment bodies. Entries are immutable once published under authMu.
-func (transport *OpenMailTransport) rememberOpenMailAuthenticatedContent(message Message, content openMailRawContent) error {
+func (transport *OpenMailTransport) rememberOpenMailAuthenticatedContent(message Message, content verifiedMIMEContent) error {
 	verified := openMailAuthenticatedMessage{
-		fingerprint: messageFingerprint(message),
+		fingerprint: authenticatedContentFingerprint(message),
 		attachments: make(map[string]openMailAuthenticatedAttachment, len(content.attachments)),
 	}
 	for _, attachment := range content.attachments {
@@ -174,160 +166,13 @@ func (transport *OpenMailTransport) fetchOpenMailRawMessage(ctx context.Context,
 	return data, nil
 }
 
-type openMailRawAttachment struct {
-	filename    string
-	contentType string
-	data        []byte
-}
-
-type openMailRawContent struct {
-	bodyText    string
-	bodyHTML    string
-	attachments []openMailRawAttachment
-}
-
-// parseVerifiedOpenMailRawMIME parses raw bytes that have already passed DKIM
-// verification. It supports single-part and (nested) multipart messages, and
-// fails closed on any structure or encoding it cannot decode losslessly.
-func parseVerifiedOpenMailRawMIME(raw []byte) (openMailRawContent, error) {
-	parsed, err := mail.ReadMessage(bytes.NewReader(raw))
-	if err != nil {
-		return openMailRawContent{}, ErrMessageUnauthenticated
-	}
-	var content openMailRawContent
-	if err := collectOpenMailMIMEParts(textproto.MIMEHeader(parsed.Header), parsed.Body, 0, &content); err != nil {
-		return openMailRawContent{}, err
-	}
-	return content, nil
-}
-
-func collectOpenMailMIMEParts(header textproto.MIMEHeader, body io.Reader, depth int, content *openMailRawContent) error {
-	if depth > 8 {
-		return ErrMessageUnauthenticated
-	}
-	contentType := header.Get("Content-Type")
-	mediaType, params, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		if strings.TrimSpace(contentType) != "" {
-			return ErrMessageUnauthenticated
-		}
-		mediaType, params = "text/plain", map[string]string{"charset": "us-ascii"}
-	}
-	if strings.HasPrefix(mediaType, "multipart/") {
-		boundary := params["boundary"]
-		if boundary == "" {
-			return ErrMessageUnauthenticated
-		}
-		reader := multipart.NewReader(body, boundary)
-		parts := 0
-		for {
-			part, err := reader.NextPart()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return ErrMessageUnauthenticated
-			}
-			parts++
-			if parts > 64 {
-				return ErrMessageUnauthenticated
-			}
-			if err := collectOpenMailMIMEParts(part.Header, part, depth+1, content); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	decoded, err := decodeOpenMailMIMEPart(header, body)
-	if err != nil {
-		return err
-	}
-	if len(decoded) > maxAuthenticationMessageBytes {
-		return ErrMessageUnauthenticated
-	}
-	filename := openMailPartFilename(header, params)
-	disposition, _, _ := mime.ParseMediaType(header.Get("Content-Disposition"))
-	switch {
-	case disposition != "attachment" && filename == "" && mediaType == "text/plain":
-		text, err := decodeOpenMailPlainText(decoded, params["charset"])
-		if err != nil {
-			return err
-		}
-		content.bodyText += text
-	case disposition != "attachment" && filename == "" && mediaType == "text/html":
-		text, err := decodeOpenMailPlainText(decoded, params["charset"])
-		if err != nil {
-			return err
-		}
-		content.bodyHTML += text
-	default:
-		// Anything else must be identifiable as an attachment by name so it can
-		// be bound to the API-reported attachment metadata below. An unnamed,
-		// non-text part cannot be correlated safely, so it is rejected.
-		if filename == "" {
-			return ErrMessageUnauthenticated
-		}
-		content.attachments = append(content.attachments, openMailRawAttachment{
-			filename: filename, contentType: mediaType, data: decoded,
-		})
-	}
-	return nil
-}
-
-func openMailPartFilename(header textproto.MIMEHeader, contentTypeParams map[string]string) string {
-	if _, dispositionParams, err := mime.ParseMediaType(header.Get("Content-Disposition")); err == nil {
-		if name := strings.TrimSpace(dispositionParams["filename"]); name != "" {
-			return name
-		}
-	}
-	return strings.TrimSpace(contentTypeParams["name"])
-}
-
-// decodeOpenMailMIMEPart reverses Content-Transfer-Encoding to recover the
-// original bytes exactly, so downloaded attachments can be checked against
-// digests of the signed content rather than just provider-reported sizes.
-func decodeOpenMailMIMEPart(header textproto.MIMEHeader, body io.Reader) ([]byte, error) {
-	switch strings.ToLower(strings.TrimSpace(header.Get("Content-Transfer-Encoding"))) {
-	case "", "7bit", "8bit", "binary":
-		return io.ReadAll(io.LimitReader(body, maxAuthenticationMessageBytes+1))
-	case "base64":
-		return io.ReadAll(io.LimitReader(base64.NewDecoder(base64.StdEncoding, body), maxAuthenticationMessageBytes+1))
-	case "quoted-printable":
-		return io.ReadAll(io.LimitReader(quotedprintable.NewReader(body), maxAuthenticationMessageBytes+1))
-	default:
-		return nil, ErrMessageUnauthenticated
-	}
-}
-
-// decodeOpenMailPlainText only accepts unencoded UTF-8 or US-ASCII text, the
-// only charsets this adapter can decode losslessly without an external
-// charset conversion dependency. Anything else fails closed.
-func decodeOpenMailPlainText(data []byte, charset string) (string, error) {
-	charset = strings.ToLower(strings.TrimSpace(charset))
-	if charset != "" && charset != "utf-8" && charset != "us-ascii" {
-		return "", ErrMessageUnauthenticated
-	}
-	if charset == "utf-8" {
-		if !utf8.Valid(data) {
-			return "", ErrMessageUnauthenticated
-		}
-	} else {
-		for _, b := range data {
-			if b > 127 {
-				return "", ErrMessageUnauthenticated
-			}
-		}
-	}
-	return string(data), nil
-}
-
 // verifyOpenMailRawContentMatchesReport binds the DKIM-verified raw MIME to
 // the metadata OpenMail's JSON API reported. Without this check, a signed
 // envelope for one message could be paired with a different message's
 // API-reported body or attachments.
-func verifyOpenMailRawContentMatchesReport(content openMailRawContent, source openMailMessage) error {
-	if !openMailTextMatchesReport(content.bodyText, source.BodyText) ||
-		!openMailTextMatchesReport(content.bodyHTML, source.BodyHTML) {
+func verifyOpenMailRawContentMatchesReport(content verifiedMIMEContent, source openMailMessage) error {
+	if !mimeTextMatchesReport(content.bodyText, source.BodyText) ||
+		!mimeTextMatchesReport(content.bodyHTML, source.BodyHTML) {
 		return ErrMessageUnauthenticated
 	}
 	if len(content.attachments) != len(source.Attachments) {
@@ -352,15 +197,4 @@ func verifyOpenMailRawContentMatchesReport(content openMailRawContent, source op
 		}
 	}
 	return nil
-}
-
-func normalizeOpenMailLineEndings(value string) string {
-	return strings.ReplaceAll(value, "\r\n", "\n")
-}
-
-// openMailTextMatchesReport compares decoded, DKIM-verified MIME text with
-// OpenMail's JSON report. Only CRLF/LF representation differences are normalized;
-// all content whitespace, including every terminal newline, must match.
-func openMailTextMatchesReport(raw, reported string) bool {
-	return normalizeOpenMailLineEndings(raw) == normalizeOpenMailLineEndings(reported)
 }
