@@ -20,10 +20,10 @@
           codexPkgs = import (if system == "x86_64-darwin" then nixpkgs else nixpkgs-codex) { inherit system; };
           lib = pkgs.lib;
           patchedGo = pkgs.go.overrideAttrs (_: {
-            version = "1.26.5";
+            version = "1.26.8";
             src = pkgs.fetchurl {
-              url = "https://go.dev/dl/go1.26.5.src.tar.gz";
-              hash = "sha256-SVvkvIcXasVnOS5bQRar2YRm0z17SdQedkzMaXay3EI=";
+              url = "https://go.dev/dl/go1.26.8.src.tar.gz";
+              hash = "sha256-Tjm5jkL5RvoFrIvFtxh335fb23y7Gnd7VBZnrXEX/S4=";
             };
           });
           revision = self.rev or "unknown";
@@ -47,7 +47,7 @@
             version = "0.1.0-${shortRevision}";
             src = source;
             subPackages = [ "cmd/dearmachine" "cmd/agent-manager" ];
-            vendorHash = "sha256-jZaVeCI9Vnu1MjLLslu6OlFOlSrzWgekjt2Z9KhIa4o=";
+            vendorHash = "sha256-lFyM90fJTRBSMGySeFVk1pNlvPhD/aTxDthb2YGP3FU=";
             env.CGO_ENABLED = 1;
             doCheck = false;
             preBuild = ''

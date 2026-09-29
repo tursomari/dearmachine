@@ -157,7 +157,7 @@ docker run --rm --network "$PARTICIPANT_OPENROUTER_NETWORK" \
   -e HOME=/tmp/participant-home -e GOCACHE=/tmp/go-cache -e GOPATH=/tmp/go \
   -e GOFLAGS=-buildvcs=false \
   -e DEARMACHINE_PARTICIPANT_LIVE_KEY_FILE=/run/secrets/openrouter-key \
-  -w /src/dearmachine golang:1.24-bookworm bash -c 'set -eu
+  -w /src/dearmachine golang:1.26.8-bookworm bash -c 'set -eu
     umask 022
     mkdir -p "$HOME"
     go test ./internal/client -run "^TestParticipant|^TestGuest|^TestOutboundApproval|^TestMailboxReplyMapsPrivateRecipientWithoutReplyAll$|^TestOpenMailReplyPreservesThreadWithPrivateRecipient$|^TestSendmuxReplyPreservesThreadWithPrivateRecipient$" -count=1

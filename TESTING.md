@@ -108,7 +108,7 @@ mail or model providers.
 | Coverage profile | `go test -coverprofile=/tmp/dearmachine.cover ./...` |
 | One fresh test | `go test ./path/to/package -run '^TestName$' -count=1 -v` |
 
-The module requires Go 1.23, CGO, and a C compiler because the tests use the
+The module requires Go 1.26.8, CGO, and a C compiler because the tests use the
 real SQLite driver. The AgentMail SDK is resolved from `go.mod`; there is no
 local replacement directive.
 

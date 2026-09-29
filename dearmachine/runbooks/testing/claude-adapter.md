@@ -56,7 +56,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e HOME=/tmp/claude-test-home -e GOCACHE=/tmp/go-cache -e GOPATH=/tmp/go \
   -e GOFLAGS=-buildvcs=false \
   -e DEARMACHINE_CLAUDE_LIVE_KEY_FILE=/run/secrets/openrouter-key \
-  -w /src/dearmachine golang:1.24-bookworm bash -c 'set -eu
+  -w /src/dearmachine golang:1.26.8-bookworm bash -c 'set -eu
     umask 022
     mkdir -p "$HOME"
     go test ./...
