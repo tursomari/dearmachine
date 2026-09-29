@@ -778,3 +778,34 @@ func TestResumeCreateRequestPreservesSelectionBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestMagnificaHumanitasPersistedChoiceAndExplicitOverride(t *testing.T) {
+	persisted := client.RuntimeConfig{Version: client.RuntimeConfigVersion, PollInterval: "10s"}
+	for _, test := range []struct {
+		name      string
+		args      []string
+		persisted bool
+		want      bool
+	}{
+		{"default off", nil, false, false},
+		{"persisted on is kept when the flag is omitted", nil, true, true},
+		{"explicit opt-in", []string{"--magnifica-humanitas"}, false, true},
+		{"explicit false overrides persisted on", []string{"--magnifica-humanitas=false"}, true, false},
+		{"explicit true overrides persisted off", []string{"--magnifica-humanitas=true"}, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg, err := parseConfig(test.args, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			persisted.MagnificaHumanitas = test.persisted
+			merged, err := mergeRuntimeConfig(cfg, persisted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if merged.magnificaHumanitas != test.want {
+				t.Fatalf("magnificaHumanitas = %v, want %v", merged.magnificaHumanitas, test.want)
+			}
+		})
+	}
+}

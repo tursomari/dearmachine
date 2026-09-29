@@ -74,6 +74,55 @@ if command -v systemd-analyze >/dev/null; then
   systemd-analyze --user --man=no --generators=no verify "$UNIT"
 fi
 
+# Magnifica Humanitas is off unless chosen, and an explicit choice survives
+# reinstallation and can be changed from enabled to disabled.
+install_wrapper() {
+  "$BASH" "$LIFECYCLE" install --transport openmail \
+    --client "$BIN/dearmachine" --agent-manager "$BIN/agent-manager" "$@"
+}
+wrapper_launch() {
+  : >"$LOG"
+  "$BASH" "$WRAPPER"
+  grep -F 'dearmachine up --foreground' "$LOG"
+}
+assert_quote() {
+  local expected=$1 launch
+  launch=$(wrapper_launch)
+  case $expected in
+    absent)
+      if [[ $launch == *magnifica-humanitas* ]]; then
+        printf 'wrapper unexpectedly names the quote flag: %s\n' "$launch" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      [[ $launch == *" --magnifica-humanitas=$expected "* ]] || {
+        printf 'wrapper lacks --magnifica-humanitas=%s: %s\n' "$expected" "$launch" >&2
+        exit 1
+      }
+      [[ $(grep -o -- '--magnifica-humanitas' <<<"$launch" | wc -l) -eq 1 ]]
+      ;;
+  esac
+}
+assert_quote absent
+install_wrapper --magnifica-humanitas
+assert_quote true
+install_wrapper
+assert_quote true
+install_wrapper --magnifica-humanitas=false
+assert_quote false
+install_wrapper
+assert_quote false
+install_wrapper --magnifica-humanitas=true
+assert_quote true
+if install_wrapper --magnifica-humanitas=maybe 2>/dev/null; then
+  echo 'invalid quote choice was accepted' >&2
+  exit 1
+fi
+rm -f "$WRAPPER"
+install_wrapper
+assert_quote absent
+
 "$BASH" "$LIFECYCLE" status
 "$BASH" "$LIFECYCLE" disable
 grep -F 'systemctl status --no-pager dearmachine-native.service' "$LOG" >/dev/null

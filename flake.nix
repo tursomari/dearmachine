@@ -239,8 +239,7 @@
             assert service["healthcheck"]["test"] == ["CMD", "dearmachine-health"]
             assert service["command"][0] == "up"
             assert service["command"][1] == "--foreground"
-            assert "--magnifica-humanitas" in service["command"]
-            assert service["command"].count("--magnifica-humanitas") == 1
+            assert "--magnifica-humanitas" not in service["command"]
             assert "--inbox-id" not in service["command"]
             assert "--db" not in service["command"]
             assert "--pidfile" not in service["command"]

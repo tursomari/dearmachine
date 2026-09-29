@@ -139,6 +139,11 @@ DEARMACHINE_SERVICE_PATH="$PATH" nix run .#dearmachine-native-service-lifecycle 
   --linger
 ```
 
+The generated launcher enables no quote by default and defers to the persisted
+runtime configuration. Add `--magnifica-humanitas` to opt in, or
+`--magnifica-humanitas=false` to turn it off again; reinstalling without the
+option keeps the previous explicit choice.
+
 The helper writes a private native launcher and a `dearmachine-native.service`
 user unit, records credential file paths rather than credential values, enables
 the unit for `default.target`, starts it, and verifies that it is enabled and

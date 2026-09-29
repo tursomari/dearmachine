@@ -35,7 +35,6 @@ services:
       - ${DEARMACHINE_ENTRY_POINT_PROMPT:-/home/dearmachine/.dearmachine/entrypoint/main/documentation/update-prompt-template.md}
       - --poll-interval
       - ${DEARMACHINE_POLL_INTERVAL:-10s}
-      - --magnifica-humanitas
       - --verbose
     volumes:
       - ${DEARMACHINE_CLIENT_HOME:?set DEARMACHINE_CLIENT_HOME}:/home/dearmachine:Z

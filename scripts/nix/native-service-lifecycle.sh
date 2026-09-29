@@ -23,6 +23,10 @@ Options:
   --home <path>              DEARMACHINE_HOME (default: ~/.dearmachine)
   --unit <name>              User-unit name (default: dearmachine-native)
   --working-directory <path> Service working directory (default: ~/.dearmachine/entrypoint/main)
+  --magnifica-humanitas[=true|false]
+                             Enable (or explicitly set) the Magnifica Humanitas quote.
+                             Omitted: keep the wrapper's previous explicit choice, else
+                             defer to the persisted runtime configuration (default off)
   --linger                   Keep the user manager running without an interactive login
   -h, --help                 Show this help
 EOF
@@ -94,6 +98,7 @@ dm_home=${DEARMACHINE_HOME:-"${HOME:?HOME is required}"/.dearmachine}
 dm_unit=dearmachine-native
 dm_working_directory=
 dm_linger=false
+dm_magnifica=
 
 while (($# > 0)); do
   case $1 in
@@ -106,6 +111,9 @@ while (($# > 0)); do
     --home) (($# >= 2)) || dm_die '--home requires a path'; dm_home=$2; shift 2 ;;
     --unit) (($# >= 2)) || dm_die '--unit requires a name'; dm_unit=$2; shift 2 ;;
     --working-directory) (($# >= 2)) || dm_die '--working-directory requires a path'; dm_working_directory=$2; shift 2 ;;
+    --magnifica-humanitas|--magnifica-humanitas=true) dm_magnifica=true; shift ;;
+    --magnifica-humanitas=false) dm_magnifica=false; shift ;;
+    --magnifica-humanitas=*) dm_die '--magnifica-humanitas accepts only true or false' ;;
     --linger) dm_linger=true; shift ;;
     -h|--help) dm_usage; exit 0 ;;
     *) dm_die "unknown option: $1" ;;
@@ -167,13 +175,26 @@ dm_systemctl show-environment >/dev/null || dm_die 'the systemd user manager is 
 
 install -d -m 0700 "$dm_service_data_dir"
 install -d -m 0755 "$dm_systemd_dir"
+if [[ -z $dm_magnifica && -f $dm_wrapper_path ]]; then
+  # Reconfiguration without the option keeps an explicit earlier choice.
+  if grep -Fq -- ' --magnifica-humanitas=true ' "$dm_wrapper_path"; then
+    dm_magnifica=true
+  elif grep -Fq -- ' --magnifica-humanitas=false ' "$dm_wrapper_path"; then
+    dm_magnifica=false
+  fi
+fi
 dm_wrapper_temporary=$dm_wrapper_path.new
 {
   printf '#!/usr/bin/env bash\nset -euo pipefail\ncd -- '
   dm_shell_quote "$dm_working_directory"
   printf '\nexec '
   dm_shell_quote "$dm_client"
-  printf ' up --foreground --magnifica-humanitas --verbose --config '
+  printf ' up --foreground'
+  # An explicit choice is always passed as =true/=false so it overrides the
+  # persisted runtime configuration; otherwise the flag is omitted and the
+  # persisted value (default off) applies.
+  if [[ -n $dm_magnifica ]]; then printf ' --magnifica-humanitas=%s' "$dm_magnifica"; fi
+  printf ' --verbose --config '
   dm_shell_quote "$dm_config"
   printf ' --agent-manager '
   dm_shell_quote "$dm_manager"

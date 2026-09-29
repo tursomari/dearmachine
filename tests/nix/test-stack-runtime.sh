@@ -76,8 +76,12 @@ grep -F '<run> <--rm> <--no-deps> <dearmachine> <up> <--create>' \
   "$TEST_ACTION_LOG" >/dev/null
 grep -F '<--email> <person@example.test> <--new-inbox> <--transport> <agentmail>' \
   "$TEST_ACTION_LOG" >/dev/null
-grep -F '<--once> <--magnifica-humanitas> <--verbose>' \
+grep -F '<--once> <--verbose>' \
   "$TEST_ACTION_LOG" >/dev/null
+if grep -F -- 'magnifica-humanitas' "$TEST_ACTION_LOG" >/dev/null; then
+  echo 'stack create enabled the quote without an explicit choice' >&2
+  exit 1
+fi
 
 chmod 0644 "$DEARMACHINE_CLIENT_HOME/.config/dearmachine/backends.env"
 if bash "$STACK_RUNTIME" create \
