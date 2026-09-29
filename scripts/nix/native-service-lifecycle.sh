@@ -24,9 +24,11 @@ Options:
   --unit <name>              User-unit name (default: dearmachine-native)
   --working-directory <path> Service working directory (default: ~/.dearmachine/entrypoint/main)
   --magnifica-humanitas[=true|false]
-                             Enable (or explicitly set) the Magnifica Humanitas quote.
-                             Omitted: keep the wrapper's previous explicit choice, else
-                             defer to the persisted runtime configuration (default off)
+                             Record the Magnifica Humanitas quote choice in the persisted
+                             runtime configuration (requires an existing runtime.toml).
+                             Omitted: leave the persisted choice unchanged (default off).
+                             The launcher never carries this flag, so the persisted
+                             choice governs every restart.
   --linger                   Keep the user manager running without an interactive login
   -h, --help                 Show this help
 EOF
@@ -175,13 +177,20 @@ dm_systemctl show-environment >/dev/null || dm_die 'the systemd user manager is 
 
 install -d -m 0700 "$dm_service_data_dir"
 install -d -m 0755 "$dm_systemd_dir"
-if [[ -z $dm_magnifica && -f $dm_wrapper_path ]]; then
-  # Reconfiguration without the option keeps an explicit earlier choice.
-  if grep -Fq -- ' --magnifica-humanitas=true ' "$dm_wrapper_path"; then
-    dm_magnifica=true
-  elif grep -Fq -- ' --magnifica-humanitas=false ' "$dm_wrapper_path"; then
-    dm_magnifica=false
-  fi
+if [[ -n $dm_magnifica ]]; then
+  # The launcher deliberately omits the flag: an explicit launcher argument
+  # would override later onboarding choices. Record the choice in the
+  # persisted runtime configuration, which every restart reads.
+  dm_runtime_config=${HOME:?HOME is required}/.dearmachine/config/runtime.toml
+  [[ -f $dm_runtime_config && ! -L $dm_runtime_config ]] ||
+    dm_die 'the Magnifica Humanitas choice is recorded by pair creation; create the pair first, then rerun'
+  dm_runtime_temporary=$dm_runtime_config.new
+  {
+    grep -v '^magnifica_humanitas[[:space:]]*=' "$dm_runtime_config" || true
+    printf 'magnifica_humanitas = %s\n' "$dm_magnifica"
+  } >"$dm_runtime_temporary"
+  chmod --reference="$dm_runtime_config" "$dm_runtime_temporary"
+  mv -f "$dm_runtime_temporary" "$dm_runtime_config"
 fi
 dm_wrapper_temporary=$dm_wrapper_path.new
 {
@@ -190,10 +199,8 @@ dm_wrapper_temporary=$dm_wrapper_path.new
   printf '\nexec '
   dm_shell_quote "$dm_client"
   printf ' up --foreground'
-  # An explicit choice is always passed as =true/=false so it overrides the
-  # persisted runtime configuration; otherwise the flag is omitted and the
-  # persisted value (default off) applies.
-  if [[ -n $dm_magnifica ]]; then printf ' --magnifica-humanitas=%s' "$dm_magnifica"; fi
+  # The quote flag is never written here; the persisted runtime configuration
+  # (default off) governs every restart.
   printf ' --verbose --config '
   dm_shell_quote "$dm_config"
   printf ' --agent-manager '

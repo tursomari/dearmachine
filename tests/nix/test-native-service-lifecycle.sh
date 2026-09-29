@@ -74,54 +74,99 @@ if command -v systemd-analyze >/dev/null; then
   systemd-analyze --user --man=no --generators=no verify "$UNIT"
 fi
 
-# Magnifica Humanitas is off unless chosen, and an explicit choice survives
-# reinstallation and can be changed from enabled to disabled.
+# Magnifica Humanitas is off unless chosen. The persisted runtime
+# configuration governs every launcher restart: the launcher never carries the
+# flag, so a later choice (including enabled to disabled) cannot be overridden
+# by an earlier explicit launcher argument.
+RUNTIME=$HOME/.dearmachine/config/runtime.toml
 install_wrapper() {
   "$BASH" "$LIFECYCLE" install --transport openmail \
     --client "$BIN/dearmachine" --agent-manager "$BIN/agent-manager" "$@"
 }
-wrapper_launch() {
+# The isolated client stand-in reports the effective setting the way the real
+# client resolves it: an explicit launch flag wins, otherwise the persisted
+# runtime value applies.
+cat >"$BIN/dearmachine" <<STUB
+#!$BASH
+printf 'dearmachine %s\n' "\$*" >>"\$LOG"
+effective=false
+if grep -qx 'magnifica_humanitas = true' "$RUNTIME" 2>/dev/null; then effective=true; fi
+for argument in "\$@"; do
+  case \$argument in
+    --magnifica-humanitas|--magnifica-humanitas=true) effective=true ;;
+    --magnifica-humanitas=false) effective=false ;;
+  esac
+done
+printf 'effective-quote=%s\n' "\$effective" >>"\$LOG"
+STUB
+chmod 0700 "$BIN/dearmachine"
+# Restart the generated launcher on this host and print the effective setting.
+restart_effective() {
   : >"$LOG"
   "$BASH" "$WRAPPER"
-  grep -F 'dearmachine up --foreground' "$LOG"
+  if grep -F 'dearmachine up --foreground' "$LOG" | grep -F -- 'magnifica-humanitas' >/dev/null; then
+    echo 'launcher names the quote flag' >&2
+    exit 1
+  fi
+  sed -n 's/^effective-quote=//p' "$LOG"
 }
-assert_quote() {
-  local expected=$1 launch
-  launch=$(wrapper_launch)
-  case $expected in
-    absent)
-      if [[ $launch == *magnifica-humanitas* ]]; then
-        printf 'wrapper unexpectedly names the quote flag: %s\n' "$launch" >&2
-        exit 1
-      fi
-      ;;
-    *)
-      [[ $launch == *" --magnifica-humanitas=$expected "* ]] || {
-        printf 'wrapper lacks --magnifica-humanitas=%s: %s\n' "$expected" "$launch" >&2
-        exit 1
-      }
-      [[ $(grep -o -- '--magnifica-humanitas' <<<"$launch" | wc -l) -eq 1 ]]
-      ;;
-  esac
+assert_effective() {
+  local actual
+  actual=$(restart_effective)
+  [[ $actual == "$1" ]] || { printf 'effective quote %s, want %s\n' "$actual" "$1" >&2; exit 1; }
 }
-assert_quote absent
+write_runtime() {
+  printf 'version = 1\npoll_interval = "10s"\nmagnifica_humanitas = %s\n' "$1" >"$RUNTIME"
+  chmod 0600 "$RUNTIME"
+}
+
+# Default off: no runtime configuration and no flag.
+install_wrapper
+assert_effective false
+# The option cannot be recorded before pair creation has written runtime.toml.
+if install_wrapper --magnifica-humanitas 2>/dev/null; then
+  echo 'quote choice was accepted without runtime configuration' >&2
+  exit 1
+fi
+# Explicit opt-in is recorded in the runtime configuration and survives restart.
+write_runtime false
 install_wrapper --magnifica-humanitas
-assert_quote true
+assert_effective true
+grep -Fx 'magnifica_humanitas = true' "$RUNTIME" >/dev/null
+[[ $(grep -c '^magnifica_humanitas' "$RUNTIME") -eq 1 && $(stat -c '%a' "$RUNTIME") == 600 ]]
 install_wrapper
-assert_quote true
+assert_effective true
+# An existing enabled launcher from an earlier generation (explicit =true),
+# then onboarding persists false: reinstall and restart must yield disabled.
+cat >"$WRAPPER" <<LEGACY
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- '$HOME/.dearmachine/entrypoint/main'
+exec '$BIN/dearmachine' up --foreground --magnifica-humanitas=true --verbose --config '$HOME/.dearmachine/config/dearmachine.toml' --agent-manager '$BIN/agent-manager'
+LEGACY
+chmod 0700 "$WRAPPER"
+write_runtime false
+# The legacy explicit flag would keep the quote on despite the persisted choice.
+: >"$LOG"
+"$BASH" "$WRAPPER"
+grep -Fx 'effective-quote=true' "$LOG" >/dev/null
+install_wrapper
+assert_effective false
+# The same holds when the disabling choice is passed to the installer.
+write_runtime true
 install_wrapper --magnifica-humanitas=false
-assert_quote false
-install_wrapper
-assert_quote false
+assert_effective false
+grep -Fx 'magnifica_humanitas = false' "$RUNTIME" >/dev/null
 install_wrapper --magnifica-humanitas=true
-assert_quote true
+assert_effective true
 if install_wrapper --magnifica-humanitas=maybe 2>/dev/null; then
   echo 'invalid quote choice was accepted' >&2
   exit 1
 fi
-rm -f "$WRAPPER"
+# Removing the launcher and runtime configuration returns to default off.
+rm -f "$WRAPPER" "$RUNTIME"
 install_wrapper
-assert_quote absent
+assert_effective false
 
 "$BASH" "$LIFECYCLE" status
 "$BASH" "$LIFECYCLE" disable
