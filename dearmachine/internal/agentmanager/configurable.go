@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -47,7 +46,7 @@ func (c *ConfigurableAdapter) Prepare(ctx context.Context, cwd, writableDir stri
 	command := backendCommandContext(ctx, c.executable, args...)
 	command.Dir = cwd
 	if len(c.env) > 0 {
-		command.Env = append(os.Environ(), c.env...)
+		command.Env = append(command.Environ(), c.env...)
 	}
 	return Launch{Command: command}, nil
 }

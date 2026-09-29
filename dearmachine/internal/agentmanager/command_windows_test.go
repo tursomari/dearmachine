@@ -75,3 +75,44 @@ func TestWindowsBackendArgumentHelper(t *testing.T) {
 		t.Fatalf("argument changed: %q", os.Args[len(os.Args)-1])
 	}
 }
+
+func TestWindowsRegistryPathLookup(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty")
+	bin := filepath.Join(root, "nodejs")
+	for _, dir := range []string{empty, bin} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	native := filepath.Join(bin, "fake-backend.exe")
+	if err := os.WriteFile(native, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path, ok := lookPathInDirs("fake-backend", []string{"relative", empty, bin})
+	if !ok || !strings.EqualFold(path, native) {
+		t.Fatalf("lookPathInDirs() = %q, %v; want %q", path, ok, native)
+	}
+	if _, ok := lookPathInDirs("missing-backend", []string{empty, bin}); ok {
+		t.Fatal("lookPathInDirs(missing-backend) succeeded")
+	}
+}
+
+func TestWindowsEnvironmentExpansion(t *testing.T) {
+	values := map[string]string{"NVM_SYMLINK": `C:\nvm4w\nodejs`, "EMPTY": ""}
+	lookup := func(name string) (string, bool) {
+		value, ok := values[name]
+		return value, ok
+	}
+	for input, want := range map[string]string{
+		`%NVM_SYMLINK%;C:\bin`:        `C:\nvm4w\nodejs;C:\bin`,
+		`%MISSING%NVM_SYMLINK%`:       `%MISSINGC:\nvm4w\nodejs`,
+		`100%;%EMPTY%x`:               `100%;x`,
+		`%%NVM_SYMLINK%`:              `%C:\nvm4w\nodejs`,
+		`C:\unterminated%NVM_SYMLINK`: `C:\unterminated%NVM_SYMLINK`,
+	} {
+		if got := expandWindowsEnvironment(input, lookup); got != want {
+			t.Errorf("expandWindowsEnvironment(%q) = %q; want %q", input, got, want)
+		}
+	}
+}
