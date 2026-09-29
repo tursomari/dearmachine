@@ -5,11 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/dearmachine/dearmachine/internal/client"
+	"github.com/dearmachine/dearmachine/internal/hostos"
 	"github.com/dearmachine/dearmachine/internal/supervisor"
 )
 
@@ -51,8 +51,14 @@ func TestInstallationStatusIndependentOfSupervisor(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer lock.Close()
+				// Windows privacy is an ACL, not the creation mode.
+				if kind != "invalid-lock" {
+					if err := hostos.Protect(lock.Name(), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if kind == "held" {
-					if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+					if err := hostos.Flock(int(lock.Fd()), hostos.LOCK_EX|hostos.LOCK_NB); err != nil {
 						t.Fatal(err)
 					}
 					wantSupervisor, wantDaemon = "unreachable", "unknown"
