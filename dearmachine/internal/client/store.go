@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type Store struct {
@@ -1890,10 +1890,13 @@ func (s *Store) insertThreadSession(tx *sql.Tx, session Session, now string) (st
 		if !isCanonicalConversationReference(sessionID) {
 			return "", fmt.Errorf("generated session ID %q is not canonical", sessionID)
 		}
-		_, err := tx.Exec(
+		// Name the conflict target so a colliding ID is retried without
+		// driver-specific errors, while a duplicate thread still fails.
+		result, err := tx.Exec(
 			`INSERT INTO thread_sessions
 			     (thread_id, session_id, sequence, status, response_tier, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(session_id) DO NOTHING`,
 			session.ThreadID,
 			sessionID,
 			session.Sequence,
@@ -1902,12 +1905,15 @@ func (s *Store) insertThreadSession(tx *sql.Tx, session Session, now string) (st
 			now,
 			now,
 		)
-		if err == nil {
-			return sessionID, nil
-		}
-		var sqliteErr sqlite3.Error
-		if !errors.As(err, &sqliteErr) || sqliteErr.ExtendedCode != sqlite3.ErrConstraintUnique {
+		if err != nil {
 			return "", err
+		}
+		inserted, err := result.RowsAffected()
+		if err != nil {
+			return "", err
+		}
+		if inserted == 1 {
+			return sessionID, nil
 		}
 	}
 	return "", fmt.Errorf(

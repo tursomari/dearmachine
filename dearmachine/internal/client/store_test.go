@@ -448,6 +448,29 @@ func TestStoreRetriesGeneratedSessionIDCollision(t *testing.T) {
 	}
 }
 
+func TestStoreSessionInsertRejectsDuplicateThread(t *testing.T) {
+	store := openTestStore(t)
+	generated := []string{"dm1-01234-56789a", "dm1-abcde-fghjkm"}
+	calls := 0
+	store.referenceGenerator = func() string {
+		reference := generated[calls]
+		calls++
+		return reference
+	}
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	session := Session{ThreadID: "thread-duplicate", Status: "active", ResponseTier: TierPlain}
+	if _, err := store.insertThreadSession(tx, session, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.insertThreadSession(tx, session, "2026-01-01T00:00:00Z"); err == nil || calls != 2 {
+		t.Fatalf("duplicate thread insert error = %v after %d generator calls", err, calls)
+	}
+}
+
 func TestStoreSkipAcceptsLearnedExternalThreadAlias(t *testing.T) {
 	store := openTestStore(t)
 	first, _, err := store.BeginMessageWithReference("message-1", "thread-a", "", TierPlain)
